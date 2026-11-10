@@ -1,0 +1,159 @@
+package app
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestClaudeOAuthSessionOwnershipStateExpiryAndCancellation(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	c := newTestClient(t, a)
+	res := c.do("POST", "/api/v1/claude-oauth/sessions", `{}`)
+	if res.StatusCode != 401 {
+		t.Fatalf("anonymous status %d", res.StatusCode)
+	}
+	res.Body.Close()
+	c.login("workflow-test-password")
+	start := func() (string, string) {
+		r := c.do("POST", "/api/v1/claude-oauth/sessions", `{}`)
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		if r.StatusCode != 201 {
+			t.Fatalf("start: %d %s", r.StatusCode, b)
+		}
+		if bytes.Contains(b, []byte("verifier")) || !strings.Contains(r.Header.Get("Cache-Control"), "no-store") {
+			t.Fatal("unsafe response")
+		}
+		var env struct {
+			Data struct {
+				ID  string `json:"id"`
+				URL string `json:"authorization_url"`
+			} `json:"data"`
+		}
+		_ = json.Unmarshal(b, &env)
+		u, _ := url.Parse(env.Data.URL)
+		return env.Data.ID, u.Query().Get("state")
+	}
+	id, state := start()
+	other := newTestClient(t, a)
+	other.login("workflow-test-password")
+	res = other.do("POST", "/api/v1/claude-oauth/sessions/"+id+"/exchange", `{"result":"code#`+state+`"}`)
+	if res.StatusCode != 404 {
+		t.Fatalf("other session %d", res.StatusCode)
+	}
+	res.Body.Close()
+	res = c.do("POST", "/api/v1/claude-oauth/sessions/"+id+"/exchange", `{"result":"code#wrong"}`)
+	if res.StatusCode != 422 {
+		t.Fatalf("wrong state %d", res.StatusCode)
+	}
+	res.Body.Close()
+	res = c.do("DELETE", "/api/v1/claude-oauth/sessions/"+id, ``)
+	res.Body.Close()
+	res = c.do("POST", "/api/v1/claude-oauth/sessions/"+id+"/exchange", `{"result":"code"}`)
+	if res.StatusCode != 404 {
+		t.Fatalf("cancelled %d", res.StatusCode)
+	}
+	res.Body.Close()
+	id, _ = start()
+	a.oauth.mu.Lock()
+	p := a.oauth.items[id]
+	p.expires = time.Now().Add(-time.Second)
+	a.oauth.items[id] = p
+	a.oauth.mu.Unlock()
+	res = c.do("POST", "/api/v1/claude-oauth/sessions/"+id+"/exchange", `{"result":"code"}`)
+	if res.StatusCode != 404 {
+		t.Fatalf("expired %d", res.StatusCode)
+	}
+	res.Body.Close()
+	id, _ = start()
+	start()
+	res = c.do("POST", "/api/v1/claude-oauth/sessions/"+id+"/exchange", `{"result":"code"}`)
+	if res.StatusCode != 404 {
+		t.Fatalf("replaced %d", res.StatusCode)
+	}
+	res.Body.Close()
+}
+
+func TestOnboardPoolProxyCanReplaceMissingCredentialURL(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	_, err := a.DB.Exec(`INSERT INTO proxies(id,scheme,host,port,enabled) VALUES('pool','http','127.0.0.1',9090,1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := deliveryBody()
+	body["proxy_id"] = "pool"
+	delete(body["auth_json"].(map[string]any), "proxy_url")
+	w := onboardRequest(a, body, "pool-without-url")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("onboard %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestClaudeOAuthConsumedAfterProxyFailureAndRequiresCSRF(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	_, err := a.DB.Exec(`INSERT INTO proxies(id,scheme,host,port,enabled) VALUES('oauth-pool','http','127.0.0.1',9090,1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, a)
+	c.login("workflow-test-password")
+	old := c.csrf
+	c.csrf = "wrong"
+	res := c.do("POST", "/api/v1/claude-oauth/sessions", `{}`)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("csrf status %d", res.StatusCode)
+	}
+	res.Body.Close()
+	c.csrf = old
+	res = c.do("POST", "/api/v1/claude-oauth/sessions", `{"proxy_id":"oauth-pool"}`)
+	var env struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if res.StatusCode != 201 {
+		t.Fatalf("start %d", res.StatusCode)
+	}
+	_ = json.NewDecoder(res.Body).Decode(&env)
+	res.Body.Close()
+	_, err = a.DB.Exec(`UPDATE proxies SET enabled=0 WHERE id='oauth-pool'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/claude-oauth/sessions/" + env.Data.ID + "/exchange"
+	res = c.do("POST", path, `{"result":"code"}`)
+	if res.StatusCode != 422 {
+		t.Fatalf("disabled proxy %d", res.StatusCode)
+	}
+	res.Body.Close()
+	res = c.do("POST", path, `{"result":"code"}`)
+	if res.StatusCode != 404 {
+		t.Fatalf("replayed %d", res.StatusCode)
+	}
+	res.Body.Close()
+}
+
+func TestClaudeOAuthRequiresOnboardPermission(t *testing.T) {
+	a, admin := rbacApp(t)
+	res := admin.do("POST", "/api/v1/users", `{"username":"oauth-viewer","password":"viewer-password-1","role_ids":["role-viewer"]}`)
+	if res.StatusCode != 201 {
+		t.Fatalf("create viewer %d", res.StatusCode)
+	}
+	res.Body.Close()
+	viewer := newTestClient(t, a)
+	viewer.loginAs("oauth-viewer", "viewer-password-1")
+	for _, call := range []string{"POST /api/v1/claude-oauth/sessions", "POST /api/v1/claude-oauth/sessions/test/exchange", "DELETE /api/v1/claude-oauth/sessions/test"} {
+		method, path, _ := strings.Cut(call, " ")
+		res = viewer.do(method, path, `{}`)
+		if res.StatusCode != 403 {
+			t.Fatalf("permission %s: %d", call, res.StatusCode)
+		}
+		res.Body.Close()
+	}
+}

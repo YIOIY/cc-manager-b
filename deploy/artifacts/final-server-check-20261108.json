@@ -1,0 +1,22 @@
+{
+  "health": {
+    "database": "ok",
+    "ok": true,
+    "sessions": 0,
+    "uptime_seconds": 173,
+    "version": "deploy-20261108",
+    "workers": {
+      "bills_last_tick": "2026-11-08T12:42:01Z",
+      "janitor_last_tick": null,
+      "jobs_last_tick": "2026-11-08T12:42:01Z",
+      "metrics_last_tick": "2026-11-08T12:41:09Z",
+      "schedule_last_tick": "2026-11-08T12:41:09Z"
+    }
+  },
+  "systemd": "NRestarts=0\nExecMainStatus=0\nActiveState=active\nUnitFileState=enabled\n",
+  "journal_error_count": 0,
+  "temporary_key_removed": true,
+  "temporary_sshd_override_removed": true,
+  "pubkeyauthentication": "no",
+  "release_binary_sha256": "f5b7646a245e01b48b6c864383e13ed2592e8808782e0c16bd1a9e9fc9bf35a7"
+}

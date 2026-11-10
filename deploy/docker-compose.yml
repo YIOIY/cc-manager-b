@@ -1,0 +1,32 @@
+services:
+  cc-manager:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    # Secrets come from an env file that is not committed; see .env.example.
+    env_file:
+      - .env
+    environment:
+      CC_MANAGER_LISTEN: 0.0.0.0:8080
+      CC_MANAGER_DB: /data/cc-manager.db
+      CC_MANAGER_TRUST_PROXY: "0"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - cc-manager-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+volumes:
+  cc-manager-data:

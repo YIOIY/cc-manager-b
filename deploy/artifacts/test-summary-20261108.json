@@ -1,0 +1,49 @@
+{
+  "go_race_tests": {
+    "command": "GOPROXY=https://goproxy.cn,direct go test -race -count=1 ./cmd/... ./internal/...",
+    "exit_code": 0,
+    "status": "passed"
+  },
+  "go_vet": {
+    "command": "GOPROXY=https://goproxy.cn,direct go vet ./cmd/... ./internal/...",
+    "exit_code": 0,
+    "status": "passed"
+  },
+  "frontend": {
+    "command": "npm ci --no-audit --no-fund && npm run build && npm test",
+    "exit_code": 0,
+    "test_files": 9,
+    "tests_passed": 30
+  },
+  "e2e": {
+    "command": "npx playwright test",
+    "exit_code": 0,
+    "tests_passed": 5
+  },
+  "public_final_check": {
+    "command": [
+      "curl",
+      "--fail",
+      "--silent",
+      "--show-error",
+      "--max-time",
+      "20",
+      "https://cc.happyaether.com/healthz"
+    ],
+    "exit_code": 0,
+    "stdout": {
+      "database": "ok",
+      "ok": true,
+      "sessions": 0,
+      "uptime_seconds": 233,
+      "version": "deploy-20261108",
+      "workers": {
+        "bills_last_tick": "2026-11-08T12:43:02Z",
+        "janitor_last_tick": null,
+        "jobs_last_tick": "2026-11-08T12:43:02Z",
+        "metrics_last_tick": "2026-11-08T12:41:09Z",
+        "schedule_last_tick": "2026-11-08T12:42:09Z"
+      }
+    }
+  }
+}

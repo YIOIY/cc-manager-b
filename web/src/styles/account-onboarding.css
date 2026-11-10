@@ -1,0 +1,348 @@
+.account-wizard .el-dialog__header {
+  position: relative;
+  display: block;
+  min-height: 0;
+  margin: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-soft);
+}
+.account-wizard .el-dialog__body {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.account-wizard .el-dialog__headerbtn {
+  top: 20px;
+  right: 12px;
+}
+.account-wizard .account-dialog-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-right: 24px;
+}
+.account-wizard .account-dialog-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--tint-50);
+  color: var(--accent-dark);
+}
+.account-wizard .account-dialog-heading h2 {
+  margin: 0;
+  color: var(--ink-soft);
+}
+.account-wizard .account-dialog-heading h2::before {
+  content: none;
+}
+.account-wizard .account-dialog-heading p {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.account-wizard .credential-manual > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.account-wizard .credential-manual[open] > summary {
+  margin-bottom: 16px;
+}
+.account-wizard .credential-field-label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+.account-wizard .credential-field-label code {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.account-wizard .credential-paste-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.account-wizard .account-optional-section {
+  padding: 14px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.account-wizard .account-optional-section > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+.account-wizard .account-optional-section > summary > svg {
+  margin-left: auto;
+}
+.account-wizard .account-optional-section > summary strong {
+  font-weight: 500;
+}
+.account-wizard .account-optional-icon {
+  display: flex;
+}
+.account-wizard .account-optional-body {
+  padding-top: 20px;
+}
+.account-wizard .is-flash {
+  animation: onboarding-field-flash 1.2s ease-out;
+}
+@keyframes onboarding-field-flash {
+  30% {
+    box-shadow: 0 0 0 3px var(--pending-soft);
+  }
+}
+
+.account-wizard.account-create-dialog.create-dialog {
+  width: min(760px, calc(100vw - 32px)) !important;
+  display: flex;
+  flex-direction: column;
+  max-height: 92dvh;
+}
+.account-wizard .el-dialog__header {
+  flex: none;
+  padding: 22px 28px 18px;
+}
+.account-wizard .el-dialog__body {
+  padding: 20px 28px;
+  max-height: none;
+  min-height: 0;
+  flex: 1 1 auto;
+  background: var(--surface);
+}
+.account-wizard .el-dialog__footer {
+  flex: none;
+  padding: 16px 28px;
+  border-top: 1px solid var(--line-soft);
+}
+.account-wizard .account-dialog-heading h2 {
+  font-size: 20px;
+  font-weight: 600;
+}
+.account-wizard .account-dialog-heading p {
+  color: var(--muted);
+}
+.wizard-steps {
+  display: flex;
+  list-style: none;
+  padding: 0;
+  margin: 20px 0 0;
+  gap: 12px;
+}
+.wizard-steps li {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.wizard-steps li > span {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--tint-50);
+}
+.wizard-steps li[aria-current='step'] {
+  color: var(--accent-dark);
+  font-weight: 600;
+}
+.wizard-steps li[aria-current='step'] > span {
+  background: var(--accent-dark);
+  color: var(--surface);
+}
+.wizard-steps li.is-complete {
+  color: var(--accent-dark);
+}
+.wizard-page {
+  padding: 0;
+}
+.wizard-connection-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0 16px;
+}
+.wizard-import,
+.wizard-known {
+  padding: 14px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.wizard-import > summary,
+.wizard-known > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.wizard-import .credential-paste {
+  margin: 12px 0 0;
+}
+.wizard-inline-notice {
+  padding: 10px 0;
+  color: var(--accent-dark);
+  font-size: 12px;
+}
+.wizard-connected,
+.wizard-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 20px;
+}
+.wizard-connected > svg {
+  color: var(--accent-dark);
+  flex: none;
+}
+.wizard-connected > div,
+.wizard-identity > div {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.wizard-connected strong,
+.wizard-identity strong {
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+.wizard-connected p,
+.wizard-identity p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wizard-badge {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--tint-50);
+  color: var(--accent-dark);
+}
+.wizard-date-hint {
+  margin: -10px 0 20px;
+}
+.wizard-facts {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 12px 18px;
+  margin: 18px 0;
+  font-size: 13px;
+}
+.wizard-facts dt {
+  color: var(--muted);
+}
+.wizard-facts dd {
+  margin: 0;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+.wizard-review {
+  padding: 12px 0;
+}
+.wizard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.account-wizard .wizard-footer .create-dialog-actions {
+  margin-left: 0;
+}
+.account-wizard .oauth-intro {
+  margin-bottom: 14px;
+}
+.wizard-device-import {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+.account-wizard .credential-manual {
+  margin: 0;
+  padding: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0;
+}
+.account-wizard .credential-manual .field-hint {
+  margin-left: auto;
+}
+.account-wizard .oauth-link-row {
+  flex-wrap: wrap;
+}
+.account-wizard .oauth-link-row .el-input {
+  flex: 1 1 260px;
+}
+.account-wizard .oauth-open {
+  width: auto;
+  padding: 0 10px;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.account-wizard .account-optional-section {
+  margin-top: 0;
+}
+@media (max-width: 600px) {
+  .account-wizard .el-dialog__header {
+    padding: 18px 16px 14px;
+  }
+  .account-wizard .el-dialog__body {
+    padding: 16px;
+  }
+  .account-wizard .el-dialog__footer {
+    padding: 12px 16px;
+  }
+  .account-wizard .account-dialog-heading {
+    gap: 10px;
+  }
+  .account-wizard .account-dialog-heading h2 {
+    font-size: 18px;
+  }
+  .wizard-steps {
+    gap: 4px;
+  }
+  .wizard-steps li {
+    gap: 5px;
+  }
+  .wizard-facts {
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .wizard-connection-actions {
+    flex-wrap: wrap;
+  }
+  .account-wizard .wizard-footer .el-button {
+    min-width: 0;
+    padding: 9px 10px;
+  }
+  .wizard-footer {
+    gap: 6px;
+  }
+  .wizard-footer .create-dialog-actions {
+    gap: 4px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .account-wizard .is-flash {
+    animation: none;
+  }
+}

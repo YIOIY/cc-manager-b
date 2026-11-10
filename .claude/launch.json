@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cc-manager-preview",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "CC_MANAGER_LISTEN=127.0.0.1:18090 CC_MANAGER_DB=/tmp/cc-manager-preview.db CC_MANAGER_ADMIN_PASSWORD=preview-password-123 CC_MANAGER_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= CC_MANAGER_WEB_DIR=web/dist CC_MANAGER_LOG_LEVEL=info ./bin/cc-manager"
+      ],
+      "port": 18090
+    },
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd web && VITE_API_TARGET=http://127.0.0.1:18090 npx vite --port 5173 --strictPort"
+      ],
+      "port": 5173
+    }
+  ]
+}

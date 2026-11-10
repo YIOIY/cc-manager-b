@@ -1,0 +1,70 @@
+{
+  "previous_release": "/opt/cc-manager/releases/release-20261105",
+  "previous_binary_sha256": "36efa2d24ea25799b4583274ae90bf5710fa2290800df4f2a8f56fad817481d0",
+  "new_binary_sha256": "f5b7646a245e01b48b6c864383e13ed2592e8808782e0c16bd1a9e9fc9bf35a7",
+  "before_counts": {
+    "accounts": 0,
+    "proxies": 0,
+    "platform_connections": 0,
+    "jobs": 0,
+    "audit_events": 0,
+    "account_secrets": 0,
+    "deliveries": 0,
+    "idempotency_keys": 0,
+    "proxy_checks": 0,
+    "imports": 0,
+    "usage_metrics": 0,
+    "platform_links": 0,
+    "platform_metric_snapshots": 0,
+    "platform_bill_daily": 0,
+    "sync_runs": 0
+  },
+  "downtime_seconds": 1.33,
+  "health": {
+    "database": "ok",
+    "ok": true,
+    "sessions": 1,
+    "uptime_seconds": 91,
+    "version": "deploy-20261108",
+    "workers": {
+      "bills_last_tick": "2026-11-08T12:40:39Z",
+      "janitor_last_tick": null,
+      "jobs_last_tick": "2026-11-08T12:40:39Z",
+      "metrics_last_tick": null,
+      "schedule_last_tick": "2026-11-08T12:40:09Z"
+    }
+  },
+  "after_counts": {
+    "accounts": 0,
+    "proxies": 0,
+    "platform_connections": 0,
+    "jobs": 0,
+    "audit_events": 1,
+    "account_secrets": 0,
+    "deliveries": 0,
+    "idempotency_keys": 0,
+    "proxy_checks": 0,
+    "imports": 0,
+    "usage_metrics": 0,
+    "platform_links": 0,
+    "platform_metric_snapshots": 0,
+    "platform_bill_daily": 0,
+    "sync_runs": 0
+  },
+  "integrity_check": "ok",
+  "migrations": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "existing_env_values_preserved": true,
+  "nginx_unchanged": true,
+  "services": {
+    "cc-manager": "active",
+    "nginx": "active",
+    "cloudflared": "active"
+  },
+  "systemd": "NRestarts=0\nExecMainStatus=0\nActiveState=active\n"
+}

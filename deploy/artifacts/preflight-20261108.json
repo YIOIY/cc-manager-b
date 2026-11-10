@@ -1,0 +1,24 @@
+{
+  "release": "release-20261108-203718",
+  "integrity_check": "ok",
+  "migrations": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "bootstrap_admin_count": 1,
+  "rotation_copy_only": {
+    "pending": {
+      "account_secrets": 0,
+      "accounts": 0,
+      "platform_connections": 0,
+      "proxies": 0,
+      "proxy_probe_settings": 0
+    },
+    "rewritten": {},
+    "dry_run": false
+  },
+  "existing_encrypted_business_rows": 0
+}

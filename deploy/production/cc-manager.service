@@ -1,0 +1,48 @@
+[Unit]
+Description=CC Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cc-manager
+Group=cc-manager
+WorkingDirectory=/opt/cc-manager/current
+EnvironmentFile=/etc/cc-manager/cc-manager.env
+ExecStart=/opt/cc-manager/current/cc-manager
+Restart=always
+RestartSec=3
+TimeoutStopSec=40
+KillSignal=SIGTERM
+StateDirectory=cc-manager
+StateDirectoryMode=0700
+UMask=0077
+LimitNOFILE=65536
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

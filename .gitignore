@@ -1,0 +1,51 @@
+# 本地运行与验收产物（含真实配置、密钥、截图、项目副本）
+.local-run/
+.tools/
+.omx/
+web/.omx/
+
+# SQLite 数据库及其日志
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# 构建产物
+/cc-manager
+/cc-manager.next
+*.exe
+*.exe~
+/bin/
+/dist/
+web/dist/
+web/node_modules/
+web/tsconfig.tsbuildinfo
+web/src/**/*.js
+web/src/**/*.vue.js
+deploy/artifacts/*.tar.gz
+
+# 密钥与环境
+*.pem
+*.key
+*.env
+!deploy/.env.example
+!deploy/production/cc-manager.env.example
+deploy/production/部署验收记录-*.md
+
+# 编辑器与系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
+coverage.out
+web/test-results/
+web/playwright-report/
+web/blob-report/
+
+# 部署运行证据：按日期的运行目录与验收/分析记录含真实主机、账号邮箱和发布包
+deploy/artifacts/*/
+deploy/artifacts/**/*.tar.gz
+deploy/production/*-2026*.md
+
+# 浏览器自动化的临时快照
+.playwright-mcp/

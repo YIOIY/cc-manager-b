@@ -1,0 +1,140 @@
+{
+  "url": "https://cc.happyaether.com",
+  "result": "PASS",
+  "checks": [
+    {
+      "method": "GET",
+      "path": "/",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/assets/index-Bx3oTOdq.js",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/assets/index-Dlzm2ar0.css",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts",
+      "status": 401
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/session",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/proxies",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/platform-connections",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/jobs",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/usage",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit-events",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts",
+      "status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts",
+      "status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts/eoP2QoFcs8BLwW5RS-PEdK69w_qBDTsJVZ9prUyxlIQ/archive",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts/eoP2QoFcs8BLwW5RS-PEdK69w_qBDTsJVZ9prUyxlIQ/restore",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts",
+      "status": 401
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/session",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts/eoP2QoFcs8BLwW5RS-PEdK69w_qBDTsJVZ9prUyxlIQ/archive",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "status": 200
+    }
+  ],
+  "persistence_after_restart": true,
+  "encrypted_password_storage": true,
+  "test_account_removed": true,
+  "time_utc": "2026-11-05T14:13:05Z"
+}

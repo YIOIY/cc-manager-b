@@ -1,0 +1,106 @@
+{
+  "url": "https://cc.happyaether.com",
+  "at": "2026-11-08T12:40:03.544Z",
+  "routes": [
+    {
+      "path": "/",
+      "status": 200
+    },
+    {
+      "path": "/accounts",
+      "status": 200
+    },
+    {
+      "path": "/proxies",
+      "status": 200
+    },
+    {
+      "path": "/jobs",
+      "status": 200
+    },
+    {
+      "path": "/platform-bills",
+      "status": 200
+    },
+    {
+      "path": "/connections",
+      "status": 200
+    },
+    {
+      "path": "/audit",
+      "status": 200
+    },
+    {
+      "path": "/users",
+      "status": 200
+    }
+  ],
+  "endpoints": [
+    {
+      "path": "/api/v1/dashboard",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/accounts",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/proxies",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/proxy-settings",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/platform-connections",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/audit-events",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/users",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/roles",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/permissions",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/platform-usage",
+      "status": 200
+    }
+  ],
+  "health": {
+    "database": "ok",
+    "ok": true,
+    "sessions": 0,
+    "uptime_seconds": 54,
+    "version": "deploy-20261108",
+    "workers": {
+      "bills_last_tick": "2026-11-08T12:40:03Z",
+      "janitor_last_tick": null,
+      "jobs_last_tick": "2026-11-08T12:40:03Z",
+      "metrics_last_tick": null,
+      "schedule_last_tick": null
+    }
+  },
+  "unauthenticated_status": 401,
+  "existing_admin_login": true,
+  "secure_httponly_cookie": true,
+  "invalid_csrf_status": 403,
+  "invalid_origin_status": 403,
+  "page_errors": [],
+  "failed_assets": [],
+  "logout_status": 200
+}
