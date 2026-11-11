@@ -1146,6 +1146,12 @@ func mergeMaps(a, b map[string]any) map[string]any {
 // longest streak is reported, so a working connection can never hide a
 // broken one.
 func (a *App) metricsSyncHealth(ctx context.Context) (map[string]any, error) {
+	return a.syncHealth(ctx, "platform-usage")
+}
+
+// syncHealth is metricsSyncHealth for any sync kind (platform-usage,
+// web-accounts, web-bills).
+func (a *App) syncHealth(ctx context.Context, kind string) (map[string]any, error) {
 	out := map[string]any{"sync_status": "never", "last_sync_at": "", "last_sync_state": "", "error_code": "", "error_message": "", "error_hint": "", "consecutive_failures": 0, "next_attempt_at": ""}
 	rows, err := a.DB.QueryContext(ctx, `SELECT id FROM platform_connections WHERE enabled=1`)
 	if err != nil {
@@ -1172,7 +1178,7 @@ func (a *App) metricsSyncHealth(ctx context.Context) (map[string]any, error) {
 	now := time.Now()
 	for _, id := range ids {
 		var r latestRun
-		err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(finished_at,started_at),state,COALESCE(error_code,''),COALESCE(error_message,'') FROM sync_runs WHERE connection_id=? AND kind='platform-usage' AND state<>'running' ORDER BY started_at DESC,rowid DESC LIMIT 1`, id).Scan(&r.at, &r.state, &r.code, &r.message)
+		err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(finished_at,started_at),state,COALESCE(error_code,''),COALESCE(error_message,'') FROM sync_runs WHERE connection_id=? AND kind=? AND state<>'running' ORDER BY started_at DESC,rowid DESC LIMIT 1`, id, kind).Scan(&r.at, &r.state, &r.code, &r.message)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -1186,7 +1192,7 @@ func (a *App) metricsSyncHealth(ctx context.Context) (map[string]any, error) {
 			}
 			continue
 		}
-		n, next, skip, err := a.metricsBackoff(ctx, id, now)
+		n, next, skip, err := a.syncBackoff(ctx, id, kind, now)
 		if err != nil {
 			return nil, err
 		}

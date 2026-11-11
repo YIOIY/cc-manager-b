@@ -12,6 +12,7 @@ const (
 	importRetention        = 24 * time.Hour
 	idempotencyRetention   = 7 * 24 * time.Hour
 	usageSyncRunRetention  = 7 * 24 * time.Hour
+	webUsageRetention      = 90 * 24 * time.Hour
 	proxyChecksPerProxy    = 100
 	janitorInterval        = 15 * time.Minute
 	sessionSweeperInterval = time.Minute
@@ -76,7 +77,8 @@ func (a *App) cleanup(ctx context.Context) error {
 	}{
 		{`DELETE FROM imports WHERE expires_at<?`, []any{cutoff(importRetention)}},
 		{`DELETE FROM idempotency_keys WHERE created_at<?`, []any{cutoff(idempotencyRetention)}},
-		{`DELETE FROM sync_runs WHERE kind='platform-usage' AND started_at<?`, []any{cutoff(usageSyncRunRetention)}},
+		{`DELETE FROM sync_runs WHERE kind IN ('platform-usage','web-accounts','web-bills') AND started_at<?`, []any{cutoff(usageSyncRunRetention)}},
+		{`DELETE FROM platform_usage_snapshots WHERE observed_at<?`, []any{cutoff(webUsageRetention)}},
 		{`DELETE FROM proxy_checks WHERE id IN (SELECT id FROM (SELECT id,ROW_NUMBER() OVER (PARTITION BY proxy_id ORDER BY checked_at DESC,rowid DESC) AS n FROM proxy_checks) WHERE n>?)`, []any{proxyChecksPerProxy}},
 		{`DELETE FROM proxy_check_details WHERE check_id NOT IN (SELECT id FROM proxy_checks)`, nil},
 	}

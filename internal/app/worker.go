@@ -421,10 +421,16 @@ func metricsBackoffDelay(consecutive int) time.Duration {
 	return d
 }
 
-// metricsBackoff counts consecutive non-successful metric runs for a
-// connection since its last success (and since its last edit) and reports
-// whether the next run should wait.
+// metricsBackoff is syncBackoff for the OpenAPI metrics sync.
 func (a *App) metricsBackoff(ctx context.Context, connectionID string, at time.Time) (consecutive int, next time.Time, skip bool, err error) {
+	return a.syncBackoff(ctx, connectionID, "platform-usage", at)
+}
+
+// syncBackoff counts consecutive non-successful runs of one sync kind for a
+// connection since its last success (and since its last edit) and reports
+// whether the next run should wait. Kinds back off independently: a failing
+// web login never delays the metrics sync and vice versa.
+func (a *App) syncBackoff(ctx context.Context, connectionID, kind string, at time.Time) (consecutive int, next time.Time, skip bool, err error) {
 	var edited string
 	err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(updated_at,'') FROM platform_connections WHERE id=?`, connectionID).Scan(&edited)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -436,14 +442,14 @@ func (a *App) metricsBackoff(ctx context.Context, connectionID string, at time.T
 	}
 	// The streak starts after the later of the last success and the last edit.
 	var since string
-	if err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(started_at),'') FROM sync_runs WHERE connection_id=? AND kind='platform-usage' AND state='succeeded' AND started_at>?`, connectionID, edited).Scan(&since); err != nil {
+	if err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(started_at),'') FROM sync_runs WHERE connection_id=? AND kind=? AND state='succeeded' AND started_at>?`, connectionID, kind, edited).Scan(&since); err != nil {
 		return 0, time.Time{}, false, err
 	}
 	if since < edited {
 		since = edited
 	}
 	var latest string
-	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MAX(started_at),'') FROM sync_runs WHERE connection_id=? AND kind='platform-usage' AND state NOT IN ('succeeded','running') AND started_at>?`, connectionID, since).Scan(&consecutive, &latest); err != nil || consecutive == 0 {
+	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MAX(started_at),'') FROM sync_runs WHERE connection_id=? AND kind=? AND state NOT IN ('succeeded','running') AND started_at>?`, connectionID, kind, since).Scan(&consecutive, &latest); err != nil || consecutive == 0 {
 		return consecutive, time.Time{}, false, err
 	}
 	last, perr := time.Parse(time.RFC3339, latest)
