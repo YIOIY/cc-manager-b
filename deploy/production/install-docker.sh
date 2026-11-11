@@ -85,6 +85,52 @@ printf 'command="%s/ci-entry.sh",restrict %s\n' "$root" "$(head -n1 "$pubkey_fil
 chown "$deploy_user:$deploy_user" "$home/.ssh/authorized_keys"
 chmod 0600 "$home/.ssh/authorized_keys"
 
+# Allow key login for the deploy user only. Servers that disable public keys
+# globally (password-only) keep that for every other account. Appended to the
+# end of sshd_config: a Match block in sshd_config.d (included at the top)
+# would also capture the main file's settings that follow it.
+sshd_config=/etc/ssh/sshd_config
+if [ "${SKIP_SSHD:-0}" != 1 ] && [ -f "$sshd_config" ]; then
+    begin='# BEGIN cc-manager deploy user (managed by install-docker.sh)'
+    end='# END cc-manager deploy user'
+    cp -p "$sshd_config" "$sshd_config.cc-manager.bak"
+    python3 - "$sshd_config" "$begin" "$end" "$deploy_user" <<'PY'
+import sys
+path, begin, end, user = sys.argv[1:]
+text = open(path, encoding="utf-8").read()
+if begin in text:  # replace our previous block
+    head, rest = text.split(begin, 1)
+    text = head.rstrip("\n") + "\n" + rest.split(end, 1)[1].lstrip("\n")
+block = f"""{begin}
+Match User {user}
+    PubkeyAuthentication yes
+    AuthenticationMethods publickey
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AllowTcpForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+{end}
+"""
+open(path, "w", encoding="utf-8").write(text.rstrip("\n") + "\n\n" + block)
+PY
+    if ! sshd -t; then
+        mv -f "$sshd_config.cc-manager.bak" "$sshd_config"
+        echo "sshd rejected the new config; restored $sshd_config, nothing reloaded" >&2
+        exit 1
+    fi
+    effective=$(sshd -T -C "user=$deploy_user,host=ci,addr=192.0.2.1" 2>/dev/null)
+    grep -qix 'pubkeyauthentication yes' <<<"$effective" || { echo "WARNING: sshd still reports pubkey auth off for $deploy_user" >&2; }
+    if grep -qiE '^(allowusers|allowgroups) ' <<<"$effective"; then
+        echo "WARNING: sshd has AllowUsers/AllowGroups; add $deploy_user there or CI cannot log in:" >&2
+        grep -iE '^(allowusers|allowgroups) ' <<<"$effective" >&2
+    fi
+    # reload keeps existing sessions open
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd
+    echo "sshd: key login enabled for $deploy_user only (backup: $sshd_config.cc-manager.bak)"
+fi
+
 sudoers=/etc/sudoers.d/cc-manager-deploy
 printf '%s ALL=(root) NOPASSWD: %s/docker-deploy.sh\nDefaults:%s !requiretty\n' "$deploy_user" "$root" "$deploy_user" > "$sudoers.tmp"
 chmod 0440 "$sudoers.tmp"

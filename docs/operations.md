@@ -69,6 +69,8 @@ Run workflow ─▶ 测试 ─▶ 构建并推送镜像 ─▶ SSH: deploy <tag>
    ```
    脚本把 `compose.yml`、`docker-deploy.sh`、`backup.sh`、`ci-entry.sh` 安装到 `/opt/cc-manager/docker`（root 所有），创建 `cc-deploy` 用户：它的 SSH 密钥被绑定为只能执行 `ci-entry.sh`，sudo 只允许执行 `docker-deploy.sh`。脚本**不会**切换流量。
 
+   如果服务器全局关闭了公钥登录（只允许密码），脚本会在 `/etc/ssh/sshd_config` 末尾追加一个只对 `cc-deploy` 生效的 `Match User` 块：该用户只能用密钥登录，不能转发端口、不能分配终端；其他账号的登录方式不变。改动先经 `sshd -t` 校验，失败则恢复原文件；备份在 `/etc/ssh/sshd_config.cc-manager.bak`。用 `SKIP_SSHD=1` 可跳过这一步。
+
    安装前它会检查环境文件和代理池（只报告键名，不打印值）：
    - **环境文件里含 `$` 的值必须用单引号包住**，例如 `CC_MANAGER_ADMIN_PASSWORD_HASH='$argon2id$v=19$…'`。Docker Compose 会展开未加引号的 `$`，哈希会被改坏。存在这种值时安装和部署都会拒绝继续。
    - 如果 `CC_MANAGER_SUPPLIER_PROXY` 或代理池里的代理指向 `127.0.0.1`/`localhost`，会给出警告：容器里的回环地址是容器自己，切换后要改成 `host.docker.internal`（compose 已把它映射到宿主机），并让宿主机上的代理监听 Docker 网桥地址（如 `172.17.0.1`）或 `0.0.0.0`（配合防火墙）。
