@@ -159,10 +159,24 @@ sudo docker exec -it cc-manager /app/cc-manager reset-password admin   # Docker 
 | 账单任务 `CONNECTION_CHANGED` | 任务创建后平台连接的时区或版本变化，重新创建任务 |
 | `/healthz` 返回 503 | 数据库文件权限或磁盘问题，检查 `StateDirectory` |
 | 容器内账单同步报时区错误 | 镜像已含 tzdata 且二进制内嵌 tzdata；检查连接时区是否为合法 IANA 名称 |
+| 仪表盘「网页同步」显示 `WEB_LOGIN_FAILED` | 供应商后台密码变了或被平台锁定。到平台连接里重新填写网页登录密码并点「测试登录」 |
+| 仪表盘「网页同步」显示 `WEB_SUSPENDED` | 登录连续失败 3 次后系统主动暂停，避免把后台账号刷到锁定。重新保存密码或「测试登录」成功即恢复 |
+| 仪表盘「网页同步」显示 `WEB_ENDPOINT_MISSING` | 平台改版，网页接口路径变了；OpenAPI 同步不受影响，联系维护者更新 `internal/supplier/web.go` |
+| 账号卡片提示「平台已移除」 | 平台列表里不再有这条交付；本地账号和历史数据保留，到「平台对账」里核对 |
 
 ## 6.1 指标
 
 `GET /metrics` 输出 Prometheus 文本格式，可直接被 Prometheus / Grafana Agent 抓取（服务只监听回环地址，抓取器需部署在同机或经 nginx 加 Basic Auth 转发）。指标族：`cc_manager_http_requests_total{class}`、`cc_manager_http_request_duration_seconds_{sum,count}`、`cc_manager_http_inflight`、`cc_manager_sessions`、`cc_manager_uptime_seconds`、`cc_manager_worker_last_tick_seconds{worker}`、`cc_manager_jobs{state}`、`cc_manager_sync_runs{kind,state}`、`cc_manager_accounts{archived}`、`cc_manager_proxies{enabled}`、`cc_manager_users{enabled}`。建议告警：`time() - cc_manager_worker_last_tick_seconds > 300`（后台循环停转）、`cc_manager_jobs{state="failed"}` 持续增长、5xx 占比。
+
+## 6.2 供应商网页只读通道
+
+在「平台连接」里填写供应商网页后台的登录账号和密码后，系统会自动登录后台读取：账号列表与状态（每 10 分钟）、封禁/验证失败原因、每个账号的用量块（5 小时/7 天窗口占比、累计 Token、累计花费）、按模型的每日账单（每 2 小时，最近 7 天）。平台上有、本地没有的账号会自动建成本地账号（标「来自平台」，没有密码和凭证）；同一邮箱换了新交付 ID 时本地账号自动跟到最新的那条，旧记录在「平台对账」里可查。
+
+- 密码用主密钥加密保存在 `platform_connections.web_password_secret`，会话令牌只在内存里（5 小时），重启后重新登录一次。
+- 只调用读取接口，不会修改平台上的任何数据。
+- 服务启动后 30 秒先跑一次账号同步、60 秒跑一次账单同步，之后按周期进行。整轮失败（登录、列表读不到）时按连接退避（2 分钟翻倍到 60 分钟），个别账号的原因读不到只记为部分成功、不退避；登录连续失败 3 次暂停该连接的网页通道，仪表盘和连接表单会提示。
+- 用量快照只在数值变化时记录，保留 90 天；`sync_runs` 里的 `web-accounts`、`web-bills` 记录与指标同步同样保留 7 天。
+- 手动触发一次账单同步：账单页「按模型消费」标签里的「立即同步」，或 `POST /api/v1/platform-usage/bills/models/sync`。
 
 ## 7. 安全基线
 

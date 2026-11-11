@@ -152,6 +152,10 @@ export interface Account {
   platform_success_rate_percent?: number
   platform_cost_fen?: number
   platform_links: PlatformLink[]
+  /** Which channel the displayed platform_status came from ('' when never observed). */
+  platform_channel?: 'web' | 'openapi' | ''
+  /** Snapshot from the supplier web console; null when the platform never listed the linked delivery. */
+  platform?: PlatformInfo | null
   onboarding_state: OnboardingState
   credentials_configured?: boolean
   password_configured?: boolean
@@ -163,6 +167,128 @@ export interface Account {
   register_device?: string
   recharge_time?: string
   warranty_period?: number | string
+}
+
+/** The console's account profile (its auth_config minus the password). */
+export interface PlatformProfile {
+  plan: string
+  plan_start_time: string
+  plan_end_time: string
+  register_time: string
+  register_location: string
+  balance: string
+  payment_method: string
+  register_device: string
+  recharge_time: string
+  warranty_period: string
+  tags: string[]
+}
+
+/** The console's "账号用量" block. Percentages are 0–100, cost in fen. */
+export interface PlatformUsage {
+  cost_fen: number
+  cost_yuan: string
+  input_tokens: number
+  output_tokens: number
+  five_hour_used_percent: number
+  five_hour_reset_at: string
+  week_used_percent: number
+  week_reset_at: string
+  observed_at: string
+}
+
+export interface PlatformInfo {
+  status: string
+  status_raw: string
+  locked: boolean
+  reason_kind: string
+  reason_text: string
+  reason_fetched_at: string
+  observed_at: string
+  aid: string
+  upstream_id: string
+  alias: string
+  provider: string
+  model: string
+  models_usable: boolean
+  remote_created_at: string
+  missing_since: string
+  auto_created: boolean
+  source_channel: 'web' | 'openapi'
+  profile: PlatformProfile
+  usage: PlatformUsage | null
+}
+
+/** One row of GET /platform-connections/{id}/remote-accounts. */
+export interface RemoteAccount extends PlatformInfo {
+  email: string
+  account_id: string
+  account: string
+  superseded_by: string
+  first_seen_at: string
+  profile_diff: string[]
+  profile_incomplete: boolean
+  profile_missing_fields: string[]
+}
+
+export interface RemoteAccountsResponse {
+  list: RemoteAccount[]
+  summary: {
+    total: number
+    linked: number
+    auto_created: number
+    unmatched: number
+    superseded: number
+    missing: number
+  }
+  counts_by_status: Record<string, number>
+  page: number
+  page_size: number
+  total: number
+}
+
+export interface BillModelRow {
+  bill_date: string
+  account_id: string
+  account: string
+  upstream_id: string
+  model_name: string
+  bill_model_name: string
+  cost_fen: number
+  cost_yuan: string
+  final: boolean
+  fetched_at: string
+  generation: number
+}
+
+export interface BillModelsResponse {
+  list: BillModelRow[]
+  by_account: { account_id: string; account: string; cost_fen: number; cost_yuan: string }[]
+  by_model: { model_name: string; cost_fen: number; cost_yuan: string }[]
+  total_cost_fen: number
+  total_cost_yuan: string
+  coverage: {
+    days_requested: number
+    days_present: number
+    today: string
+    today_final: boolean
+    today_included: boolean
+  }
+  page: number
+  page_size: number
+  total: number
+}
+
+export interface UsageHistoryPoint {
+  observed_at: string
+  cost_fen: number
+  cost_yuan: string
+  input_tokens: number
+  output_tokens: number
+  five_hour_used_percent: number
+  five_hour_reset_at: string
+  week_used_percent: number
+  week_reset_at: string
 }
 
 export interface ProxyCheck {
@@ -199,11 +325,16 @@ export interface ConnectionOption {
   base_url: string
   timezone: string
   enabled: boolean
+  /** Whether a console login is saved for the web channel. */
+  web_configured?: boolean
 }
 
 export interface PlatformConnection extends ConnectionOption {
   version: number
   token_configured: boolean
+  web_username?: string
+  web_suspended_at?: string
+  web_suspended_reason?: string
 }
 
 export interface Job {
@@ -254,6 +385,13 @@ export interface DashboardPlatform {
   error_hint?: string
   consecutive_failures?: number
   next_attempt_at?: string
+  /** Web (console) channel: the worse of the account and bill syncs. */
+  web_sync_health?: DashboardPlatform
+  web_accounts_health?: DashboardPlatform
+  web_bills_health?: DashboardPlatform
+  remote_counts_by_status?: Record<string, number>
+  near_limit_accounts?: number
+  today_model_cost_fen?: number
 }
 
 export interface PreflightCheck {

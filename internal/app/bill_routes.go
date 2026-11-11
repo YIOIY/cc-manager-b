@@ -38,6 +38,16 @@ func (a *App) billRoutes(w http.ResponseWriter, r *http.Request, path string) bo
 			a.billAccounts(w, r)
 		}
 		return true
+	case "/bills/models":
+		if requireBillMethod(w, r, "GET") {
+			a.billModels(w, r)
+		}
+		return true
+	case "/bills/models/sync":
+		if requireBillMethod(w, r, "POST") {
+			a.billModelsSync(w, r)
+		}
+		return true
 	case "/bills/sync":
 		if requireBillMethod(w, r, "POST") {
 			var in billSyncRequest

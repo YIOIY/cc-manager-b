@@ -28,6 +28,7 @@ var migrations = []migration{
 	{7, "drop-users-role", migrateDropUsersRoleV7},
 	{8, "account-delete-permission", migrateAccountDeletePermissionV8},
 	{9, "sync-run-error-code", migrateSyncRunErrorCodeV9},
+	{10, "web-channel", migrateWebChannelV10},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -318,4 +319,39 @@ func hasColumn(tx *sql.Tx, table, column string) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// webChannelColumns are the platform_connections columns the supplier web
+// (console) channel adds. They live here so the migration and baseSchema
+// agree; text columns use ” for "not set" so lists never hit NULL.
+var webChannelColumns = []string{
+	"web_username TEXT NOT NULL DEFAULT ''",
+	"web_password_secret TEXT NOT NULL DEFAULT ''",
+	"web_suspended_at TEXT NOT NULL DEFAULT ''",
+	"web_suspended_reason TEXT NOT NULL DEFAULT ''",
+}
+
+// webChannelTables hold what the web channel reads from the supplier console:
+// a snapshot of every remote account, a history of its usage block, and the
+// per-model daily bills. Shared by baseSchema and migration 10.
+const webChannelTables = `
+CREATE TABLE IF NOT EXISTS platform_remote_accounts(connection_id TEXT NOT NULL,upstream_id TEXT NOT NULL,upstream_aid TEXT NOT NULL DEFAULT '',account_email TEXT NOT NULL DEFAULT '',alias TEXT NOT NULL DEFAULT '',provider TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',models_json TEXT NOT NULL DEFAULT '[]',ext_status TEXT NOT NULL DEFAULT '',a1_status TEXT NOT NULL DEFAULT '',a2_status TEXT NOT NULL DEFAULT '',is_locked INTEGER NOT NULL DEFAULT 0,proxy_type TEXT NOT NULL DEFAULT '',usage_limit_json TEXT NOT NULL DEFAULT '{}',remark TEXT NOT NULL DEFAULT '',remote_created_at TEXT NOT NULL DEFAULT '',remote_updated_at TEXT NOT NULL DEFAULT '',first_seen_at TEXT NOT NULL DEFAULT '',last_seen_at TEXT NOT NULL DEFAULT '',missing_since TEXT NOT NULL DEFAULT '',superseded_by TEXT NOT NULL DEFAULT '',reason_kind TEXT NOT NULL DEFAULT '',reason_text TEXT NOT NULL DEFAULT '',reason_raw TEXT NOT NULL DEFAULT '',reason_fetched_at TEXT NOT NULL DEFAULT '',reason_status TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',auto_created INTEGER NOT NULL DEFAULT 0,plan TEXT NOT NULL DEFAULT '',plan_start_time TEXT NOT NULL DEFAULT '',plan_end_time TEXT NOT NULL DEFAULT '',register_time TEXT NOT NULL DEFAULT '',register_location TEXT NOT NULL DEFAULT '',balance TEXT NOT NULL DEFAULT '',payment_method TEXT NOT NULL DEFAULT '',register_device TEXT NOT NULL DEFAULT '',recharge_time TEXT NOT NULL DEFAULT '',warranty_period TEXT NOT NULL DEFAULT '',tags_json TEXT NOT NULL DEFAULT '[]',usage_cost_micro INTEGER,usage_input_tokens INTEGER,usage_output_tokens INTEGER,five_hour_used REAL,five_hour_reset_at TEXT NOT NULL DEFAULT '',week_used REAL,week_reset_at TEXT NOT NULL DEFAULT '',usage_observed_at TEXT NOT NULL DEFAULT '',raw_json TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(connection_id,upstream_id));
+CREATE INDEX IF NOT EXISTS ix_remote_accounts_account ON platform_remote_accounts(account_id);
+CREATE INDEX IF NOT EXISTS ix_remote_accounts_email ON platform_remote_accounts(connection_id,account_email);
+CREATE TABLE IF NOT EXISTS platform_usage_snapshots(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,upstream_id TEXT NOT NULL,account_id TEXT NOT NULL DEFAULT '',observed_at TEXT NOT NULL,usage_cost_micro INTEGER,usage_input_tokens INTEGER,usage_output_tokens INTEGER,five_hour_used REAL,five_hour_reset_at TEXT NOT NULL DEFAULT '',week_used REAL,week_reset_at TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS ix_usage_snapshots_account ON platform_usage_snapshots(account_id,observed_at);
+CREATE INDEX IF NOT EXISTS ix_usage_snapshots_observed ON platform_usage_snapshots(observed_at);
+CREATE TABLE IF NOT EXISTS platform_bill_models(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,upstream_id TEXT NOT NULL,account_id TEXT NOT NULL DEFAULT '',bill_date TEXT NOT NULL,model_name TEXT NOT NULL,bill_model_name TEXT NOT NULL DEFAULT '',cost_fen INTEGER NOT NULL DEFAULT 0,source_range_json TEXT NOT NULL DEFAULT '{}',fetched_at TEXT NOT NULL,generation INTEGER NOT NULL DEFAULT 0,final INTEGER NOT NULL DEFAULT 0,UNIQUE(connection_id,upstream_id,bill_date,model_name));
+CREATE INDEX IF NOT EXISTS ix_bill_models_connection_date ON platform_bill_models(connection_id,bill_date);
+CREATE INDEX IF NOT EXISTS ix_bill_models_account_date ON platform_bill_models(account_id,bill_date);
+`
+
+// migrateWebChannelV10 adds the supplier web channel: console credentials and
+// suspension state on the connection, plus the three read-only snapshot tables.
+func migrateWebChannelV10(tx *sql.Tx) error {
+	if err := addColumns(tx, "platform_connections", webChannelColumns); err != nil {
+		return err
+	}
+	_, err := tx.Exec(webChannelTables)
+	return err
 }

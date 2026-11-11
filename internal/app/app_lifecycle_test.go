@@ -136,6 +136,11 @@ func TestHealthzReportsDatabaseAndVersion(t *testing.T) {
 	if w.Header().Get("X-Request-ID") == "" || w.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatal("observability headers missing")
 	}
+	for _, key := range []string{`"web_accounts_last_tick"`, `"web_bills_last_tick"`} {
+		if !strings.Contains(w.Body.String(), key) {
+			t.Fatalf("healthz lacks %s: %s", key, w.Body.String())
+		}
+	}
 }
 
 func TestSPAHandlerFallsBackToIndexAndNeverListsDirectories(t *testing.T) {

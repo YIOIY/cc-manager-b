@@ -467,3 +467,20 @@ Token受控轮换、允许套餐和启停修改仍增加版本，已排队上传
 - `PATCH /proxies/{id}`（`proxies.update`）：`{name?, scheme?, host?, port?, username?, password?, clear_password?, enabled?, expected_version?}`，返回 `{id, version}`；校验同创建，版本不匹配 `409 VERSION_CONFLICT`。
 - `DELETE /proxies/{id}`（`proxies.delete`）：仍被未归档账号绑定时 `409 PROXY_IN_USE`；成功时删除检测记录并把已归档账号的 `proxy_id` 置空，返回 `{id, deleted:true}`。
 - `GET /proxies` 新增 `username`、`password_configured`。审计新增 `proxy.update`、`proxy.delete`。
+
+## 附录：供应商网页只读通道（2026-11-12）
+
+以下路径均带 `/api/v1` 前缀。数据来自服务端定时读取供应商网页后台（账号列表每 10 分钟、按模型账单每 2 小时），本地只保存快照，接口不直接访问平台。
+
+| 方法与路径 | 实际行为 |
+| --- | --- |
+| `POST /platform-connections`、`PATCH /platform-connections/{id}` | 新增字段 `web_username`、`web_password`（明文只出现在请求里，服务端加密保存；更新时密码留空表示不变）、`web_clear: true`（清除网页登录并解除暂停）。列表与 `GET /lookups/platform-connections` 返回 `web_username`、`web_configured`、`web_suspended_at`、`web_suspended_reason`，永不返回密码 |
+| `POST /platform-connections/{id}/web-login-test` | 用保存的凭证登录一次，返回 `{ok, supplier_name, expires_in, tested_at}`；未配置 422 `WEB_NOT_CONFIGURED`，失败 502 `WEB_LOGIN_FAILED`；成功会解除"登录连续失败"暂停 |
+| `GET /platform-connections/{id}/remote-accounts` | 平台账号对账：`status`、`q`、`page`、`page_size`；每项为账号 `platform` 块加 `email`、`account_id`、`account`、`superseded_by`、`first_seen_at`、`profile_diff`（本地与平台不一致的字段名）、`profile_incomplete`；附 `summary{total, linked, auto_created, unmatched, superseded, missing}` 与 `counts_by_status` |
+| `GET /accounts`、`GET /accounts/{id}` | 新增 `platform` 对象（平台未列出该账号时为 `null`）：`status`、`status_raw`、`locked`、`reason_kind`、`reason_text`、`reason_fetched_at`、`observed_at`、`aid`、`upstream_id`、`alias`、`provider`、`model`、`models_usable`、`remote_created_at`、`missing_since`、`auto_created`、`source_channel`（`web`/`openapi`，按观察时间新者）、`profile{plan, plan_start_time, plan_end_time, register_time, register_location, balance, payment_method, register_device, recharge_time, warranty_period, tags}`、`usage{cost_fen, cost_yuan, input_tokens, output_tokens, five_hour_used_percent, five_hour_reset_at, week_used_percent, week_reset_at, observed_at}` 或 `null`。列表新增筛选 `five_hour_min`（0–100）与排序 `sort=five_hour_desc`；`platform_status` 改为取观察时间更新的通道 |
+| `GET /accounts/{id}/platform-usage-history?days=7` | 用量快照时间序列（1–90 天，只在数值变化时记录）：`observed_at`、`cost_fen`、`input_tokens`、`output_tokens`、`five_hour_used_percent`、`week_used_percent` 等 |
+| `GET /platform-usage/bills/models` | `connection_id`、`from`、`to` 必填，`account_ids` 逗号分隔可选，分页；返回按天按账号按模型的 `list`、`by_account`、`by_model`、`total_cost_fen`、`coverage{days_requested, days_present, today, today_final: false}`。当天的行 `final=false` |
+| `POST /platform-usage/bills/models/sync` | `{connection_id}`；立即跑一次网页账单同步，202 `{run_id, state}`；退避中 409 `SYNC_IN_BACKOFF`（`details.next_attempt_at`）；未配置 422 `WEB_NOT_CONFIGURED`；已暂停 502 `WEB_SUSPENDED`。同一连接的账号同步正在进行时会等它结束再跑 |
+| `GET /dashboard` | `platform` 块新增 `web_sync_health`（两种网页同步中较差者，结构同指标同步健康）、`web_accounts_health`、`web_bills_health`、`remote_counts_by_status`、`near_limit_accounts`（5 小时窗口 ≥80%）、`today_model_cost_fen` |
+
+同步记录 `sync_runs.kind` 新增 `web-accounts` 与 `web-bills`；审计事件新增 `connection.web_credentials_set`、`connection.web_credentials_cleared`、`connection.web_suspended`、`connection.web_login_test`、`account.platform_import`（自动建号，detail 为交付 ID）、`account.platform_relink`（同邮箱换交付，detail 为 `旧->新`）、`bills.web_sync`。网页通道只调用读取接口；平台侧的修改、改代理、封禁等操作不提供。

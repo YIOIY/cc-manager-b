@@ -113,6 +113,17 @@ func New(baseURL, token string) (*Client, error) {
 		return nil, errors.New("supplier base URL must use HTTPS")
 	}
 	u.Path = strings.TrimRight(u.Path, "/")
+	transport, err := newSupplierTransport(u.Host)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{base: u, token: token, http: &http.Client{Timeout: 30 * time.Second, Transport: transport}}, nil
+}
+
+// newSupplierTransport builds the transport every supplier client shares:
+// an explicit proxy only, exact-certificate pinning per host, and the local
+// insecure switch. host is the base URL's host:port used to look up a pin.
+func newSupplierTransport(host string) (*http.Transport, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	// Supplier traffic never inherits HTTP(S)_PROXY from the process
 	// environment: a stale desktop proxy once silently broke every submission.
@@ -133,7 +144,7 @@ func New(baseURL, token string) (*Client, error) {
 		if json.Unmarshal([]byte(encoded), &pins) != nil {
 			return nil, errors.New("supplier TLS pins must be a JSON object")
 		}
-		if value, ok := pins[u.Host]; ok {
+		if value, ok := pins[host]; ok {
 			pinned = true
 			pin, err := hex.DecodeString(value)
 			if err != nil || len(pin) != sha256.Size {
@@ -158,8 +169,9 @@ func New(baseURL, token string) (*Client, error) {
 	if os.Getenv("CC_MANAGER_SUPPLIER_INSECURE_TLS") == "1" && !pinned {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // explicit local acceptance switch; secure default remains enabled
 	}
-	return &Client{base: u, token: token, http: &http.Client{Timeout: 30 * time.Second, Transport: transport}}, nil
+	return transport, nil
 }
+
 func (c *Client) request(ctx context.Context, method, path string, body any) ([]byte, int, error) {
 	data, status, _, err := c.requestDetails(ctx, method, path, body)
 	return data, status, err

@@ -10,12 +10,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	secretbox "cc-manager/internal/crypto"
+	"cc-manager/internal/supplier"
 
 	_ "modernc.org/sqlite"
 )
@@ -32,11 +34,15 @@ type App struct {
 	billFactory  func(string, string) (billSupplier, error)
 	billInterval time.Duration
 
+	webMu      sync.Mutex
+	webClients map[string]*supplier.WebClient
+	webSyncMu  map[string]*sync.Mutex
+
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 	started   time.Time
-	ticks     struct{ jobs, metrics, bills, schedule, janitor atomic.Int64 }
+	ticks     struct{ jobs, metrics, bills, schedule, janitor, webAccounts, webBills atomic.Int64 }
 	http      httpStats
 }
 
@@ -60,7 +66,7 @@ func newApp(path string, workers bool) (*App, error) {
 const baseSchema = `
 CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, account TEXT UNIQUE NOT NULL, plan TEXT NOT NULL DEFAULT '', register_location TEXT NOT NULL DEFAULT '', register_time TEXT NOT NULL DEFAULT '', plan_start_time TEXT NOT NULL DEFAULT '', plan_end_time TEXT NOT NULL DEFAULT '', proxy_id TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', credentials_json TEXT NOT NULL DEFAULT '{}', version INTEGER NOT NULL DEFAULT 1, archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',scheme TEXT NOT NULL DEFAULT '',host TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,username TEXT NOT NULL DEFAULT '',password_secret TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
-CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',web_username TEXT NOT NULL DEFAULT '',web_password_secret TEXT NOT NULL DEFAULT '',web_suspended_at TEXT NOT NULL DEFAULT '',web_suspended_reason TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',connection_id TEXT NOT NULL DEFAULT '',payload_json TEXT NOT NULL DEFAULT '{}',result_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
 CREATE TABLE IF NOT EXISTS roles(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,description TEXT NOT NULL DEFAULT '',builtin INTEGER NOT NULL DEFAULT 0,permissions_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
@@ -75,7 +81,7 @@ CREATE TABLE IF NOT EXISTS usage_metrics(id TEXT PRIMARY KEY,account_id TEXT NOT
 CREATE TABLE IF NOT EXISTS platform_links(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,connection_id TEXT NOT NULL,upstream_id TEXT NOT NULL,upstream_aid TEXT,alias TEXT,runtime_status TEXT,runtime_status_raw TEXT,last_observed_at TEXT,ingestion_state TEXT NOT NULL DEFAULT 'accepted',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(account_id,connection_id),UNIQUE(connection_id,upstream_id));
 CREATE TABLE IF NOT EXISTS platform_metric_snapshots(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,connection_id TEXT NOT NULL,upstream_id TEXT NOT NULL,upstream_aid TEXT,alias TEXT,runtime_status TEXT,runtime_status_raw TEXT,bucket_key TEXT NOT NULL DEFAULT '',window_start TEXT NOT NULL,window_end TEXT NOT NULL,observed_window_end TEXT,requests INTEGER,prompt_tokens INTEGER,completion_tokens INTEGER,success_rate REAL,fetched_at TEXT NOT NULL,freshness_state TEXT NOT NULL DEFAULT 'fresh',sync_generation INTEGER NOT NULL DEFAULT 0,UNIQUE(account_id,connection_id,bucket_key));
 CREATE TABLE IF NOT EXISTS platform_bill_daily(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,connection_id TEXT NOT NULL,upstream_id TEXT NOT NULL,bill_date TEXT NOT NULL,request_count INTEGER NOT NULL,prompt_tokens INTEGER NOT NULL,completion_tokens INTEGER NOT NULL,cache_read_input_tokens INTEGER NOT NULL,cache_write_input_tokens INTEGER NOT NULL,cost_fen INTEGER NOT NULL,source_range_json TEXT NOT NULL,fetched_at TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,finalized INTEGER NOT NULL DEFAULT 0,sync_generation INTEGER NOT NULL DEFAULT 0,requested_start_ds TEXT,requested_end_ds TEXT,actual_start_ds TEXT,actual_end_ds TEXT,source_timezone TEXT,response_verified INTEGER NOT NULL DEFAULT 0,write_generation INTEGER NOT NULL DEFAULT 0,last_changed_at TEXT,UNIQUE(account_id,connection_id,bill_date));
-CREATE TABLE IF NOT EXISTS sync_runs(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL,started_at TEXT NOT NULL,finished_at TEXT,last_success_at TEXT,error_message TEXT,processed INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,request_json TEXT NOT NULL DEFAULT '{}',fingerprint TEXT NOT NULL DEFAULT '',idem_key TEXT,parent_id TEXT,total_items INTEGER NOT NULL DEFAULT 0,created_at TEXT,updated_at TEXT,owner TEXT NOT NULL DEFAULT '',lease_until INTEGER NOT NULL DEFAULT 0,http_requests INTEGER NOT NULL DEFAULT 0,http_retries INTEGER NOT NULL DEFAULT 0);`
+CREATE TABLE IF NOT EXISTS sync_runs(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL,started_at TEXT NOT NULL,finished_at TEXT,last_success_at TEXT,error_message TEXT,processed INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,request_json TEXT NOT NULL DEFAULT '{}',fingerprint TEXT NOT NULL DEFAULT '',idem_key TEXT,parent_id TEXT,total_items INTEGER NOT NULL DEFAULT 0,created_at TEXT,updated_at TEXT,owner TEXT NOT NULL DEFAULT '',lease_until INTEGER NOT NULL DEFAULT 0,http_requests INTEGER NOT NULL DEFAULT 0,http_retries INTEGER NOT NULL DEFAULT 0);` + webChannelTables
 
 // openDatabase applies the connection pragmas through the DSN so they hold
 // for every connection the pool may open, not only the first one.
@@ -161,6 +167,11 @@ func intValue(v any) int {
 	}
 	return 0
 }
+
+// webPasswordOf reads the console password from a request body without
+// trimming it: passwords may legitimately start or end with spaces.
+func webPasswordOf(m map[string]any) string { v, _ := m["web_password"].(string); return v }
+
 func boolInt(v bool) int {
 	if v {
 		return 1
@@ -192,7 +203,7 @@ func (a *App) healthz(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	}
-	body["workers"] = map[string]any{"jobs_last_tick": tick(&a.ticks.jobs), "metrics_last_tick": tick(&a.ticks.metrics), "bills_last_tick": tick(&a.ticks.bills), "schedule_last_tick": tick(&a.ticks.schedule), "janitor_last_tick": tick(&a.ticks.janitor)}
+	body["workers"] = map[string]any{"jobs_last_tick": tick(&a.ticks.jobs), "metrics_last_tick": tick(&a.ticks.metrics), "bills_last_tick": tick(&a.ticks.bills), "schedule_last_tick": tick(&a.ticks.schedule), "janitor_last_tick": tick(&a.ticks.janitor), "web_accounts_last_tick": tick(&a.ticks.webAccounts), "web_bills_last_tick": tick(&a.ticks.webBills)}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
@@ -251,11 +262,16 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
 	}
+	webHealth, err := a.webDashboard(ctx)
+	if err != nil {
+		writeError(w, r, storageError(err, "读取概览失败"))
+		return
+	}
 	write(w, http.StatusOK, map[string]any{
 		"accounts": map[string]any{"total": counts.accounts, "ready": counts.ready, "archived": counts.archived, "platform_linked": counts.linked, "observed_recently": counts.observed, "by_plan": plansByCount},
 		"jobs":     map[string]any{"running": counts.jobsRunning, "queued": counts.jobsQueued, "succeeded": counts.jobsSucceeded, "failed": counts.jobsFailed},
 		"proxies":  map[string]any{"healthy": counts.proxies, "enabled": counts.proxies, "disabled": counts.disabledProxies},
-		"platform": mergeMaps(map[string]any{"today_requests": counts.billRequests, "today_cost_fen": counts.billCost}, syncHealth),
+		"platform": mergeMaps(mergeMaps(map[string]any{"today_requests": counts.billRequests, "today_cost_fen": counts.billCost}, syncHealth), webHealth),
 	})
 }
 
@@ -284,18 +300,24 @@ const accountListBase = `WITH latest AS (
 ), bill AS (
 	SELECT b.account_id,b.cost_fen FROM platform_bill_daily b
 	WHERE b.rowid=(SELECT rowid FROM platform_bill_daily x WHERE x.account_id=b.account_id ORDER BY x.bill_date DESC,x.rowid DESC LIMIT 1)
+), remote AS (
+	SELECT r.connection_id,r.upstream_id,r.five_hour_used,r.last_seen_at FROM platform_remote_accounts r
 )
 SELECT a.id,a.account,a.plan,a.register_location,a.register_time,a.plan_start_time,a.plan_end_time,a.proxy_id,a.version,a.archived,a.created_at,a.updated_at,a.rowid AS rid,
 COALESCE(NULLIF(m.upstream_aid,''),m.upstream_id,NULLIF(l.upstream_aid,''),l.upstream_id,'') AS platform_account_id,
-COALESCE(m.alias,l.alias,'') AS platform_alias,COALESCE(m.runtime_status,l.runtime_status,'') AS platform_status,COALESCE(m.fetched_at,l.last_observed_at,'') AS platform_observed_at,
+COALESCE(m.alias,l.alias,'') AS platform_alias,
+CASE WHEN COALESCE(l.last_observed_at,'')>=COALESCE(m.fetched_at,'') THEN COALESCE(l.runtime_status,m.runtime_status,'') ELSE COALESCE(m.runtime_status,l.runtime_status,'') END AS platform_status,
+CASE WHEN COALESCE(l.last_observed_at,'')>=COALESCE(m.fetched_at,'') THEN COALESCE(l.last_observed_at,m.fetched_at,'') ELSE COALESCE(m.fetched_at,l.last_observed_at,'') END AS platform_observed_at,
 m.requests,m.prompt_tokens,m.completion_tokens,m.success_rate,bill.cost_fen,
 CASE
 	WHEN EXISTS(SELECT 1 FROM platform_links pl WHERE pl.account_id=a.id AND pl.ingestion_state='accepted' AND COALESCE(pl.upstream_id,'')<>'') THEN 'linked'
 	WHEN EXISTS(SELECT 1 FROM deliveries d WHERE d.account_id=a.id AND d.ingestion_state IN ('unknown','accepted')) THEN 'unknown'
 	ELSE COALESCE((SELECT CASE j.state WHEN 'queued' THEN 'submitting' WHEN 'running' THEN 'submitting' WHEN 'failed' THEN 'failed' WHEN 'unknown' THEN 'unknown' WHEN 'succeeded' THEN 'unknown' ELSE 'pending' END
 		FROM jobs j WHERE j.kind='account.submit' AND j.account_id=a.id ORDER BY j.created_at DESC,j.rowid DESC LIMIT 1),'pending')
-END AS onboarding_state
-FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id`
+END AS onboarding_state,
+rem.five_hour_used AS five_hour_used,
+CASE WHEN rem.upstream_id IS NULL THEN '' WHEN COALESCE(rem.last_seen_at,'')>=COALESCE(m.fetched_at,'') THEN 'web' ELSE 'openapi' END AS platform_channel
+FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id LEFT JOIN remote rem ON rem.connection_id=l.connection_id AND rem.upstream_id=l.upstream_id`
 
 // unpagedAccountLimit caps the legacy array response; the UI always pages.
 const unpagedAccountLimit = 2000
@@ -335,6 +357,15 @@ func accountListFilter(w http.ResponseWriter, q url.Values) (listFilter, bool) {
 		return f, false
 	}
 	f.contains("t.platform_status", q.Get("platform_status"))
+	if v := strings.TrimSpace(q.Get("five_hour_min")); v != "" {
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil || n < 0 || n > 100 {
+			writeError(w, nil, queryInvalid("five_hour_min", "5 小时窗口筛选值必须是 0 到 100 的数字"))
+			return f, false
+		}
+		f.where = append(f.where, "t.five_hour_used>=?")
+		f.args = append(f.args, n/100)
+	}
 	f.dateRange("t.plan_end_time", q.Get("end_from"), q.Get("end_to"))
 	f.dateRange("t.created_at", q.Get("created_from"), q.Get("created_to"))
 	f.keyword(q.Get("q"), "t.account", "t.id", "t.plan", "t.register_location", "t.proxy_id", "t.platform_account_id", "t.platform_alias", "t.platform_status")
@@ -360,7 +391,16 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		limit, offset = size, (page-1)*size
 	}
-	rows, err := a.DB.QueryContext(ctx, `SELECT * FROM (`+accountListBase+`) t`+f.sql()+` ORDER BY t.created_at DESC,t.rid DESC LIMIT ? OFFSET ?`, append(append([]any{}, f.args...), limit, offset)...)
+	order := `t.created_at DESC,t.rid DESC`
+	switch strings.TrimSpace(r.URL.Query().Get("sort")) {
+	case "", "created_desc":
+	case "five_hour_desc":
+		order = `t.five_hour_used DESC NULLS LAST,t.created_at DESC,t.rid DESC`
+	default:
+		writeError(w, r, queryInvalid("sort", "排序参数无效"))
+		return
+	}
+	rows, err := a.DB.QueryContext(ctx, `SELECT * FROM (`+accountListBase+`) t`+f.sql()+` ORDER BY `+order+` LIMIT ? OFFSET ?`, append(append([]any{}, f.args...), limit, offset)...)
 	if err != nil {
 		writeError(w, r, storageError(err, "账号读取失败"))
 		return
@@ -373,8 +413,9 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		var version, archived int
 		var rid int64
 		var requests, prompt, completion, cost sql.NullInt64
-		var success sql.NullFloat64
-		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding); err != nil {
+		var success, fiveHour sql.NullFloat64
+		var channel string
+		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding, &fiveHour, &channel); err != nil {
 			writeError(w, r, storageError(err, "账号读取失败"))
 			return
 		}
@@ -394,6 +435,7 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		if cost.Valid {
 			m["platform_cost_fen"] = cost.Int64
 		}
+		m["platform_channel"] = channel
 		out = append(out, m)
 	}
 	if err = rows.Err(); err != nil {
@@ -403,6 +445,10 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 	if err = a.decorateAccountDelivery(out); err != nil {
 		writeError(w, r, storageError(err, "上号状态读取失败"))
+		return
+	}
+	if err = a.attachPlatformBlocks(ctx, out); err != nil {
+		writeError(w, r, storageError(err, "平台状态读取失败"))
 		return
 	}
 	if paged {
@@ -484,7 +530,12 @@ func (a *App) accountGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "账号读取失败"))
 		return
 	}
-	write(w, http.StatusOK, map[string]any{"id": id, "account": account, "plan": plan, "version": version, "credentials_configured": credentials != "{}" && credentials != ""})
+	detail := map[string]any{"id": id, "account": account, "plan": plan, "version": version, "credentials_configured": credentials != "{}" && credentials != ""}
+	if err := a.attachPlatformBlocks(r.Context(), []any{detail}); err != nil {
+		writeError(w, r, storageError(err, "平台状态读取失败"))
+		return
+	}
+	write(w, http.StatusOK, detail)
 }
 
 func (a *App) accountPatch(w http.ResponseWriter, r *http.Request) {
@@ -889,7 +940,7 @@ func (a *App) platformConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listPlatformConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.QueryContext(r.Context(), `SELECT id,name,base_url,timezone,enabled,version,token_secret FROM platform_connections ORDER BY created_at,rowid`)
+	rows, err := a.DB.QueryContext(r.Context(), `SELECT id,name,base_url,timezone,enabled,version,token_secret,web_username,web_password_secret,web_suspended_at,web_suspended_reason FROM platform_connections ORDER BY created_at,rowid`)
 	if err != nil {
 		writeError(w, r, storageError(err, "平台连接读取失败"))
 		return
@@ -897,13 +948,14 @@ func (a *App) listPlatformConnections(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []any{}
 	for rows.Next() {
-		var id, name, base, timezone, token string
+		var id, name, base, timezone, token, webUser, webSecret, suspendedAt, suspendedReason string
 		var enabled, version int
-		if err = rows.Scan(&id, &name, &base, &timezone, &enabled, &version, &token); err != nil {
+		if err = rows.Scan(&id, &name, &base, &timezone, &enabled, &version, &token, &webUser, &webSecret, &suspendedAt, &suspendedReason); err != nil {
 			writeError(w, r, storageError(err, "平台连接读取失败"))
 			return
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "base_url": base, "timezone": timezone, "enabled": enabled == 1, "version": version, "token_configured": token != ""})
+		out = append(out, map[string]any{"id": id, "name": name, "base_url": base, "timezone": timezone, "enabled": enabled == 1, "version": version, "token_configured": token != "",
+			"web_username": webUser, "web_configured": webUser != "" && webSecret != "", "web_suspended_at": suspendedAt, "web_suspended_reason": suspendedReason})
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, r, storageError(err, "平台连接读取失败"))
@@ -942,6 +994,10 @@ func (a *App) createPlatformConnection(w http.ResponseWriter, r *http.Request) {
 	if timezone != "" && !validTimezone(timezone) {
 		problems.Invalid("timezone", "时区必须是有效的 IANA 时区，例如 Asia/Shanghai")
 	}
+	webUser, webPassword := str(in, "web_username"), webPasswordOf(in)
+	if (webUser == "") != (webPassword == "") {
+		problems.Invalid("web_username", "网页登录账号和密码需要一起填写")
+	}
 	if e := problems.Err(); e != nil {
 		writeError(w, r, e)
 		return
@@ -952,11 +1008,21 @@ func (a *App) createPlatformConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, secretError("connection_token", "平台令牌加密失败", err))
 		return
 	}
-	if _, err = a.DB.ExecContext(r.Context(), `INSERT INTO platform_connections(id,name,base_url,token_secret,timezone,allowed_plans_json,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), base.String(), sealed, timezone, `[]`, 1, t, t); err != nil {
+	webSecret := ""
+	if webPassword != "" {
+		if webSecret, err = a.keys.Seal([]byte(webPassword), []byte(id+":web")); err != nil {
+			writeError(w, r, secretError("web_password", "网页登录密码加密失败", err))
+			return
+		}
+	}
+	if _, err = a.DB.ExecContext(r.Context(), `INSERT INTO platform_connections(id,name,base_url,token_secret,timezone,allowed_plans_json,enabled,created_at,updated_at,web_username,web_password_secret) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), base.String(), sealed, timezone, `[]`, 1, t, t, webUser, webSecret); err != nil {
 		dbError(w, r, err, "CONNECTION_EXISTS", "平台连接已存在", "平台连接保存失败")
 		return
 	}
 	a.auditFor(r, "connection.create", "platform_connection", id, base.Host)
+	if webSecret != "" {
+		a.auditFor(r, "connection.web_credentials_set", "platform_connection", id, webUser)
+	}
 	write(w, http.StatusCreated, map[string]any{"id": id, "version": 1})
 }
 
@@ -987,9 +1053,9 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	defer tx.Rollback()
-	var oldName, oldBase, oldTimezone, oldToken string
+	var oldName, oldBase, oldTimezone, oldToken, oldWebUser, oldWebSecret string
 	var oldEnabled, version int
-	if err = tx.QueryRow(`SELECT name,base_url,timezone,token_secret,enabled,version FROM platform_connections WHERE id=?`, id).Scan(&oldName, &oldBase, &oldTimezone, &oldToken, &oldEnabled, &version); err != nil {
+	if err = tx.QueryRow(`SELECT name,base_url,timezone,token_secret,enabled,version,web_username,web_password_secret FROM platform_connections WHERE id=?`, id).Scan(&oldName, &oldBase, &oldTimezone, &oldToken, &oldEnabled, &version, &oldWebUser, &oldWebSecret); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fail(w, http.StatusNotFound, "NOT_FOUND", "平台连接不存在")
 			return
@@ -1029,9 +1095,38 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 			enabled = boolInt(v)
 		}
 	}
+	// Web (console) credentials: web_clear drops them; a new password (with an
+	// optional new username) replaces them; a username alone renames an existing
+	// login. Any change lifts a suspension and forgets the cached client.
+	webUser, webSecret, webEvent := oldWebUser, oldWebSecret, ""
+	webClear, _ := in["web_clear"].(bool)
+	newWebUser, newWebPassword := str(in, "web_username"), webPasswordOf(in)
+	switch {
+	case webClear:
+		webUser, webSecret, webEvent = "", "", "connection.web_credentials_cleared"
+	case newWebPassword != "":
+		if newWebUser != "" {
+			webUser = newWebUser
+		}
+		if webUser == "" {
+			problems.Invalid("web_username", "网页登录账号和密码需要一起填写")
+		}
+		webEvent = "connection.web_credentials_set"
+	case newWebUser != "" && newWebUser != oldWebUser:
+		if oldWebSecret == "" {
+			problems.Invalid("web_password", "网页登录账号和密码需要一起填写")
+		}
+		webUser, webEvent = newWebUser, "connection.web_credentials_set"
+	}
 	if e := problems.Err(); e != nil {
 		writeError(w, r, e)
 		return
+	}
+	if newWebPassword != "" && !webClear {
+		if webSecret, err = a.keys.Seal([]byte(newWebPassword), []byte(id+":web")); err != nil {
+			writeError(w, r, secretError("web_password", "网页登录密码加密失败", err))
+			return
+		}
 	}
 	secret := oldToken
 	if token := str(in, "token"); token != "" {
@@ -1041,7 +1136,11 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 			return
 		}
 	}
-	if _, err = tx.Exec(`UPDATE platform_connections SET name=?,base_url=?,token_secret=?,timezone=?,enabled=?,version=version+1,updated_at=? WHERE id=? AND version=?`, name, base.String(), secret, timezone, enabled, now(), id, version); err != nil {
+	suspension := ""
+	if webEvent != "" {
+		suspension = ",web_suspended_at='',web_suspended_reason=''"
+	}
+	if _, err = tx.Exec(`UPDATE platform_connections SET name=?,base_url=?,token_secret=?,timezone=?,enabled=?,web_username=?,web_password_secret=?`+suspension+`,version=version+1,updated_at=? WHERE id=? AND version=?`, name, base.String(), secret, timezone, enabled, webUser, webSecret, now(), id, version); err != nil {
 		dbError(w, r, err, "CONNECTION_EXISTS", "平台连接已存在", "平台连接更新失败")
 		return
 	}
@@ -1049,7 +1148,11 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 		writeError(w, r, storageError(err, "平台连接更新失败"))
 		return
 	}
+	a.dropWebClient(id)
 	a.auditFor(r, "connection.update", "platform_connection", id, base.Host)
+	if webEvent != "" {
+		a.auditFor(r, webEvent, "platform_connection", id, webUser)
+	}
 	write(w, http.StatusOK, map[string]any{"id": id, "version": version + 1})
 }
 
@@ -1073,6 +1176,7 @@ func (a *App) deletePlatformConnection(w http.ResponseWriter, r *http.Request, i
 		fail(w, http.StatusNotFound, "NOT_FOUND", "平台连接不存在")
 		return
 	}
+	a.dropWebClient(id)
 	a.auditFor(r, "connection.delete", "platform_connection", id, "")
 	write(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
@@ -1146,6 +1250,12 @@ func mergeMaps(a, b map[string]any) map[string]any {
 // longest streak is reported, so a working connection can never hide a
 // broken one.
 func (a *App) metricsSyncHealth(ctx context.Context) (map[string]any, error) {
+	return a.syncHealth(ctx, "platform-usage")
+}
+
+// syncHealth is metricsSyncHealth for any sync kind (platform-usage,
+// web-accounts, web-bills).
+func (a *App) syncHealth(ctx context.Context, kind string) (map[string]any, error) {
 	out := map[string]any{"sync_status": "never", "last_sync_at": "", "last_sync_state": "", "error_code": "", "error_message": "", "error_hint": "", "consecutive_failures": 0, "next_attempt_at": ""}
 	rows, err := a.DB.QueryContext(ctx, `SELECT id FROM platform_connections WHERE enabled=1`)
 	if err != nil {
@@ -1172,7 +1282,7 @@ func (a *App) metricsSyncHealth(ctx context.Context) (map[string]any, error) {
 	now := time.Now()
 	for _, id := range ids {
 		var r latestRun
-		err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(finished_at,started_at),state,COALESCE(error_code,''),COALESCE(error_message,'') FROM sync_runs WHERE connection_id=? AND kind='platform-usage' AND state<>'running' ORDER BY started_at DESC,rowid DESC LIMIT 1`, id).Scan(&r.at, &r.state, &r.code, &r.message)
+		err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(finished_at,started_at),state,COALESCE(error_code,''),COALESCE(error_message,'') FROM sync_runs WHERE connection_id=? AND kind=? AND state<>'running' ORDER BY started_at DESC,rowid DESC LIMIT 1`, id, kind).Scan(&r.at, &r.state, &r.code, &r.message)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -1186,7 +1296,7 @@ func (a *App) metricsSyncHealth(ctx context.Context) (map[string]any, error) {
 			}
 			continue
 		}
-		n, next, skip, err := a.metricsBackoff(ctx, id, now)
+		n, next, skip, err := a.syncBackoff(ctx, id, kind, now)
 		if err != nil {
 			return nil, err
 		}

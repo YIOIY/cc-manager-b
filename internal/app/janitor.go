@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,7 @@ const (
 	importRetention        = 24 * time.Hour
 	idempotencyRetention   = 7 * 24 * time.Hour
 	usageSyncRunRetention  = 7 * 24 * time.Hour
+	webUsageRetention      = 90 * 24 * time.Hour
 	proxyChecksPerProxy    = 100
 	janitorInterval        = 15 * time.Minute
 	sessionSweeperInterval = time.Minute
@@ -55,6 +57,38 @@ func (a *App) loop(ctx context.Context, every time.Duration, fn func()) {
 	}
 }
 
+// loopAfter is loop with a first tick after `first` instead of a full
+// interval, so a freshly started process does useful work right away.
+func (a *App) loopAfter(ctx context.Context, first, every time.Duration, fn func()) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(first):
+		fn()
+	}
+	a.loop(ctx, every, fn)
+}
+
+// lockWithContext takes m unless ctx ends first.
+func lockWithContext(ctx context.Context, m *sync.Mutex) error {
+	acquired := make(chan struct{})
+	go func() {
+		m.Lock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		return nil
+	case <-ctx.Done():
+		// Release the lock once the goroutine gets it so it is not lost.
+		go func() {
+			<-acquired
+			m.Unlock()
+		}()
+		return ctx.Err()
+	}
+}
+
 // safeTick wraps a background tick so a panic is logged instead of taking
 // down the HTTP server with the shared process.
 func safeTick(name string, fn func()) func() {
@@ -76,7 +110,8 @@ func (a *App) cleanup(ctx context.Context) error {
 	}{
 		{`DELETE FROM imports WHERE expires_at<?`, []any{cutoff(importRetention)}},
 		{`DELETE FROM idempotency_keys WHERE created_at<?`, []any{cutoff(idempotencyRetention)}},
-		{`DELETE FROM sync_runs WHERE kind='platform-usage' AND started_at<?`, []any{cutoff(usageSyncRunRetention)}},
+		{`DELETE FROM sync_runs WHERE kind IN ('platform-usage','web-accounts','web-bills') AND started_at<?`, []any{cutoff(usageSyncRunRetention)}},
+		{`DELETE FROM platform_usage_snapshots WHERE observed_at<?`, []any{cutoff(webUsageRetention)}},
 		{`DELETE FROM proxy_checks WHERE id IN (SELECT id FROM (SELECT id,ROW_NUMBER() OVER (PARTITION BY proxy_id ORDER BY checked_at DESC,rowid DESC) AS n FROM proxy_checks) WHERE n>?)`, []any{proxyChecksPerProxy}},
 		{`DELETE FROM proxy_check_details WHERE check_id NOT IN (SELECT id FROM proxy_checks)`, nil},
 	}
