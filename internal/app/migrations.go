@@ -27,6 +27,7 @@ var migrations = []migration{
 	{6, "proxy-permissions", migrateProxyPermissionsV6},
 	{7, "drop-users-role", migrateDropUsersRoleV7},
 	{8, "account-delete-permission", migrateAccountDeletePermissionV8},
+	{9, "sync-run-error-code", migrateSyncRunErrorCodeV9},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -239,6 +240,13 @@ func strftimeNow() string { return time.Now().UTC().Format(time.RFC3339) }
 // Admin is a superuser and custom roles are left to their owners.
 func migrateProxyPermissionsV6(tx *sql.Tx) error {
 	return grantBuiltinRolePermissions(tx, roleOperatorID, string(PermProxiesUpdate), string(PermProxiesDelete))
+}
+
+// migrateSyncRunErrorCodeV9 stores the classified failure code next to the
+// sanitized message so the dashboard can explain a failing sync.
+func migrateSyncRunErrorCodeV9(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE sync_runs ADD COLUMN error_code TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 // migrateAccountDeletePermissionV8 lets the builtin operator role delete

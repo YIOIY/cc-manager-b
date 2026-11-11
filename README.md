@@ -82,6 +82,7 @@ make web-e2e
 | `CC_MANAGER_BILL_MAX_ITEMS` | 单次账单同步任务的账号日上限 | `10000` |
 | `CC_MANAGER_BILL_INTERVAL_MS` | 账单请求之间的最小间隔 | `1000` |
 | `CC_MANAGER_SUPPLIER_TLS_PINS` | `{"host:port":"sha256-hex"}`，对特定供应商端点固定证书 | 无 |
+| `CC_MANAGER_SUPPLIER_PROXY` | 访问供应商（上号、账单、指标）使用的代理，`http://`、`https://`、`socks5://` 或 `socks5h://` 加主机端口。供应商请求**不再读取** `HTTP_PROXY` / `HTTPS_PROXY`；格式错误时服务拒绝启动 | 无（直连） |
 | `CC_MANAGER_SUPPLIER_INSECURE_TLS` | 为 `1` 时跳过供应商证书校验（仅本地联调） | `0` |
 
 ## 用户与权限（RBAC）

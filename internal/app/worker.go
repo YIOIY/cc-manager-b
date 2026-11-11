@@ -274,6 +274,13 @@ func (a *App) syncAllPlatformUsage(ctx context.Context) error {
 	}
 	var failures []error
 	for _, id := range ids {
+		if _, _, skip, e := a.metricsBackoff(ctx, id, time.Now()); e != nil {
+			failures = append(failures, e)
+			continue
+		} else if skip {
+			// Still inside the backoff window: no request, no run row, no log.
+			continue
+		}
 		if e := a.syncPlatformConnection(ctx, id); e != nil {
 			failures = append(failures, e)
 		}
@@ -288,28 +295,28 @@ func (a *App) syncPlatformConnection(ctx context.Context, connectionID string) e
 	if _, err := a.DB.ExecContext(ctx, `INSERT INTO sync_runs(id,connection_id,kind,state,started_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, runID, connectionID, "platform-usage", "running", started, started, started); err != nil {
 		return err
 	}
-	finish := func(state, message string, processed, failed int) {
-		if _, err := a.DB.ExecContext(ctx, `UPDATE sync_runs SET state=?,finished_at=?,last_success_at=?,error_message=?,processed=?,failed=?,updated_at=? WHERE id=?`, state, now(), map[bool]string{true: now(), false: ""}[state == "succeeded"], sanitizeUpstream(message), processed, failed, now(), runID); err != nil {
+	finish := func(state, code, message string, processed, failed int) {
+		if _, err := a.DB.ExecContext(ctx, `UPDATE sync_runs SET state=?,finished_at=?,last_success_at=?,error_code=?,error_message=?,processed=?,failed=?,updated_at=? WHERE id=?`, state, now(), map[bool]string{true: now(), false: ""}[state == "succeeded"], code, sanitizeUpstream(message), processed, failed, now(), runID); err != nil {
 			slog.Error("sync run finish failed", "run", runID, "error", err)
 		}
 	}
 	var base, tokenSecret, timezone string
 	if err := a.DB.QueryRowContext(ctx, `SELECT base_url,token_secret,timezone FROM platform_connections WHERE id=? AND enabled=1`, connectionID).Scan(&base, &tokenSecret, &timezone); err != nil {
-		finish("failed", "connection unavailable", 0, 0)
+		finish("failed", "CONNECTION_DISABLED", "connection unavailable", 0, 0)
 		return err
 	}
 	if a.keys == nil {
-		finish("failed", "encryption key unavailable", 0, 0)
+		finish("failed", "ENCRYPTION_KEY_REQUIRED", "encryption key unavailable", 0, 0)
 		return errors.New("encryption key unavailable")
 	}
 	token, err := a.openSecret(tokenSecret, connectionID)
 	if err != nil {
-		finish("failed", "connection token unreadable", 0, 0)
+		finish("failed", "CONNECTION_UNREADABLE", "connection token unreadable", 0, 0)
 		return err
 	}
 	client, err := supplier.New(base, string(token))
 	if err != nil {
-		finish("failed", "connection invalid", 0, 0)
+		finish("failed", "CONNECTION_INVALID", "connection invalid", 0, 0)
 		return err
 	}
 	loc := time.Local
@@ -323,7 +330,7 @@ func (a *App) syncPlatformConnection(ctx context.Context, connectionID string) e
 	end := nowLocal
 	linkRows, err := a.DB.QueryContext(ctx, `SELECT account_id,upstream_id,COALESCE(alias,'') FROM platform_links WHERE connection_id=? AND ingestion_state='accepted' ORDER BY account_id`, connectionID)
 	if err != nil {
-		finish("failed", "links unavailable", 0, 0)
+		finish("failed", "INTERNAL_ERROR", "links unavailable", 0, 0)
 		return err
 	}
 	type link struct{ account, upstream, alias string }
@@ -340,7 +347,7 @@ func (a *App) syncPlatformConnection(ctx context.Context, connectionID string) e
 	}
 	linkRows.Close()
 	if err != nil {
-		finish("failed", "links unavailable", 0, 0)
+		finish("failed", "INTERNAL_ERROR", "links unavailable", 0, 0)
 		return err
 	}
 	processed, failed := 0, 0
@@ -391,8 +398,72 @@ func (a *App) syncPlatformConnection(ctx context.Context, connectionID string) e
 			return "partial"
 		}
 		return "succeeded"
-	}(), message, processed, failed)
+	}(), metricsErrorCode(queryError), message, processed, failed)
 	return queryError
+}
+
+// Metrics sync backs off per connection while it keeps failing, so a
+// platform-side problem costs one request an hour instead of one every two
+// minutes. Editing the connection restarts the count.
+const metricsBackoffCap = 60 * time.Minute
+
+func metricsBackoffDelay(consecutive int) time.Duration {
+	if consecutive <= 0 {
+		return 0
+	}
+	d := 2 * time.Minute
+	for i := 1; i < consecutive && d < metricsBackoffCap; i++ {
+		d *= 2
+	}
+	if d > metricsBackoffCap {
+		d = metricsBackoffCap
+	}
+	return d
+}
+
+// metricsBackoff counts consecutive non-successful metric runs for a
+// connection since its last success (and since its last edit) and reports
+// whether the next run should wait.
+func (a *App) metricsBackoff(ctx context.Context, connectionID string, at time.Time) (consecutive int, next time.Time, skip bool, err error) {
+	var edited string
+	err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(updated_at,'') FROM platform_connections WHERE id=?`, connectionID).Scan(&edited)
+	if errors.Is(err, sql.ErrNoRows) {
+		// A deleted connection has nothing to back off from.
+		return 0, time.Time{}, false, nil
+	}
+	if err != nil {
+		return 0, time.Time{}, false, err
+	}
+	// The streak starts after the later of the last success and the last edit.
+	var since string
+	if err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(started_at),'') FROM sync_runs WHERE connection_id=? AND kind='platform-usage' AND state='succeeded' AND started_at>?`, connectionID, edited).Scan(&since); err != nil {
+		return 0, time.Time{}, false, err
+	}
+	if since < edited {
+		since = edited
+	}
+	var latest string
+	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MAX(started_at),'') FROM sync_runs WHERE connection_id=? AND kind='platform-usage' AND state NOT IN ('succeeded','running') AND started_at>?`, connectionID, since).Scan(&consecutive, &latest); err != nil || consecutive == 0 {
+		return consecutive, time.Time{}, false, err
+	}
+	last, perr := time.Parse(time.RFC3339, latest)
+	if perr != nil {
+		return consecutive, time.Time{}, false, nil
+	}
+	next = last.Add(metricsBackoffDelay(consecutive)).UTC()
+	return consecutive, next, at.Before(next), nil
+}
+
+// metricsErrorCode classifies a metrics query failure for storage.
+func metricsErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	var up errs.Upstream
+	if errors.As(err, &up) {
+		return up.UpstreamCode()
+	}
+	return errs.CodePlatformUnavailable
 }
 
 func nullableRate(m supplier.Metric) any {

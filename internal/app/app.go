@@ -246,8 +246,8 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
 	}
-	var lastSync, lastSyncState string
-	if err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(finished_at,started_at),state FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&lastSync, &lastSyncState); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	syncHealth, err := a.metricsSyncHealth(ctx)
+	if err != nil {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
 	}
@@ -255,7 +255,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		"accounts": map[string]any{"total": counts.accounts, "ready": counts.ready, "archived": counts.archived, "platform_linked": counts.linked, "observed_recently": counts.observed, "by_plan": plansByCount},
 		"jobs":     map[string]any{"running": counts.jobsRunning, "queued": counts.jobsQueued, "succeeded": counts.jobsSucceeded, "failed": counts.jobsFailed},
 		"proxies":  map[string]any{"healthy": counts.proxies, "enabled": counts.proxies, "disabled": counts.disabledProxies},
-		"platform": map[string]any{"today_requests": counts.billRequests, "today_cost_fen": counts.billCost, "last_sync_at": lastSync, "last_sync_state": lastSyncState},
+		"platform": mergeMaps(map[string]any{"today_requests": counts.billRequests, "today_cost_fen": counts.billCost}, syncHealth),
 	})
 }
 
@@ -1130,4 +1130,102 @@ func (a *App) jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusOK, out)
+}
+
+func mergeMaps(a, b map[string]any) map[string]any {
+	for k, v := range b {
+		a[k] = v
+	}
+	return a
+}
+
+// metricsSyncHealth summarises the platform metrics sync for the dashboard.
+// Only platform-usage runs of enabled connections count (bill runs have their
+// own view; a deleted or disabled connection never retries). A failing
+// connection always wins over a healthy one, and among failing ones the
+// longest streak is reported, so a working connection can never hide a
+// broken one.
+func (a *App) metricsSyncHealth(ctx context.Context) (map[string]any, error) {
+	out := map[string]any{"sync_status": "never", "last_sync_at": "", "last_sync_state": "", "error_code": "", "error_message": "", "error_hint": "", "consecutive_failures": 0, "next_attempt_at": ""}
+	rows, err := a.DB.QueryContext(ctx, `SELECT id FROM platform_connections WHERE enabled=1`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	type latestRun struct{ at, state, code, message string }
+	var okRun *latestRun
+	var worst *latestRun
+	worstCount, worstNext := 0, time.Time{}
+	worstSkip := false
+	now := time.Now()
+	for _, id := range ids {
+		var r latestRun
+		err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(finished_at,started_at),state,COALESCE(error_code,''),COALESCE(error_message,'') FROM sync_runs WHERE connection_id=? AND kind='platform-usage' AND state<>'running' ORDER BY started_at DESC,rowid DESC LIMIT 1`, id).Scan(&r.at, &r.state, &r.code, &r.message)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if r.state == "succeeded" {
+			if okRun == nil || r.at > okRun.at {
+				rr := r
+				okRun = &rr
+			}
+			continue
+		}
+		n, next, skip, err := a.metricsBackoff(ctx, id, now)
+		if err != nil {
+			return nil, err
+		}
+		if worst == nil || n > worstCount {
+			rr := r
+			worst, worstCount, worstNext, worstSkip = &rr, n, next, skip
+		}
+	}
+	switch {
+	case worst != nil:
+		code := worst.code
+		if code == "" {
+			code = legacyMetricsCode(worst.message)
+		}
+		out["sync_status"], out["last_sync_at"], out["last_sync_state"], out["error_code"] = "failing", worst.at, worst.state, code
+		if def, ok := errs.Lookup(code); ok {
+			out["error_message"], out["error_hint"] = def.Message, def.Hint
+		}
+		out["consecutive_failures"] = worstCount
+		// Only a retry that is still ahead is worth showing.
+		if worstSkip {
+			out["next_attempt_at"] = worstNext.Format(time.RFC3339)
+		}
+	case okRun != nil:
+		out["sync_status"], out["last_sync_at"], out["last_sync_state"] = "ok", okRun.at, okRun.state
+	}
+	return out, nil
+}
+
+// legacyMetricsCode classifies runs recorded before error_code existed.
+func legacyMetricsCode(message string) string {
+	switch {
+	case strings.Contains(message, "HTTP 404"):
+		return errs.CodePlatformQueryDenied
+	case strings.Contains(message, "HTTP 401"), strings.Contains(message, "HTTP 403"):
+		return errs.CodePlatformAuthFailed
+	case strings.Contains(message, "proxyconnect"), strings.Contains(message, "dial tcp"), strings.Contains(message, "HTTP 5"), strings.Contains(message, "timeout"):
+		return errs.CodePlatformUnavailable
+	default:
+		return errs.CodeInternalError
+	}
 }

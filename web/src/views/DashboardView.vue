@@ -98,7 +98,11 @@
       <div class="sync-strip">
         <span>最近同步</span
         ><strong>{{ dash?.platform.last_sync_at ? formatDateTime(dash.platform.last_sync_at) : '尚未同步' }}</strong>
-        <el-tag :type="syncTone">{{ dash?.platform.last_sync_state || '未开始' }}</el-tag>
+        <el-tag :type="syncHealth.tone">{{ syncHealth.label }}</el-tag>
+      </div>
+      <div v-if="syncHealth.detail" class="sync-health" role="status">
+        <p class="sync-health-detail">{{ syncHealth.detail }}</p>
+        <p v-if="syncHealth.hint" class="sync-health-hint">{{ syncHealth.hint }}</p>
       </div>
     </section>
     <section class="dashboard-panel">
@@ -128,6 +132,7 @@
 </template>
 
 <script setup lang="ts">
+import { describeSyncHealth, type SyncHealthView } from '../model/sync-health'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RefreshCw, UsersRound, ListChecks, ChartNoAxesCombined, Activity, ArrowUpRight } from 'lucide-vue-next'
@@ -153,12 +158,8 @@ const planRows = computed(() => {
     width: Math.max(8, (Number(count) / total) * 100),
   }))
 })
-const syncTone = computed(() =>
-  dash.value?.platform.last_sync_state === 'succeeded'
-    ? 'success'
-    : dash.value?.platform.last_sync_state
-      ? 'warning'
-      : 'info',
+const syncHealth = computed<SyncHealthView>(() =>
+  dash.value ? describeSyncHealth(dash.value.platform) : { tone: 'info', label: '未开始' },
 )
 
 async function load() {
@@ -572,5 +573,24 @@ onMounted(load)
     width: 100px;
     height: 100px;
   }
+}
+.sync-health {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fdf1f0;
+  border: 1px solid #f2cfcc;
+}
+.sync-health p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.sync-health-detail {
+  color: var(--danger);
+  font-weight: 500;
+}
+.sync-health-hint {
+  color: var(--muted-strong);
 }
 </style>

@@ -83,6 +83,7 @@
 | `PLAN_START_TIME_INVALID` | validation | — | 否 | fix_input | 套餐开始日期格式不正确 | 预检 |
 | `PLATFORM_AUTH_FAILED` | upstream | 502 | 否 | contact_admin | 平台拒绝了本次请求的身份验证 | 上游 401/403；允许调用方自定义文案 |
 | `PLATFORM_CONNECTION_REQUIRED` | validation | 422 | 否 | fix_input | 缺少平台连接 | HTTP 层阶段 2 并入 fields；预检保留 |
+| `PLATFORM_QUERY_DENIED` | upstream | — | 否 | contact_admin | 平台拒绝查询这些账号的数据 | 指标/账单查询返回 404“账号不存在或无权访问”；本地无法修复 |
 | `PLATFORM_REJECTED` | upstream | — | 是 | fix_input | 平台拒绝了本次上号 | details.upstream_status；message 可附平台摘要；允许调用方自定义文案 |
 | `PLATFORM_RESPONSE_INVALID` | upstream | 502 | 是 | retry | 平台返回的内容无法识别 | 上游响应解析失败；允许调用方自定义文案 |
 | `PLATFORM_UNAVAILABLE` | upstream | 502 | 是 | retry | 平台暂时无法访问 | 上游 5xx/429/网络失败；允许调用方自定义文案 |

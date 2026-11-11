@@ -109,6 +109,7 @@ func init() {
 		Def{Code: "PLATFORM_AUTH_FAILED", Category: CategoryUpstream, Status: 502, Action: ActionContactAdmin, Message: "平台拒绝了本次请求的身份验证", Hint: "请检查平台设置中的令牌及权限", Doc: "上游 401/403", AllowCustomMessage: true},
 		Def{Code: "PLATFORM_RESPONSE_INVALID", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "平台返回的内容无法识别", Hint: "请稍后重试", Doc: "上游响应解析失败", AllowCustomMessage: true},
 		Def{Code: "PLATFORM_UNAVAILABLE", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "平台暂时无法访问", Hint: "请稍后重试", Doc: "上游 5xx/429/网络失败", AllowCustomMessage: true},
+		Def{Code: "PLATFORM_QUERY_DENIED", Category: CategoryUpstream, Action: ActionContactAdmin, Message: "平台拒绝查询这些账号的数据", Hint: "请联系供应商核实 OpenAPI 令牌的查询权限", Doc: "指标/账单查询返回 404“账号不存在或无权访问”；本地无法修复"},
 		Def{Code: "PLATFORM_REJECTED", Category: CategoryUpstream, Retryable: true, Action: ActionFixInput, Message: "平台拒绝了本次上号", Hint: "请核对账号资料及平台配置后重试", Doc: "details.upstream_status；message 可附平台摘要", AllowCustomMessage: true},
 		Def{Code: "SUBMIT_OUTCOME_UNKNOWN", Status: 409, Category: CategoryConflict, Action: ActionCheckPlatform, Message: "上次上号结果待确认", Hint: "请先在平台核实，再决定是否重试", Doc: "请求发出后未收到可判定的结果", AllowCustomMessage: true},
 		Def{Code: "WORKER_RESTART_UNKNOWN", Category: CategoryUpstream, Action: ActionCheckPlatform, Message: "服务重启前的上号结果待确认", Hint: "请先在平台核实", Doc: "进程中断时正在运行的任务"},
@@ -252,6 +253,7 @@ const (
 	CodeProxyRequired               = "PROXY_REQUIRED"
 	CodeDeliveryStateUnavailable    = "DELIVERY_STATE_UNAVAILABLE"
 	CodePlatformRejected            = "PLATFORM_REJECTED"
+	CodePlatformQueryDenied         = "PLATFORM_QUERY_DENIED"
 	CodePlatformAuthFailed          = "PLATFORM_AUTH_FAILED"
 	CodePlatformResponseInvalid     = "PLATFORM_RESPONSE_INVALID"
 	CodePlatformUnavailable         = "PLATFORM_UNAVAILABLE"

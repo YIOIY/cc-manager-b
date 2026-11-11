@@ -114,6 +114,17 @@ func New(baseURL, token string) (*Client, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/")
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Supplier traffic never inherits HTTP(S)_PROXY from the process
+	// environment: a stale desktop proxy once silently broke every submission.
+	// An operator who needs a proxy names it explicitly.
+	transport.Proxy = nil
+	proxy, err := ProxyFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if proxy != nil {
+		transport.Proxy = http.ProxyURL(proxy)
+	}
 	pinned := false
 	// Pins are scoped to an exact host:port. An operator can trust an existing
 	// private endpoint certificate without weakening other supplier connections.
@@ -218,6 +229,47 @@ func (c *Client) SubmitClaudeAccount(ctx context.Context, payload map[string]any
 	}
 	return out, nil
 }
+
+// ProxyFromEnv reads CC_MANAGER_SUPPLIER_PROXY: nil means connect directly.
+// The server validates it at startup so a typo fails loudly instead of
+// surfacing later as "platform connection invalid".
+func ProxyFromEnv() (*url.URL, error) {
+	raw := strings.TrimSpace(os.Getenv("CC_MANAGER_SUPPLIER_PROXY"))
+	if raw == "" {
+		return nil, nil
+	}
+	p, err := url.Parse(raw)
+	if err != nil || p.Host == "" || (p.Scheme != "http" && p.Scheme != "https" && p.Scheme != "socks5" && p.Scheme != "socks5h") {
+		return nil, errors.New("supplier proxy is invalid: use http://, https://, socks5:// or socks5h:// with a host")
+	}
+	return p, nil
+}
+
+// MetricsHTTPError is a non-2xx metrics response, classified for the registry.
+type MetricsHTTPError struct {
+	Status  int
+	Summary string
+}
+
+func (e *MetricsHTTPError) Error() string {
+	return fmt.Sprintf("supplier metrics HTTP %d: %s", e.Status, e.Summary)
+}
+
+func (e *MetricsHTTPError) UpstreamCode() string {
+	switch {
+	case e.Status == 401 || e.Status == 403:
+		return "PLATFORM_AUTH_FAILED"
+	case e.Status == 404:
+		return "PLATFORM_QUERY_DENIED"
+	case e.Status == 429 || e.Status >= 500:
+		return "PLATFORM_UNAVAILABLE"
+	default:
+		return "PLATFORM_RESPONSE_INVALID"
+	}
+}
+func (e *MetricsHTTPError) UpstreamStatus() int     { return e.Status }
+func (e *MetricsHTTPError) UpstreamSummary() string { return e.Summary }
+
 func validateIDs(ids []string) ([]int64, error) {
 	if len(ids) == 0 || len(ids) > 100 {
 		return nil, errors.New("account IDs must contain 1-100 items")
@@ -247,7 +299,7 @@ func (c *Client) QueryMetrics(ctx context.Context, ids []string, begin, end time
 		return nil, e
 	}
 	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("supplier metrics HTTP %d: %s", status, responseSummary(data))
+		return nil, &MetricsHTTPError{Status: status, Summary: responseSummary(data)}
 	}
 	var raw struct {
 		Accounts []struct {

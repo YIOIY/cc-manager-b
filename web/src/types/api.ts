@@ -239,7 +239,21 @@ export interface Dashboard {
   }
   jobs: { running: number; queued: number; succeeded: number; failed: number }
   proxies: { healthy: number; enabled: number; disabled: number }
-  platform: { today_requests: number; today_cost_fen: number; last_sync_at: string; last_sync_state: string }
+  platform: DashboardPlatform
+}
+
+/** Platform usage summary plus the health of the metrics sync. */
+export interface DashboardPlatform {
+  today_requests: number
+  today_cost_fen: number
+  last_sync_at: string
+  last_sync_state: string
+  sync_status?: 'ok' | 'failing' | 'never'
+  error_code?: string
+  error_message?: string
+  error_hint?: string
+  consecutive_failures?: number
+  next_attempt_at?: string
 }
 
 export interface PreflightCheck {

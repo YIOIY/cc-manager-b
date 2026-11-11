@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cc-manager/internal/supplier"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -47,6 +48,9 @@ func LoadConfig() (Config, error) {
 		BillMaxItems:       defaultBillMaxItems,
 		TrustProxy:         os.Getenv("CC_MANAGER_TRUST_PROXY") == "1",
 		WriteRatePerMinute: defaultWriteRate,
+	}
+	if _, err := supplier.ProxyFromEnv(); err != nil {
+		return cfg, fmt.Errorf("CC_MANAGER_SUPPLIER_PROXY: %w", err)
 	}
 	if cfg.AdminPasswordHash != "" {
 		if err := validatePasswordHash(cfg.AdminPasswordHash); err != nil {
