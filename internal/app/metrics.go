@@ -54,7 +54,7 @@ func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 	ticks := []struct {
 		name string
 		v    *atomic.Int64
-	}{{"jobs", &a.ticks.jobs}, {"metrics", &a.ticks.metrics}, {"bills", &a.ticks.bills}, {"schedule", &a.ticks.schedule}, {"janitor", &a.ticks.janitor}}
+	}{{"jobs", &a.ticks.jobs}, {"metrics", &a.ticks.metrics}, {"bills", &a.ticks.bills}, {"schedule", &a.ticks.schedule}, {"janitor", &a.ticks.janitor}, {"web-accounts", &a.ticks.webAccounts}, {"web-bills", &a.ticks.webBills}}
 	rows := make([]string, 0, len(ticks))
 	for _, t := range ticks {
 		rows = append(rows, fmt.Sprintf(`cc_manager_worker_last_tick_seconds{worker="%s"} %d`, t.name, t.v.Load()))

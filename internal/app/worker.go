@@ -35,7 +35,7 @@ func (a *App) startWorker(ctx context.Context) {
 	if _, err := a.DB.Exec(`UPDATE deliveries SET ingestion_state='unknown',updated_at=? WHERE ingestion_state='running'`, now()); err != nil {
 		slog.Error("marking interrupted deliveries failed", "error", err)
 	}
-	a.wg.Add(4)
+	a.wg.Add(6)
 	go func() {
 		defer a.wg.Done()
 		a.loop(ctx, workerPollInterval, safeTick("jobs", func() {
@@ -59,6 +59,24 @@ func (a *App) startWorker(ctx context.Context) {
 				slog.Warn("bill worker failed", "error", err)
 			}
 			a.ticks.bills.Store(time.Now().Unix())
+		}))
+	}()
+	go func() {
+		defer a.wg.Done()
+		a.loop(ctx, webAccountsInterval, safeTick("web-accounts", func() {
+			if err := a.syncAllWebAccounts(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("web account sync failed", "error", err)
+			}
+			a.ticks.webAccounts.Store(time.Now().Unix())
+		}))
+	}()
+	go func() {
+		defer a.wg.Done()
+		a.loop(ctx, webBillsInterval, safeTick("web-bills", func() {
+			if err := a.syncAllWebBills(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("web bill sync failed", "error", err)
+			}
+			a.ticks.webBills.Store(time.Now().Unix())
 		}))
 	}()
 	go func() {

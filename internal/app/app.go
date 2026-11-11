@@ -41,7 +41,7 @@ type App struct {
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 	started   time.Time
-	ticks     struct{ jobs, metrics, bills, schedule, janitor atomic.Int64 }
+	ticks     struct{ jobs, metrics, bills, schedule, janitor, webAccounts, webBills atomic.Int64 }
 	http      httpStats
 }
 
@@ -202,7 +202,7 @@ func (a *App) healthz(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	}
-	body["workers"] = map[string]any{"jobs_last_tick": tick(&a.ticks.jobs), "metrics_last_tick": tick(&a.ticks.metrics), "bills_last_tick": tick(&a.ticks.bills), "schedule_last_tick": tick(&a.ticks.schedule), "janitor_last_tick": tick(&a.ticks.janitor)}
+	body["workers"] = map[string]any{"jobs_last_tick": tick(&a.ticks.jobs), "metrics_last_tick": tick(&a.ticks.metrics), "bills_last_tick": tick(&a.ticks.bills), "schedule_last_tick": tick(&a.ticks.schedule), "janitor_last_tick": tick(&a.ticks.janitor), "web_accounts_last_tick": tick(&a.ticks.webAccounts), "web_bills_last_tick": tick(&a.ticks.webBills)}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
