@@ -239,6 +239,19 @@ POST /supplier-account/api/openapi/bill/query
 
 平台还列出按 API Key 查询指标的接口，但本项目首版以账号 ID 对接，暂不纳入实现范围。
 
+## 9. 网页后台只读接口（2026-11-12 接入）
+
+OpenAPI 查询接口对当前令牌返回 404 期间，系统用供应商网页后台的账号密码登录后台，只读取下列接口；全部由服务端定时执行（账号列表每 10 分钟，按模型账单每 2 小时），结果保存在本地快照表。基础路径 `/supplier-account/api`，鉴权 `Authorization: Bearer <token>`。
+
+| 接口 | 用途 | 已核实的要点 |
+| --- | --- | --- |
+| `POST /supplier/pubkey {username}` → `POST /supplier/login {username, enc_password}` | 登录 | `enc_password` 为 base64(JSON{`__enc__:"hybrid-aesgcm"`, `k`=RSA-OAEP-SHA256 包裹的 32 字节 AES 密钥, `iv` 12 字节, `ct`=AES-256-GCM 密文‖tag})；返回 `token`、`name`、`expires_in=18000`；无验证码 |
+| `GET /supplier/accounts?status=all&page&page_size=100` | 账号列表 | `counts` 各状态数量、`total`；每项 `id`（交付 ID）、`a1_id`（平台账号 ID）、`ext_status`、`is_locked`、`project_id`（邮箱）、`auth_config`（JSON 字符串：套餐、注册/套餐日期、注册地、余量、支付方式、设备、质保期、标签；密码已脱敏）、`extra`（JSON 字符串：`cpa_usage.cost` 百万分之一元、`input_tokens`/`output_tokens`、`utilization.five_hour_used_percent`/`week_used_percent`（0–1）与 `*_reset_at`（Unix 秒）） |
+| `GET /supplier/accounts/{id}/check-fail-reason`、`.../claude-status-reason` | 失败/封禁原因 | 响应结构未固定，本地保留原文并取第一个可读文本 |
+| `GET /bill/query?account_ids=&start_ds=YYYYMMDD&end_ds=YYYYMMDD` | 按模型账单 | 一次可查多账号、7 天含当天；`list[{account_id, ds, model_name, bill_model_name, cost}]`，`range` 原样回显；只有金额 |
+
+不接入：`/metrics/query`（网页端同样 404）、`record-log-*`（对本供应商恒为 0）。**不实现任何写接口**：`PUT /supplier/accounts/{id}`、`usage-limit`、`claude-ban`、`accounts/batch`、`custom-proxy*`、`verify-proxy` 以及 `/admin/*`。网页接口不是平台承诺的 API，改版即失效；失败按连接退避，登录连续失败 3 次暂停通道。
+
 ## 8. 联调前必须确认
 
 | 编号 | 问题 | 影响范围 | 未确认时的处理 |
