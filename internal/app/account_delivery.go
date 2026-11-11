@@ -238,6 +238,12 @@ func (a *App) submitExistingAccount(w http.ResponseWriter, r *http.Request, acco
 	tx.Rollback()
 	pre := a.preflight(accountID, in.ConnectionID)
 	if !pre["can_submit"].(bool) {
+		// A concurrent submit may have queued this account after the check
+		// above; report that conflict, not a misleading "incomplete" error.
+		if code, message, e := deliveryBlocked(a.DB, accountID, in.ConnectionID); e == nil && code != "" {
+			fail(w, 409, code, message)
+			return
+		}
 		fail(w, 422, "PREFLIGHT_BLOCKED", "资料或凭证未完善，请先按预检提示补充")
 		return
 	}
