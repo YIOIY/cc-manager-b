@@ -23,20 +23,21 @@ import (
 // RSA login, a paged account list, reason endpoints and /bill/query. Every
 // behaviour a test needs is a field; all state is guarded by mu.
 type webConsoleStub struct {
-	t        *testing.T
-	priv     *rsa.PrivateKey
-	server   *httptest.Server
-	mu       sync.Mutex
-	password string
-	accounts []map[string]any
-	total    *int
-	reason   func(id, kind string) string
-	bills    func(ids []string, start, end string) string
-	logins   atomic.Int32
-	lists    atomic.Int32
-	reasons  atomic.Int32
-	billHits atomic.Int32
-	tokenSeq atomic.Int32
+	t            *testing.T
+	priv         *rsa.PrivateKey
+	server       *httptest.Server
+	mu           sync.Mutex
+	password     string
+	accounts     []map[string]any
+	total        *int
+	reason       func(id, kind string) string
+	reasonStatus int
+	bills        func(ids []string, start, end string) string
+	logins       atomic.Int32
+	lists        atomic.Int32
+	reasons      atomic.Int32
+	billHits     atomic.Int32
+	tokenSeq     atomic.Int32
 }
 
 func newWebConsoleStub(t *testing.T) *webConsoleStub {
@@ -148,7 +149,13 @@ func (s *webConsoleStub) handle(w http.ResponseWriter, r *http.Request) {
 		s.reasons.Add(1)
 		s.mu.Lock()
 		body := s.reason(parts[0], strings.TrimSuffix(parts[1], "-reason"))
+		status := s.reasonStatus
 		s.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			fmt.Fprint(w, `{"detail":"not found"}`)
+			return
+		}
 		fmt.Fprint(w, body)
 	case path == "/bill/query":
 		s.billHits.Add(1)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"cc-manager/internal/supplier"
@@ -21,6 +22,7 @@ type submitJob struct {
 const (
 	supplierRequestTimeout = 35 * time.Second
 	metricsSyncInterval    = 2 * time.Minute
+	webFirstTickDelay      = 30 * time.Second
 	billScheduleInterval   = time.Minute
 	workerPollInterval     = time.Second
 )
@@ -63,7 +65,7 @@ func (a *App) startWorker(ctx context.Context) {
 	}()
 	go func() {
 		defer a.wg.Done()
-		a.loop(ctx, webAccountsInterval, safeTick("web-accounts", func() {
+		a.loopAfter(ctx, webFirstTickDelay, webAccountsInterval, safeTick("web-accounts", func() {
 			if err := a.syncAllWebAccounts(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Warn("web account sync failed", "error", err)
 			}
@@ -72,7 +74,7 @@ func (a *App) startWorker(ctx context.Context) {
 	}()
 	go func() {
 		defer a.wg.Done()
-		a.loop(ctx, webBillsInterval, safeTick("web-bills", func() {
+		a.loopAfter(ctx, 2*webFirstTickDelay, webBillsInterval, safeTick("web-bills", func() {
 			if err := a.syncAllWebBills(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Warn("web bill sync failed", "error", err)
 			}
@@ -466,8 +468,16 @@ func (a *App) syncBackoff(ctx context.Context, connectionID, kind string, at tim
 	if since < edited {
 		since = edited
 	}
+	// The metrics sync treats a partial run as a failure (one query, one
+	// outcome). The web syncs do many requests per run: a partial run means
+	// the list was read and only some accounts had problems, so only runs
+	// that changed nothing count toward the backoff.
+	failing := `state NOT IN ('succeeded','running')`
+	if strings.HasPrefix(kind, "web-") {
+		failing = `state='failed'`
+	}
 	var latest string
-	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MAX(started_at),'') FROM sync_runs WHERE connection_id=? AND kind=? AND state NOT IN ('succeeded','running') AND started_at>?`, connectionID, kind, since).Scan(&consecutive, &latest); err != nil || consecutive == 0 {
+	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MAX(started_at),'') FROM sync_runs WHERE connection_id=? AND kind=? AND `+failing+` AND started_at>?`, connectionID, kind, since).Scan(&consecutive, &latest); err != nil || consecutive == 0 {
 		return consecutive, time.Time{}, false, err
 	}
 	last, perr := time.Parse(time.RFC3339, latest)

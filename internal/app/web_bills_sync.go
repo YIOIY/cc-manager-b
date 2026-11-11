@@ -61,13 +61,11 @@ func (a *App) syncWebBills(ctx context.Context, connectionID string) error {
 // trigger can hand the id back before the run finishes. A busy connection
 // records the run as skipped instead of silently dropping the id.
 func (a *App) syncWebBillsAs(ctx context.Context, connectionID, runID string) error {
+	// The 2-hour bill tick lands on an account tick (10-minute multiples), so
+	// waiting for the connection is the normal case, not a collision.
 	lock := a.webSyncLock(connectionID)
-	if !lock.TryLock() {
-		if runID != "" {
-			_, finish := a.startWebRun(ctx, connectionID, "web-bills", runID)
-			finish("skipped", "", "another web sync of this connection is running", "", 0, 0)
-		}
-		return nil
+	if err := lockWithContext(ctx, lock); err != nil {
+		return err
 	}
 	defer lock.Unlock()
 	_, finish := a.startWebRun(ctx, connectionID, "web-bills", runID)
@@ -166,11 +164,38 @@ func (a *App) storeModelBills(ctx context.Context, connectionID string, batch []
 	}
 	defer tx.Rollback()
 	sourceRange, _ := json.Marshal(map[string]string{"start": start, "end": end})
-	keep := map[string]bool{}
-	for _, r := range result {
-		if r.AccountID <= 0 || r.Date < start || r.Date > end {
+	inBatch := map[int64]bool{}
+	for _, id := range batch {
+		inBatch[id] = true
+	}
+	// One row per (delivery, day, model_name): the console may split a model
+	// across bill_model_name variants, and all of them are that model's cost.
+	type key struct {
+		account     int64
+		date, model string
+	}
+	merged := map[key]*supplier.WebBillRow{}
+	var order []key
+	for i := range result {
+		r := result[i]
+		if r.AccountID <= 0 || !inBatch[r.AccountID] || r.Date < start || r.Date > end {
 			continue
 		}
+		k := key{r.AccountID, r.Date, r.Model}
+		if m, ok := merged[k]; ok {
+			m.CostFen += r.CostFen
+			if m.BillModel != r.BillModel {
+				m.BillModel = r.Model
+			}
+			continue
+		}
+		copy := r
+		merged[k] = &copy
+		order = append(order, k)
+	}
+	keep := map[string]bool{}
+	for _, k := range order {
+		r := *merged[k]
 		upstream := fmt.Sprint(r.AccountID)
 		final := 0
 		if r.Date < today {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -53,6 +54,38 @@ func (a *App) loop(ctx context.Context, every time.Duration, fn func()) {
 		case <-ticker.C:
 			fn()
 		}
+	}
+}
+
+// loopAfter is loop with a first tick after `first` instead of a full
+// interval, so a freshly started process does useful work right away.
+func (a *App) loopAfter(ctx context.Context, first, every time.Duration, fn func()) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(first):
+		fn()
+	}
+	a.loop(ctx, every, fn)
+}
+
+// lockWithContext takes m unless ctx ends first.
+func lockWithContext(ctx context.Context, m *sync.Mutex) error {
+	acquired := make(chan struct{})
+	go func() {
+		m.Lock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		return nil
+	case <-ctx.Done():
+		// Release the lock once the goroutine gets it so it is not lost.
+		go func() {
+			<-acquired
+			m.Unlock()
+		}()
+		return ctx.Err()
 	}
 }
 

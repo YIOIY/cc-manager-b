@@ -76,20 +76,21 @@ func TestParseWebAccountTolerates(t *testing.T) {
 // consoleStub imitates the supplier web console: RSA login, a paged account
 // list, reasons and bills. Every behaviour a test needs is a field.
 type consoleStub struct {
-	t          *testing.T
-	priv       *rsa.PrivateKey
-	password   string
-	server     *httptest.Server
-	logins     atomic.Int32
-	reasons    atomic.Int32
-	billCalls  atomic.Int32
-	pages      map[int]string // page -> JSON array of accounts
-	total      int
-	tokenSeq   atomic.Int32
-	rejectPage func(page int, token string, attempt int) bool
-	pageHits   map[int]int
-	billBody   func(r *http.Request) string
-	reasonBody string
+	t             *testing.T
+	priv          *rsa.PrivateKey
+	password      string
+	server        *httptest.Server
+	logins        atomic.Int32
+	reasons       atomic.Int32
+	billCalls     atomic.Int32
+	pages         map[int]string // page -> JSON array of accounts
+	total         int
+	tokenSeq      atomic.Int32
+	rejectPage    func(page int, token string, attempt int) bool
+	pageHits      map[int]int
+	billBody      func(r *http.Request) string
+	reasonBody    string
+	loginOverride func(w http.ResponseWriter)
 }
 
 func newConsoleStub(t *testing.T) *consoleStub {
@@ -114,6 +115,11 @@ func (s *consoleStub) handle(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/supplier-account/api/supplier/pubkey":
 		fmt.Fprintf(w, `{"public_key":%q}`, publicKeyPEM(s.t, &s.priv.PublicKey))
 	case r.URL.Path == "/supplier-account/api/supplier/login":
+		if s.loginOverride != nil {
+			s.logins.Add(1)
+			s.loginOverride(w)
+			return
+		}
 		var body struct{ Username, EncPassword string }
 		var raw map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&raw)
@@ -316,5 +322,25 @@ func TestAccountReason(t *testing.T) {
 	}
 	if stub.reasons.Load() != 2 {
 		t.Fatalf("reason calls=%d", stub.reasons.Load())
+	}
+}
+
+func TestWebClientLoginClassifiesNon401(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		code   string
+	}{{400, `{"detail":"参数错误"}`, "WEB_LOGIN_FAILED"}, {422, `{"detail":"用户不存在"}`, "WEB_LOGIN_FAILED"}, {404, `{"detail":"not found"}`, "WEB_LOGIN_FAILED"}, {200, `{"msg":"密码错误"}`, "WEB_LOGIN_FAILED"}, {503, `{"detail":"maintenance"}`, "PLATFORM_UNAVAILABLE"}, {429, `{"detail":"slow down"}`, "WEB_RATE_LIMITED"}} {
+		stub := newConsoleStub(t)
+		stub.loginOverride = func(w http.ResponseWriter) { w.WriteHeader(tc.status); fmt.Fprint(w, tc.body) }
+		c, err := NewWebClient(stub.server.URL, "zhuxiangkezhi-cpa", "secret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.Login(context.Background())
+		var we *WebHTTPError
+		if !errors.As(err, &we) || we.UpstreamCode() != tc.code {
+			t.Fatalf("status %d: err=%v", tc.status, err)
+		}
 	}
 }

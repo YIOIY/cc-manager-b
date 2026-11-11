@@ -173,7 +173,7 @@ func (a *App) syncWebAccounts(ctx context.Context, connectionID string) error {
 	for _, email := range emails {
 		group := byEmail[email]
 		current := chooseCurrentDelivery(group)
-		accountID, created, err := a.linkRemoteAccount(ctx, connectionID, current, email, observed)
+		accountID, created, err := a.linkRemoteAccount(ctx, connectionID, current, group, email, observed)
 		if err != nil {
 			slog.Error("web account link failed", "connection", connectionID, "upstream", current.ID, "error", err)
 			failed += len(group)
@@ -202,14 +202,21 @@ func (a *App) syncWebAccounts(ctx context.Context, connectionID string) error {
 		}
 		processed++
 	}
-	// Everything the console no longer lists is marked, never deleted.
-	args := []any{observed, connectionID}
-	for _, id := range seen {
-		args = append(args, id)
-	}
-	if _, err := a.DB.ExecContext(ctx, `UPDATE platform_remote_accounts SET missing_since=? WHERE connection_id=? AND missing_since='' AND upstream_id NOT IN (`+marks(len(seen))+`)`, args...); err != nil {
-		slog.Error("remote account missing mark failed", "connection", connectionID, "error", err)
+	// Everything the console no longer lists is marked, never deleted — but
+	// only when the listing was complete. A short page must not retire
+	// accounts the console still has.
+	if len(accounts) < total {
+		slog.Warn("web account list shorter than total; not marking missing", "connection", connectionID, "listed", len(accounts), "total", total)
 		failed++
+	} else {
+		args := []any{observed, connectionID}
+		for _, id := range seen {
+			args = append(args, id)
+		}
+		if _, err := a.DB.ExecContext(ctx, `UPDATE platform_remote_accounts SET missing_since=? WHERE connection_id=? AND missing_since='' AND upstream_id NOT IN (`+marks(len(seen))+`)`, args...); err != nil {
+			slog.Error("remote account missing mark failed", "connection", connectionID, "error", err)
+			failed++
+		}
 	}
 	failed += a.refreshWebReasons(ctx, client, connectionID, accounts)
 	state := "succeeded"
@@ -223,7 +230,7 @@ func (a *App) syncWebAccounts(ctx context.Context, connectionID string) error {
 // linkRemoteAccount makes sure the current delivery of an email has a local
 // account and a platform_links row pointing at it, creating or re-pointing
 // as needed, in one transaction. created reports an auto-created account.
-func (a *App) linkRemoteAccount(ctx context.Context, connectionID string, r supplier.WebAccount, email, observed string) (accountID string, created bool, err error) {
+func (a *App) linkRemoteAccount(ctx context.Context, connectionID string, r supplier.WebAccount, group []supplier.WebAccount, email, observed string) (accountID string, created bool, err error) {
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", false, err
@@ -244,8 +251,23 @@ func (a *App) linkRemoteAccount(ctx context.Context, connectionID string, r supp
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return "", false, err
 	}
-	// 2. A local account with this email: link it, re-pointing an older link.
-	err = tx.QueryRow(`SELECT id FROM accounts WHERE lower(trim(account))=? ORDER BY archived,created_at LIMIT 1`, email).Scan(&accountID)
+	// 2. A local account already linked to another delivery of this email
+	// (the local email may be spelled differently), else one with this email:
+	// link it, re-pointing an older link.
+	siblings := make([]any, 0, len(group)+1)
+	siblings = append(siblings, connectionID)
+	for _, other := range group {
+		if other.ID != r.ID {
+			siblings = append(siblings, fmt.Sprint(other.ID))
+		}
+	}
+	err = sql.ErrNoRows
+	if len(siblings) > 1 {
+		err = tx.QueryRow(`SELECT account_id FROM platform_links WHERE connection_id=? AND upstream_id IN (`+marks(len(siblings)-1)+`) ORDER BY updated_at DESC LIMIT 1`, siblings...).Scan(&accountID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		err = tx.QueryRow(`SELECT id FROM accounts WHERE lower(trim(account))=? ORDER BY archived,created_at LIMIT 1`, email).Scan(&accountID)
+	}
 	switch {
 	case err == nil:
 		var old string
@@ -430,6 +452,11 @@ func (a *App) refreshWebReasons(ctx context.Context, client *supplier.WebClient,
 			}
 		}
 		if errorsSeen == len(kinds) {
+			// Remember the attempt so a dead endpoint is retried after the
+			// refresh window, not on every run; keep any older text.
+			if _, err := a.DB.ExecContext(ctx, `UPDATE platform_remote_accounts SET reason_fetched_at=?,reason_status=? WHERE connection_id=? AND upstream_id=?`, now(), status, connectionID, upstream); err != nil {
+				slog.Error("reason attempt record failed", "connection", connectionID, "upstream", upstream, "error", err)
+			}
 			failed++
 			continue
 		}

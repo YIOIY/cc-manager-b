@@ -174,7 +174,7 @@ sudo docker exec -it cc-manager /app/cc-manager reset-password admin   # Docker 
 
 - 密码用主密钥加密保存在 `platform_connections.web_password_secret`，会话令牌只在内存里（5 小时），重启后重新登录一次。
 - 只调用读取接口，不会修改平台上的任何数据。
-- 失败时按连接退避（2 分钟翻倍到 60 分钟）；登录连续失败 3 次暂停该连接的网页通道，仪表盘和连接表单会提示。
+- 服务启动后 30 秒先跑一次账号同步、60 秒跑一次账单同步，之后按周期进行。整轮失败（登录、列表读不到）时按连接退避（2 分钟翻倍到 60 分钟），个别账号的原因读不到只记为部分成功、不退避；登录连续失败 3 次暂停该连接的网页通道，仪表盘和连接表单会提示。
 - 用量快照只在数值变化时记录，保留 90 天；`sync_runs` 里的 `web-accounts`、`web-bills` 记录与指标同步同样保留 7 天。
 - 手动触发一次账单同步：账单页「按模型消费」标签里的「立即同步」，或 `POST /api/v1/platform-usage/bills/models/sync`。
 

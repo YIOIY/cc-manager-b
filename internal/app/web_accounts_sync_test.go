@@ -314,3 +314,82 @@ func TestWebAccountsSyncLoginFailureSuspends(t *testing.T) {
 		t.Fatal("suspended connection still tried to log in")
 	}
 }
+
+func TestWebAccountsSyncReasonFailureDoesNotBackOff(t *testing.T) {
+	a, stub := webFixture(t)
+	if _, err := a.DB.Exec(`UPDATE platform_connections SET updated_at=? WHERE id='conn'`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	stub.setAccounts(remoteAccount(8001, "r@example.test", "ban", "2026-11-01 10:00", nil, nil))
+	stub.mu.Lock()
+	stub.reasonStatus = 404
+	stub.mu.Unlock()
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	if state, _, _, failed := lastRun(t, a, "web-accounts"); state != "partial" || failed != 1 {
+		t.Fatalf("state=%s failed=%d", state, failed)
+	}
+	if n, _, skip, err := a.syncBackoff(context.Background(), "conn", "web-accounts", time.Now()); err != nil || n != 0 || skip {
+		t.Fatalf("a partial web run must not back off: n=%d skip=%v err=%v", n, skip, err)
+	}
+	calls := stub.reasons.Load()
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	if stub.reasons.Load() != calls {
+		t.Fatal("failed reason lookups were retried before the 6-hour refresh")
+	}
+	if got := queryString(t, a, `SELECT reason_fetched_at FROM platform_remote_accounts WHERE upstream_id='8001'`); got == "" {
+		t.Fatal("failed lookup did not record an attempt time")
+	}
+}
+
+func TestWebAccountsSyncRelinksWhenLocalEmailDiffers(t *testing.T) {
+	a, stub := webFixture(t)
+	// Local account linked (by the OpenAPI submit flow) to delivery X under a
+	// differently spelled email; the platform then issues delivery Y.
+	insertLocalAccount(t, a, "acc-typo", "typo@example.test")
+	if _, err := a.DB.Exec(`INSERT INTO platform_links(id,account_id,connection_id,upstream_id,ingestion_state,created_at,updated_at) VALUES('l-x','acc-typo','conn','9101','accepted',?,?)`, now(), now()); err != nil {
+		t.Fatal(err)
+	}
+	stub.setAccounts(
+		remoteAccount(9101, "real@example.test", "ban", "2026-11-01 10:00", nil, nil),
+		remoteAccount(9102, "real@example.test", "using", "2026-11-05 10:00", nil, nil),
+	)
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	if queryInt(t, a, `SELECT COUNT(*) FROM accounts`) != 1 {
+		t.Fatal("a replaced delivery created a duplicate local account")
+	}
+	if got := queryString(t, a, `SELECT upstream_id FROM platform_links WHERE account_id='acc-typo'`); got != "9102" {
+		t.Fatalf("link=%s, want the new delivery", got)
+	}
+	if got := queryString(t, a, `SELECT superseded_by FROM platform_remote_accounts WHERE upstream_id='9101'`); got != "9102" {
+		t.Fatalf("superseded_by=%q", got)
+	}
+}
+
+func TestWebAccountsSyncShortListingDoesNotMarkMissing(t *testing.T) {
+	a, stub := webFixture(t)
+	stub.setAccounts(remoteAccount(9201, "s1@example.test", "using", "2026-11-01 10:00", nil, nil), remoteAccount(9202, "s2@example.test", "using", "2026-11-01 10:00", nil, nil))
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	// The console claims 2 accounts but only lists one.
+	stub.setAccounts(remoteAccount(9201, "s1@example.test", "using", "2026-11-01 10:00", nil, nil))
+	total := 2
+	stub.mu.Lock()
+	stub.total = &total
+	stub.mu.Unlock()
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	if queryString(t, a, `SELECT missing_since FROM platform_remote_accounts WHERE upstream_id='9202'`) != "" {
+		t.Fatal("a short listing marked an unseen account missing")
+	}
+	if state, _, _, _ := lastRun(t, a, "web-accounts"); state != "partial" {
+		t.Fatalf("state=%s, want partial", state)
+	}
+}

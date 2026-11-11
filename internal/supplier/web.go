@@ -80,6 +80,10 @@ type WebHTTPError struct {
 	Status        int
 	Summary       string
 	RangeMismatch bool
+	// Login marks a failure of the login exchange itself: anything the
+	// console answers there other than "come back later" means the
+	// credentials did not work, whatever the status code.
+	Login bool
 }
 
 func (e *WebHTTPError) Error() string {
@@ -90,6 +94,8 @@ func (e *WebHTTPError) UpstreamCode() string {
 	switch {
 	case e.RangeMismatch:
 		return "WEB_BILL_RANGE_MISMATCH"
+	case e.Login && e.Status != 429 && e.Status < 500:
+		return "WEB_LOGIN_FAILED"
 	case e.Status == 401:
 		return "WEB_LOGIN_FAILED"
 	case e.Status == 403:
@@ -146,13 +152,13 @@ func (c *WebClient) loginLocked(ctx context.Context) (WebSession, error) {
 		return WebSession{}, err
 	}
 	if status != 200 {
-		return WebSession{}, webErr(data, status)
+		return WebSession{}, loginErr(data, status)
 	}
 	var pub struct {
 		PublicKey string `json:"public_key"`
 	}
 	if json.Unmarshal(data, &pub) != nil || pub.PublicKey == "" {
-		return WebSession{}, &WebHTTPError{Status: status, Summary: "public key missing"}
+		return WebSession{}, &WebHTTPError{Status: status, Summary: "public key missing", Login: true}
 	}
 	enc, err := EncryptLoginPassword(pub.PublicKey, c.password)
 	if err != nil {
@@ -163,7 +169,7 @@ func (c *WebClient) loginLocked(ctx context.Context) (WebSession, error) {
 		return WebSession{}, err
 	}
 	if status != 200 {
-		return WebSession{}, webErr(data, status)
+		return WebSession{}, loginErr(data, status)
 	}
 	var login struct {
 		Token     string `json:"token"`
@@ -171,7 +177,7 @@ func (c *WebClient) loginLocked(ctx context.Context) (WebSession, error) {
 		ExpiresIn int    `json:"expires_in"`
 	}
 	if json.Unmarshal(data, &login) != nil || login.Token == "" {
-		return WebSession{}, &WebHTTPError{Status: status, Summary: "token missing"}
+		return WebSession{}, &WebHTTPError{Status: status, Summary: webSummary(data, "token missing"), Login: true}
 	}
 	ttl := time.Duration(login.ExpiresIn) * time.Second
 	if ttl <= webTokenSlack {
@@ -258,20 +264,27 @@ func (c *WebClient) send(ctx context.Context, method, path string, query url.Val
 	return data, resp.StatusCode, nil
 }
 
-func webErr(data []byte, status int) error {
+func webSummary(data []byte, fallback string) string {
 	var v struct {
 		Detail string `json:"detail"`
 		Msg    string `json:"msg"`
 	}
 	_ = json.Unmarshal(data, &v)
-	summary := v.Detail
-	if summary == "" {
-		summary = v.Msg
+	if v.Detail != "" {
+		return v.Detail
 	}
-	if summary == "" {
-		summary = http.StatusText(status)
+	if v.Msg != "" {
+		return v.Msg
 	}
-	return &WebHTTPError{Status: status, Summary: summary}
+	return fallback
+}
+
+func webErr(data []byte, status int) error {
+	return &WebHTTPError{Status: status, Summary: webSummary(data, http.StatusText(status))}
+}
+
+func loginErr(data []byte, status int) error {
+	return &WebHTTPError{Status: status, Summary: webSummary(data, http.StatusText(status)), Login: true}
 }
 
 // ListAccounts pages through every account of the console's supplier and

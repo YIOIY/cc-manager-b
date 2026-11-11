@@ -169,15 +169,72 @@ func TestWebBillsSyncBatchesOf50(t *testing.T) {
 	}
 }
 
-func TestWebSyncsOfOneConnectionDoNotOverlap(t *testing.T) {
-	a, _ := webFixture(t)
+func TestWebBillsSyncWaitsForTheAccountSync(t *testing.T) {
+	a, _, _, _ := billsFixture(t)
 	lock := a.webSyncLock("conn")
 	lock.Lock()
-	defer lock.Unlock()
+	released := make(chan time.Time, 1)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		released <- time.Now()
+		lock.Unlock()
+	}()
 	if err := a.syncWebBills(context.Background(), "conn"); err != nil {
-		t.Fatalf("a busy connection must be skipped, not failed: %v", err)
+		t.Fatalf("bills sync after waiting: %v", err)
 	}
-	if queryInt(t, a, `SELECT COUNT(*) FROM sync_runs WHERE kind='web-bills'`) != 0 {
-		t.Fatal("skipped sync wrote a run")
+	finished := time.Now()
+	if finished.Before(<-released) {
+		t.Fatal("bills sync ran while the account sync held the connection")
+	}
+	if queryInt(t, a, `SELECT COUNT(*) FROM sync_runs WHERE kind='web-bills' AND state='succeeded'`) != 1 {
+		t.Fatal("a tick that found the connection busy must still run once the lock is free")
+	}
+	// A cancelled context stops the wait without writing a run.
+	lock.Lock()
+	defer lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := a.syncWebBills(ctx, "conn"); err == nil {
+		t.Fatal("a cancelled wait must report the cancellation")
+	}
+	if queryInt(t, a, `SELECT COUNT(*) FROM sync_runs WHERE kind='web-bills'`) != 1 {
+		t.Fatal("a cancelled wait wrote a run")
+	}
+}
+
+func TestWebBillsSyncSumsDuplicateModelRows(t *testing.T) {
+	a, stub, today, _ := billsFixture(t)
+	stub.mu.Lock()
+	stub.bills = func(ids []string, start, end string) string {
+		rows := []string{billRow(428802, today, "claude-opus-5", "1.00")}
+		// Same model_name, a different bill_model_name: both are the model's cost.
+		rows = append(rows, strings.Replace(billRow(428802, today, "claude-opus-5", "2.50"), `"bill_model_name":"claude-opus-5"`, `"bill_model_name":"claude-opus-5-legacy"`, 1))
+		return billBody(rows, start, end)
+	}
+	stub.mu.Unlock()
+	if err := a.syncWebBills(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	rows := billModelRows(t, a)
+	if len(rows) != 1 || !strings.HasPrefix(rows["428802/"+today+"/claude-opus-5"], "fen=350 gen=1") {
+		t.Fatalf("rows=%v", rows)
+	}
+}
+
+func TestLoopAfterRunsAnEarlyFirstTick(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ticks := make(chan struct{}, 4)
+	go a.loopAfter(ctx, 20*time.Millisecond, time.Hour, func() { ticks <- struct{}{} })
+	select {
+	case <-ticks:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first tick did not run shortly after start")
+	}
+	select {
+	case <-ticks:
+		t.Fatal("second tick ran before the interval")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
