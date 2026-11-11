@@ -241,11 +241,12 @@ if systemd_present; then
 fi
 printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tag" "${previous:--}" "${backup_dir:--}" >> "$state/deploys.log"
 # Keep the current and previous tags plus the newest others, KEEP_IMAGES in all.
+# Channel tags (prod, main) are pointers, never pruned.
 keep_others=$((keep_images - 1))
 [ -n "$previous" ] && [ "$previous" != "$tag" ] && keep_others=$((keep_others - 1))
 [ "$keep_others" -ge 0 ] || keep_others=0
 docker image ls "$image" --format '{{.Tag}}' 2>/dev/null |
-    { grep -vxF -e "$tag" -e "${previous:-$tag}" -e '<none>' || true; } |
+    { grep -vxF -e "$tag" -e "${previous:-$tag}" -e '<none>' -e prod -e main || true; } |
     tail -n +"$((keep_others + 1))" | while read -r old; do
         docker image rm "$image:$old" >/dev/null 2>&1
     done

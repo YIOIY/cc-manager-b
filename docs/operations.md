@@ -39,70 +39,59 @@ docker compose -f deploy/docker-compose.yml up -d --build
 
 容器只读根文件系统，数据卷挂载在 `/data`，监听 `127.0.0.1:8080`，需自行放置反向代理。
 
-### 1.5 Docker 持续交付（推荐的生产方式）
+### 1.5 Docker 发布（生产方式）
 
-推送到 `main` 后，GitHub Actions 依次运行后端、前端、端到端测试，构建镜像并推送到 GHCR（`ghcr.io/<owner>/cc-manager:sha-<12 位提交号>` 与 `:main`）。上线由你在 GitHub 上手动触发（Actions → CI → Run workflow），工作流再通过 SSH 让服务器执行部署脚本。服务器不再需要源码或手工上传发布包。
-
-> 为什么是手动触发而不是"批准"：GitHub 免费计划的私有仓库不支持环境的 Required reviewers。手动运行工作流起到同样的把关作用：推送只产出镜像，不会自动上线。
+在自己电脑上运行 `scripts/release.sh`：跑测试、构建 linux/amd64 镜像，推送到 GHCR（`ghcr.io/<owner>/cc-manager:sha-<12 位提交号>`），再把 `:prod` 指向它。服务器上的 `cc-manager-update.timer` 每 2 分钟检查一次 `:prod`，发现新版本就调用部署脚本完成备份、切换、健康检查，失败自动回滚。服务器不需要源码，GitHub Actions 只负责跑测试。
 
 ```
-push main ─▶ 测试 ─▶ 构建并推送镜像           （到此为止，不上线）
-Run workflow ─▶ 测试 ─▶ 构建并推送镜像 ─▶ SSH: deploy <tag>
-                                                     │
-服务器 docker-deploy.sh: 拉取镜像 ─▶ 在线备份 SQLite ─▶ 停旧服务 ─▶ 启动新镜像
-                         ─▶ /healthz 返回 ok 且 version == tag ? 记录完成 : 回滚
-回滚 = 停新容器 + 从本次备份恢复数据库 + 启动上一个镜像（首次切换时启动原 systemd 服务）
+本机 release.sh ─▶ make test ─▶ 构建镜像 ─▶ 推送 sha-<提交号> ─▶ :prod 指向它
+                                                                 │
+服务器 timer（每 2 分钟）─▶ :prod 的版本 ≠ 当前版本 ? ─▶ docker-deploy.sh
+docker-deploy.sh: 在线备份 SQLite ─▶ 停旧容器 ─▶ 启动新镜像
+                  ─▶ /healthz 返回 ok 且 version == tag ? 记录完成 : 回滚
+回滚 = 停新容器 +（仅在新版本做过迁移时）从本次备份恢复数据库 + 启动上一个镜像
 ```
 
 #### 一次性准备
 
-1. **代码仓库**：在 GitHub 建私有仓库，`git remote add origin …` 后推送 `main`。
-2. **部署密钥**（在自己电脑上生成，私钥只放进 GitHub）：
+1. **本机推送权限**（需要 `write:packages`）：
    ```bash
-   ssh-keygen -t ed25519 -N '' -C cc-manager-ci -f ./ci_deploy
+   gh auth refresh -h github.com -s write:packages
+   gh auth token | docker login ghcr.io -u <github 用户名> --password-stdin
    ```
+2. **服务器拉取凭证**：在 GitHub → Settings → Developer settings → Personal access tokens (classic) 新建令牌，**只勾选 `read:packages`**。GHCR 目前只接受 classic 令牌。它保存在服务器 root 的 Docker 配置里，只能读取镜像。
 3. **服务器**（Ubuntu，保留现有 `/etc/cc-manager/cc-manager.env` 与 `/var/lib/cc-manager`）：
    ```bash
    sudo apt-get install -y docker.io docker-compose-v2 curl python3
-   # 从仓库拷贝 deploy/production 目录与 ci_deploy.pub 到服务器后：
-   sudo ./deploy/production/install-docker.sh ghcr.io/<owner>/cc-manager ./ci_deploy.pub
+   # 把仓库的 deploy/production 目录拷到服务器后：
+   printf '%s' '<read:packages 令牌>' | sudo ./deploy/production/install-docker.sh ghcr.io/<owner>/cc-manager <github 用户名>
    ```
-   脚本把 `compose.yml`、`docker-deploy.sh`、`backup.sh`、`ci-entry.sh` 安装到 `/opt/cc-manager/docker`（root 所有），创建 `cc-deploy` 用户：它的 SSH 密钥被绑定为只能执行 `ci-entry.sh`，sudo 只允许执行 `docker-deploy.sh`。脚本**不会**切换流量。
-
-   如果服务器全局关闭了公钥登录（只允许密码），脚本会在 `/etc/ssh/sshd_config` 末尾追加一个只对 `cc-deploy` 生效的 `Match User` 块：该用户只能用密钥登录，不能转发端口、不能分配终端；其他账号的登录方式不变。改动先经 `sshd -t` 校验，失败则恢复原文件；备份在 `/etc/ssh/sshd_config.cc-manager.bak`。用 `SKIP_SSHD=1` 可跳过这一步。
+   脚本把 `compose.yml`、`docker-deploy.sh`、`docker-update.sh`、`backup.sh` 安装到 `/opt/cc-manager/docker`（root 所有），用令牌执行 `docker login`，安装并启动 `cc-manager-update.timer`。如果服务器上还有旧方案的 CI 部署入口（`cc-deploy` 用户、它的 sudo 规则和 sshd 配置块），会一并删除。`:prod` 还不存在时定时器什么都不做。
 
    安装前它会检查环境文件和代理池（只报告键名，不打印值）：
    - **环境文件里含 `$` 的值必须用单引号包住**，例如 `CC_MANAGER_ADMIN_PASSWORD_HASH='$argon2id$v=19$…'`。Docker Compose 会展开未加引号的 `$`，哈希会被改坏。存在这种值时安装和部署都会拒绝继续。
    - 如果 `CC_MANAGER_SUPPLIER_PROXY` 或代理池里的代理指向 `127.0.0.1`/`localhost`，会给出警告：容器里的回环地址是容器自己，切换后要改成 `host.docker.internal`（compose 已把它映射到宿主机），并让宿主机上的代理监听 Docker 网桥地址（如 `172.17.0.1`）或 `0.0.0.0`（配合防火墙）。
-4. **GitHub 配置**：Settings → Environments → `production`（已存在则直接打开），添加 secrets（付费计划可另外勾选 Required reviewers）：
 
-   | Secret | 内容 |
-   | --- | --- |
-   | `DEPLOY_HOST` | 服务器地址 |
-   | `DEPLOY_PORT` | SSH 端口（可选，默认 22） |
-   | `DEPLOY_USER` | `cc-deploy` |
-   | `DEPLOY_SSH_KEY` | `ci_deploy` 私钥全文 |
-   | `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan -t ed25519 <服务器地址>` 的输出 |
+#### 首次切换（从 systemd）
 
-   GHCR 镜像默认私有，无需额外配置：部署时用该次任务自带的临时令牌拉取，用完即登出，服务器上不保存长期凭证。
+第一次部署时，脚本发现还没有 Docker 记录，会先备份数据库、停止 systemd 的 `cc-manager` 服务、把 `/var/lib/cc-manager` 交给容器用户（UID 10001）、启动容器。健康检查通过后禁用 systemd 服务；失败则交回目录所有权、重新启动 systemd 服务，线上保持原状。nginx 与 Cloudflare Tunnel 不需要改动（容器仍监听 `127.0.0.1:18080`）。
 
-#### 首次切换
-
-第一次部署时，脚本发现还没有 Docker 记录，会先备份数据库、停止 systemd 的 `cc-manager` 服务、把 `/var/lib/cc-manager` 交给容器用户（UID 10001）、启动容器。健康检查通过后禁用 systemd 服务；失败则交回目录所有权、重新启动 systemd 服务，线上保持原状。
-
-**回滚时数据库何时恢复**：只有新版本已经执行了数据库迁移（`schema_migrations` 版本变高）才会用部署前的备份覆盖数据库，因为旧版本无法在新结构上运行；这种情况下新版本运行期间的写入会丢失，请在任务中心核对 `unknown` 状态的交付。结构没变时保留数据库原样（包括新版本已经提交的账号），日志写明 `database kept`。nginx 与 Cloudflare Tunnel 不需要改动（容器仍监听 `127.0.0.1:18080`）。旧的 `/opt/cc-manager/releases` 保留，可在必要时手工回到 systemd。
+**回滚时数据库何时恢复**：只有新版本已经执行了数据库迁移（`schema_migrations` 版本变高）才会用部署前的备份覆盖数据库，因为旧版本无法在新结构上运行；这种情况下新版本运行期间的写入会丢失，请在任务中心核对 `unknown` 状态的交付。结构没变时保留数据库原样（包括新版本已经提交的账号），日志写明 `database kept`。
 
 #### 日常
 
-- **上线**：推送到 `main`，等 CI 通过后，Actions → CI → Run workflow（分支 `main`，`tag` 留空）。会重新跑一遍测试、构建当前提交并部署。
-- **回退到旧版本**：Actions → CI → Run workflow，`tag` 填旧标签（如 `sha-0123456789ab`），不会重新构建该镜像（仍会先跑测试）。数据库若已被新版本迁移，回退旧镜像前请先用该次部署前的备份恢复（见第 4 节），因为迁移只能向前。
-- **部署记录**：`/opt/cc-manager/docker/state/deploys.log`（时间、标签、上一标签、备份目录）；当前标签在 `state/current-tag`。
+- **上线**：提交并推送代码，然后在本机运行 `./scripts/release.sh`。2 分钟内服务器自动更新；在服务器上 `journalctl -u cc-manager-update -f` 可以看到过程。
+- **只推镜像不上线**：`./scripts/release.sh --no-prod`，之后用 `--promote` 上线。
+- **回退或切到指定版本**：`./scripts/release.sh --promote sha-0123456789ab`。只移动 `:prod`，不重新构建。数据库若已被新版本迁移，回退旧镜像前请先用该次部署前的备份恢复（见第 4 节），因为迁移只能向前。
+- **失败的版本不会反复重试**：部署失败并回滚后，该版本记在 `state/failed-tag`，定时器不再尝试，直到 `:prod` 指向别的版本。修复后发布新提交即可；确实要重试同一版本，在服务器上删除 `state/failed-tag`。
+- **暂停自动更新**：`sudo systemctl stop cc-manager-update.timer`（恢复用 `start`）。
+- **部署记录**：`/opt/cc-manager/docker/state/deploys.log`（时间、标签、上一标签、备份目录）；当前标签在 `state/current-tag`；定时器的判断记录在 `state/update.log`。
 - **日志**：`docker logs -f cc-manager`（单文件 20 MB，保留 5 个）。
 - **备份**：每次部署前自动生成 `/var/backups/cc-manager/<时间>-pre-<tag>/`；定期备份仍按第 4 节。
-- **失败详情**：`/opt/cc-manager/docker/state/last-deploy.log`（含容器最后 80 行日志；Actions 页面只显示步骤摘要，不会输出应用日志）。
-- **更新服务器上的部署脚本**：脚本由管理员安装，CI 无法改写；仓库里改了 `deploy/production/*.sh` 或 `compose.yml` 后，在服务器上重新运行一次 `install-docker.sh`。
-- **不要再运行 `install.sh`**：它会重新启用 systemd 服务，开机后与容器争抢 18080 端口。如需退回 systemd，先 `sudo docker rm -f cc-manager`，把 `/var/lib/cc-manager` 交还 `cc-manager` 用户（`chown -R cc-manager:cc-manager`），再 `systemctl enable --now cc-manager`。
-- **镜像存储**：每次推送 `main` 都会在 GHCR 留下一个 `sha-*` 镜像。服务器只保留最近 3 个（`KEEP_IMAGES`）；GHCR 上的旧版本在 GitHub → Packages → cc-manager → Package settings 中按需删除，至少保留当前和上一个标签以便回退。
+- **失败详情**：`/opt/cc-manager/docker/state/last-deploy.log`（含容器最后 80 行日志）。
+- **更新服务器上的部署脚本**：仓库里改了 `deploy/production/` 下的脚本、`compose.yml` 或定时器后，把目录拷到服务器重新运行一次 `install-docker.sh`（令牌已保存，不必再传，命令末尾的用户名仍需要）。
+- **不要再运行 `install.sh`**：它会重新启用 systemd 服务，开机后与容器争抢 18080 端口。如需退回 systemd，先停定时器和容器（`systemctl disable --now cc-manager-update.timer; docker rm -f cc-manager`），把 `/var/lib/cc-manager` 交还 `cc-manager` 用户（`chown -R cc-manager:cc-manager`），再 `systemctl enable --now cc-manager`。
+- **镜像存储**：每次发布都会在 GHCR 留下一个 `sha-*` 镜像。服务器只保留最近 3 个（`KEEP_IMAGES`）；GHCR 上的旧版本在 GitHub → Packages → cc-manager → Package settings 中按需删除，至少保留当前和上一个标签以便回退。
 - **注意**：会话保存在内存中，每次部署后所有人需要重新登录。
 
 ## 2. 配置项

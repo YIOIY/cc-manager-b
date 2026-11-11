@@ -1,30 +1,35 @@
 #!/usr/bin/env bash
-# One-time (re-runnable) server setup for Docker deploys driven by CI.
+# One-time (re-runnable) server setup for Docker releases pulled by the server.
 #
-#   sudo ./deploy/production/install-docker.sh <image> <ci-public-key-file>
-#   e.g. sudo ./deploy/production/install-docker.sh ghcr.io/acme/cc-manager ./ci_deploy.pub
+#   printf '%s' "$READ_TOKEN" | sudo ./deploy/production/install-docker.sh <image> <registry-user>
+#   e.g. ... install-docker.sh ghcr.io/acme/cc-manager acme
+#
+# READ_TOKEN: a GitHub classic token with only the read:packages scope. It is
+# stored by `docker login` in root's Docker config and used by the update timer
+# to pull images. Without a token on stdin the existing login is kept.
 #
 # What it does:
-#   - installs compose.yml, docker-deploy.sh, backup.sh and ci-entry.sh into
-#     /opt/cc-manager/docker (root-owned: the CI user cannot change them)
-#   - creates the "cc-deploy" user whose only SSH key is pinned to ci-entry.sh,
-#     and a sudo rule that allows exactly docker-deploy.sh
-# What it does NOT do: switch traffic. The first CI deploy stops the systemd
-# service, starts the container and rolls back to systemd if it is unhealthy.
+#   - installs compose.yml, docker-deploy.sh, docker-update.sh and backup.sh into
+#     /opt/cc-manager/docker (root-owned)
+#   - installs and starts cc-manager-update.timer: every 2 minutes it deploys
+#     the image ":prod" points at, if that is a new version
+#   - removes the older CI deploy access if present (cc-deploy user, its sudo
+#     rule and its sshd block)
+# What it does NOT do on its own: switch traffic. While no image is published
+# to ":prod" the timer does nothing; the first release replaces the systemd
+# service and rolls back to it if the new container is unhealthy.
 #
-# Re-run it after changing any of the installed scripts.
+# Re-run it after changing any of the installed files.
 set -euo pipefail
-image=${1:?usage: install-docker.sh <image> <ci-public-key-file>}
-pubkey_file=${2:?usage: install-docker.sh <image> <ci-public-key-file>}
-deploy_user=${DEPLOY_USER:-cc-deploy}
+image=${1:?usage: install-docker.sh <image> <registry-user>  (read-only token on stdin)}
+registry_user=${2:?usage: install-docker.sh <image> <registry-user>  (read-only token on stdin)}
 root=/opt/cc-manager/docker
 here=$(cd "$(dirname "$0")" && pwd)
 
 [ "$(id -u)" = 0 ] || { echo 'run as root' >&2; exit 1; }
 [[ $image =~ ^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+$ ]] || { echo "image must be lower-case registry/path without a tag, got: $image" >&2; exit 1; }
-[ -s "$pubkey_file" ] || { echo "missing public key file $pubkey_file" >&2; exit 1; }
-grep -qE '^(ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa) ' "$pubkey_file" || { echo 'not an SSH public key' >&2; exit 1; }
-for tool in docker curl python3; do
+[[ $registry_user =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || { echo "invalid registry user: $registry_user" >&2; exit 1; }
+for tool in docker curl python3 systemctl; do
     command -v "$tool" >/dev/null || { echo "missing $tool" >&2; missing=1; }
 done
 docker compose version >/dev/null 2>&1 || { echo 'missing the docker compose plugin' >&2; missing=1; }
@@ -65,90 +70,68 @@ if blocking:
     sys.exit(1)
 PY
 
+# Registry login first: without it the timer cannot pull anything.
+registry=${image%%/*}
+if [ ! -t 0 ]; then
+    token=$(cat)
+    if [ -n "$token" ]; then
+        printf '%s' "$token" | docker login "$registry" -u "$registry_user" --password-stdin >/dev/null ||
+            { echo "docker login to $registry failed (token needs read:packages)" >&2; exit 1; }
+        unset token
+        echo "registry: logged in to $registry as $registry_user (stored in root's Docker config)"
+    fi
+fi
+python3 - "$registry" <<'PY' || { echo "no Docker login for $registry: pipe a read-only token on stdin" >&2; exit 1; }
+import json, os, sys
+cfg = json.load(open(os.path.expanduser("~/.docker/config.json")))
+sys.exit(0 if sys.argv[1] in cfg.get("auths", {}) or sys.argv[1] in cfg.get("credHelpers", {}) else 1)
+PY
+
 install -d -o root -g root -m 0755 "$root" "$root/state"
 install -o root -g root -m 0644 "$here/compose.yml" "$root/compose.yml"
 install -o root -g root -m 0755 "$here/docker-deploy.sh" "$root/docker-deploy.sh"
+install -o root -g root -m 0755 "$here/docker-update.sh" "$root/docker-update.sh"
 install -o root -g root -m 0755 "$here/backup.sh" "$root/backup.sh"
-install -o root -g root -m 0755 "$here/ci-entry.sh" "$root/ci-entry.sh"
 printf '%s\n' "$image" > "$root/image"
 chmod 0644 "$root/image"
 install -d -m 0700 /var/backups/cc-manager
 
-if ! id "$deploy_user" >/dev/null 2>&1; then
-    useradd --system --create-home --shell /bin/bash "$deploy_user"
-fi
-passwd -l "$deploy_user" >/dev/null 2>&1 || true
-home=$(getent passwd "$deploy_user" | cut -d: -f6)
-install -d -o "$deploy_user" -g "$deploy_user" -m 0700 "$home/.ssh"
-# The key can only run ci-entry.sh: no shell, no forwarding, no pty.
-printf 'command="%s/ci-entry.sh",restrict %s\n' "$root" "$(head -n1 "$pubkey_file")" > "$home/.ssh/authorized_keys"
-chown "$deploy_user:$deploy_user" "$home/.ssh/authorized_keys"
-chmod 0600 "$home/.ssh/authorized_keys"
+install -o root -g root -m 0644 "$here/cc-manager-update.service" /etc/systemd/system/cc-manager-update.service
+install -o root -g root -m 0644 "$here/cc-manager-update.timer" /etc/systemd/system/cc-manager-update.timer
+systemctl daemon-reload
+systemctl enable --now cc-manager-update.timer >/dev/null
 
-# Allow key login for the deploy user only. Servers that disable public keys
-# globally (password-only) keep that for every other account. Appended to the
-# end of sshd_config: a Match block in sshd_config.d (included at the top)
-# would also capture the main file's settings that follow it.
+# Remove the CI deploy access used before releases were pulled by the server.
+legacy_user=cc-deploy
 sshd_config=/etc/ssh/sshd_config
-if [ "${SKIP_SSHD:-0}" != 1 ] && [ -f "$sshd_config" ]; then
-    begin='# BEGIN cc-manager deploy user (managed by install-docker.sh)'
-    end='# END cc-manager deploy user'
+begin='# BEGIN cc-manager deploy user (managed by install-docker.sh)'
+if grep -qF "$begin" "$sshd_config" 2>/dev/null; then
     cp -p "$sshd_config" "$sshd_config.cc-manager.bak"
-    python3 - "$sshd_config" "$begin" "$end" "$deploy_user" <<'PY'
+    python3 - "$sshd_config" "$begin" '# END cc-manager deploy user' <<'PY'
 import sys
-path, begin, end, user = sys.argv[1:]
+path, begin, end = sys.argv[1:]
 text = open(path, encoding="utf-8").read()
-if begin in text:  # replace our previous block
-    head, rest = text.split(begin, 1)
-    text = head.rstrip("\n") + "\n" + rest.split(end, 1)[1].lstrip("\n")
-block = f"""{begin}
-Match User {user}
-    PubkeyAuthentication yes
-    AuthenticationMethods publickey
-    PasswordAuthentication no
-    KbdInteractiveAuthentication no
-    AllowTcpForwarding no
-    AllowAgentForwarding no
-    X11Forwarding no
-    PermitTTY no
-{end}
-"""
-open(path, "w", encoding="utf-8").write(text.rstrip("\n") + "\n\n" + block)
+head, rest = text.split(begin, 1)
+open(path, "w", encoding="utf-8").write(head.rstrip("\n") + "\n" + rest.split(end, 1)[1].lstrip("\n"))
 PY
-    if ! sshd -t; then
+    if sshd -t; then
+        systemctl reload ssh 2>/dev/null || systemctl reload sshd
+        echo "sshd: removed the $legacy_user block (backup: $sshd_config.cc-manager.bak)"
+    else
         mv -f "$sshd_config.cc-manager.bak" "$sshd_config"
-        echo "sshd rejected the new config; restored $sshd_config, nothing reloaded" >&2
-        exit 1
+        echo "WARNING: sshd rejected the config without the $legacy_user block; left it in place" >&2
     fi
-    effective=$(sshd -T -C "user=$deploy_user,host=ci,addr=192.0.2.1" 2>/dev/null)
-    grep -qix 'pubkeyauthentication yes' <<<"$effective" || { echo "WARNING: sshd still reports pubkey auth off for $deploy_user" >&2; }
-    if grep -qiE '^(allowusers|allowgroups) ' <<<"$effective"; then
-        echo "WARNING: sshd has AllowUsers/AllowGroups; add $deploy_user there or CI cannot log in:" >&2
-        grep -iE '^(allowusers|allowgroups) ' <<<"$effective" >&2
-    fi
-    # reload keeps existing sessions open
-    systemctl reload ssh 2>/dev/null || systemctl reload sshd
-    echo "sshd: key login enabled for $deploy_user only (backup: $sshd_config.cc-manager.bak)"
+fi
+rm -f /etc/sudoers.d/cc-manager-deploy "$root/ci-entry.sh"
+if id "$legacy_user" >/dev/null 2>&1; then
+    userdel -r "$legacy_user" >/dev/null 2>&1 || userdel "$legacy_user"
+    echo "removed the $legacy_user user (CI no longer logs in)"
 fi
 
-sudoers=/etc/sudoers.d/cc-manager-deploy
-printf '%s ALL=(root) NOPASSWD: %s/docker-deploy.sh\nDefaults:%s !requiretty\n' "$deploy_user" "$root" "$deploy_user" > "$sudoers.tmp"
-chmod 0440 "$sudoers.tmp"
-visudo -cf "$sudoers.tmp" >/dev/null
-mv "$sudoers.tmp" "$sudoers"
-
-cat <<EOF
+cat <<EOS
 Installed into $root for image $image.
+Update timer: $(systemctl is-active cc-manager-update.timer) (every 2 minutes; log: journalctl -u cc-manager-update)
+Current service: $(cat "$root/state/current-tag" 2>/dev/null || echo "systemd ($(systemctl is-active cc-manager 2>/dev/null || echo unknown))")
 
-GitHub repository → Settings → Environments → "production":
-  - Secrets:
-      DEPLOY_HOST         this server's address
-      DEPLOY_PORT         SSH port (optional, default 22)
-      DEPLOY_USER         $deploy_user
-      DEPLOY_SSH_KEY      the private key matching $pubkey_file
-      DEPLOY_KNOWN_HOSTS  output of: ssh-keyscan -t ed25519 <host>
-
-Current service: $(systemctl is-active cc-manager 2>/dev/null || echo unknown) (systemd).
-Deploy with Actions → CI → Run workflow on main. The first deploy switches
-to Docker and rolls back to systemd if it fails.
-EOF
+Publish from a workstation with scripts/release.sh; the server deploys :prod within a few minutes.
+EOS

@@ -30,3 +30,13 @@
 ## 不做
 
 不改应用代码（会话仍在内存，部署后需重新登录）；不做多实例或零停机；不引入 Kubernetes。
+
+## 修订（2026-11-11）：本地发布、服务器拉取
+
+用户希望在本机推送镜像、服务器自动更新，替代"CI 构建 + SSH 部署"：
+
+- **发布**：`scripts/release.sh` 在本机跑 `make test`，原生交叉编译 linux/amd64 二进制并构建前端，用 `docker create/cp/commit` 组装运行镜像（Docker 20.10 的旧构建器无法跨平台 COPY，BuildKit 又因失效的镜像加速器拉不到基础镜像），推送 `sha-<12 位>` 并把 `:prod` 指向它；`--promote <tag>` 只移动 `:prod`，用于回退。
+- **更新**：服务器 `cc-manager-update.timer` 每 2 分钟运行 `docker-update.sh`：拉取 `:prod`，从镜像标签读版本，与 `state/current-tag` 不同则本地打标签并以 `PULL=0` 调用 `docker-deploy.sh`（备份、健康检查、回滚不变）。部署失败的版本写入 `state/failed-tag`，不再重试，避免每 2 分钟重启一次。
+- **凭证**：服务器 root 的 Docker 登录保存一个只有 `read:packages` 的 classic 令牌（取代原方案每次部署的临时令牌）；本机用 `gh` 令牌加 `write:packages`。
+- **撤销**：CI 只保留测试与镜像可构建检查；删除 `ci-entry.sh`、GitHub `production` 环境与部署密钥；`install-docker.sh` 删除服务器上的 `cc-deploy` 用户、sudo 规则与 sshd 配置块。
+- **验证**：本地 registry 模拟 9 个场景（缺失通道、首次部署、无变化、升级、坏镜像回滚且不重试、promote 回退、部署锁、锁释放后部署、清理保留 `prod`）全部符合预期。
