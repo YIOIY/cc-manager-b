@@ -92,17 +92,48 @@
           <small>请求数</small><b>{{ formatCount(dash?.platform.today_requests ?? 0) }}</b>
         </div>
         <div>
-          <small>平台消费</small><b class="purple-number">{{ formatMoneyFen(dash?.platform.today_cost_fen) }}</b>
+          <small>今日消费（按模型）</small
+          ><b class="purple-number">{{
+            formatMoneyFen(dash?.platform.today_model_cost_fen ?? dash?.platform.today_cost_fen)
+          }}</b>
+          <em class="usage-note">约 2 小时延迟，未出齐</em>
+        </div>
+        <div
+          class="near-limit"
+          :class="{ attention: dash?.platform.near_limit_accounts }"
+          role="button"
+          tabindex="0"
+          @click="goNearLimit"
+          @keyup.enter="goNearLimit"
+        >
+          <small>接近限额</small><b>{{ dash?.platform.near_limit_accounts ?? '—' }}</b>
+          <em class="usage-note">5 小时窗口 ≥ 80%</em>
         </div>
       </div>
       <div class="sync-strip">
-        <span>最近同步</span
+        <span>指标同步</span
         ><strong>{{ dash?.platform.last_sync_at ? formatDateTime(dash.platform.last_sync_at) : '尚未同步' }}</strong>
         <el-tag :type="syncHealth.tone">{{ syncHealth.label }}</el-tag>
       </div>
       <div v-if="syncHealth.detail" class="sync-health" role="status">
         <p class="sync-health-detail">{{ syncHealth.detail }}</p>
         <p v-if="syncHealth.hint" class="sync-health-hint">{{ syncHealth.hint }}</p>
+      </div>
+      <div class="sync-strip">
+        <span>网页同步</span
+        ><strong>{{
+          webHealthSource?.last_sync_at ? formatDateTime(webHealthSource.last_sync_at) : '尚未同步'
+        }}</strong>
+        <el-tag :type="webHealth.tone">{{ webHealth.label }}</el-tag>
+      </div>
+      <div v-if="webHealth.detail" class="sync-health" role="status">
+        <p class="sync-health-detail">{{ webHealth.detail }}</p>
+        <p v-if="webHealth.hint" class="sync-health-hint">{{ webHealth.hint }}</p>
+      </div>
+      <div v-if="remoteCounts.length" class="remote-counts" aria-label="平台账号状态">
+        <span v-for="c in remoteCounts" :key="c.status" class="remote-count" :class="{ attention: c.failing }">
+          {{ c.label }} <b>{{ c.count }}</b>
+        </span>
       </div>
     </section>
     <section class="dashboard-panel">
@@ -140,6 +171,7 @@ import PageHead from '../components/PageHead.vue'
 import { api, errorMessage } from '../api'
 import type { Dashboard } from '../types/api'
 import { formatCount, formatDateTime, formatMoneyFen, planLabel } from '../utils/format'
+import { runtimeLabel } from '../account-workflow'
 
 const router = useRouter()
 const dash = ref<Dashboard>()
@@ -161,6 +193,32 @@ const planRows = computed(() => {
 const syncHealth = computed<SyncHealthView>(() =>
   dash.value ? describeSyncHealth(dash.value.platform) : { tone: 'info', label: '未开始' },
 )
+const webHealthSource = computed(() => dash.value?.platform.web_sync_health)
+const webHealth = computed<SyncHealthView>(() =>
+  webHealthSource.value ? describeSyncHealth(webHealthSource.value) : { tone: 'info', label: '未配置' },
+)
+const failingStatuses = new Set([
+  'ban',
+  'banned',
+  'check_fail',
+  'login_failed',
+  'bound_failed',
+  'cooking_failed',
+  're_login_failed',
+  'sync_failed',
+  'fault',
+  'suspended',
+  'arrearage',
+])
+const remoteCounts = computed(() =>
+  Object.entries(dash.value?.platform.remote_counts_by_status || {})
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([status, count]) => ({ status, count, label: runtimeLabel(status), failing: failingStatuses.has(status) })),
+)
+function goNearLimit() {
+  router.push({ name: 'accounts', query: { five_hour_min: '80' } })
+}
 
 async function load() {
   loading.value = true
@@ -177,6 +235,43 @@ onMounted(load)
 </script>
 
 <style scoped>
+.usage-note {
+  display: block;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--text-tertiary, #909399);
+}
+.near-limit {
+  cursor: pointer;
+  border-radius: 10px;
+}
+.near-limit.attention b {
+  color: var(--el-color-danger);
+}
+.remote-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.remote-count {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--surface-muted, #f6f7fb);
+  color: var(--text-secondary, #606266);
+}
+.remote-count b {
+  margin-left: 2px;
+  color: var(--text-primary, #303133);
+}
+.remote-count.attention {
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+}
+.remote-count.attention b {
+  color: var(--el-color-danger);
+}
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

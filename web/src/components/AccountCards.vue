@@ -15,13 +15,44 @@
         <span v-if="card.platform_account_id" class="account-platform-id">平台 ID {{ card.platform_account_id }}</span>
       </div>
       <div class="account-card-badges">
+        <span v-if="card.platform?.provider" class="mini-badge provider">{{ card.platform.provider }}</span>
         <span class="mini-badge yellow">{{ planLabel(card.plan) || '未配置套餐' }}</span>
-        <span v-if="card.deliveryState === 'linked'" class="mini-badge teal">{{ card.statusLabel }}</span>
+        <span
+          v-if="card.deliveryState === 'linked'"
+          class="mini-badge"
+          :class="card.statusFailing ? 'attention' : 'teal'"
+        >
+          {{ card.statusLabel }}<Lock v-if="card.platform?.locked" :size="10" class="locked-icon" />
+        </span>
+        <span v-if="card.platform?.auto_created" class="mini-badge" title="由平台同步自动创建的本地账号">来自平台</span>
+        <span v-if="card.platform?.missing_since" class="mini-badge attention" :title="card.platform.missing_since"
+          >平台已移除</span
+        >
         <span v-if="card.archived" class="mini-badge">已归档</span>
+        <span v-if="card.platform?.remote_created_at" class="account-card-created"
+          >创建时间 {{ card.platform.remote_created_at }}</span
+        >
       </div>
-      <template v-if="card.deliveryState === 'linked'">
+      <template v-if="card.deliveryState === 'linked' && card.platform">
         <div class="usage-card-rule"></div>
-        <div class="usage-stats">
+        <div class="platform-profile">
+          <div v-for="field in card.profileFields" :key="field.key">
+            <small>{{ field.label }}</small>
+            <span :title="field.value">{{ field.value || '—' }}</span>
+            <em v-if="field.diff" class="profile-diff" :title="'本地：' + field.local">≠本地</em>
+          </div>
+        </div>
+        <div
+          v-if="card.statusFailing && card.platform.reason_text"
+          class="platform-reason"
+          :title="card.platform.reason_text"
+        >
+          <AlertCircle :size="14" />
+          <span>{{ card.platform.reason_text }}</span>
+          <small v-if="card.platform.reason_fetched_at">{{ formatDateTime(card.platform.reason_fetched_at) }}</small>
+        </div>
+        <PlatformUsageBlock :usage="card.platform.usage" :observed-at="card.platform.observed_at" />
+        <div v-if="hasValue(card.platform_requests)" class="usage-stats">
           <div>
             <small>今日请求</small><b>{{ formatCount(card.platform_requests) }}</b>
           </div>
@@ -91,23 +122,77 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RefreshCw, AlertCircle, Info, ArrowUpRight, ChartNoAxesCombined } from 'lucide-vue-next'
-import type { Account } from '../types/api'
+import { RefreshCw, AlertCircle, Info, ArrowUpRight, ChartNoAxesCombined, Lock } from 'lucide-vue-next'
+import type { Account, PlatformInfo } from '../types/api'
 import { deliveryState, deliveryStates, runtimeLabel, type DeliveryState } from '../account-workflow'
-import { formatCount, formatMoneyFen, hasValue, planLabel } from '../utils/format'
+import { formatCount, formatDateTime, formatMoneyFen, hasValue, planLabel } from '../utils/format'
 import { useSession } from '../composables/useSession'
+import PlatformUsageBlock from './PlatformUsageBlock.vue'
+import { locationLabel, paymentLabel } from '../model/platform-card'
 
 const props = defineProps<{ accounts: Account[]; allAccounts: Account[]; loading: boolean }>()
 const emit = defineEmits<{ select: [account: Account] }>()
 const { can } = useSession()
 
+type ProfileField = { key: string; label: string; value: string; local: string; diff: boolean }
 type Card = Account & {
   deliveryState: DeliveryState
   delivery: (typeof deliveryStates)[DeliveryState]
   statusLabel: string
   statusTone: string
+  statusFailing: boolean
   connectionNames: string
   footer: string
+  profileFields: ProfileField[]
+}
+
+const failingStatuses = new Set([
+  'ban',
+  'banned',
+  'check_fail',
+  'login_failed',
+  'bound_failed',
+  'cooking_failed',
+  're_login_failed',
+  'sync_failed',
+  'fault',
+  'suspended',
+  'arrearage',
+])
+
+// The platform card's two-column profile, with a marker where the local
+// record disagrees with the platform.
+function profileFields(row: Account, p: PlatformInfo): ProfileField[] {
+  const f = p.profile
+  const field = (
+    key: string,
+    label: string,
+    value: string,
+    local = '',
+    display?: (v: string) => string,
+  ): ProfileField => ({
+    key,
+    label,
+    value: display ? display(value) : value,
+    local: display ? display(local) : local,
+    diff: !!value && !!local && value !== local,
+  })
+  const list: ProfileField[] = [
+    field('alias', '账号别名', p.alias),
+    field('aid', '平台账号 ID', p.aid || p.upstream_id),
+    field('plan', '套餐', f.plan, row.plan),
+    field('register_time', '注册时间', f.register_time, row.register_time),
+    field('plan_start_time', '套餐开始时间', f.plan_start_time, row.plan_start_time),
+    field('plan_end_time', '套餐结束时间', f.plan_end_time, row.plan_end_time),
+    field('register_location', '注册地', f.register_location, row.register_location, locationLabel),
+    field('balance', '套餐余量', f.balance ? f.balance + '%' : ''),
+    field('payment_method', '支付方式', f.payment_method, '', paymentLabel),
+    field('register_device', '注册设备', f.register_device),
+  ]
+  if (f.recharge_time) list.push(field('recharge_time', '充值日期', f.recharge_time))
+  if (f.warranty_period) list.push(field('warranty_period', '质保期', f.warranty_period))
+  if (f.tags?.length) list.push(field('tags', '标签', f.tags.join('、')))
+  return list
 }
 
 const cards = computed<Card[]>(() =>
@@ -117,13 +202,24 @@ const cards = computed<Card[]>(() =>
       .map((l) => l.connection_name)
       .filter(Boolean)
       .join('、')
+    const platformStatus = row.platform?.status || row.platform_status
+    const failing = failingStatuses.has(platformStatus)
     return {
       ...row,
       deliveryState: state,
       delivery: deliveryStates[state],
-      statusLabel: runtimeLabel(row.platform_status),
-      statusTone: state === 'linked' ? 'online' : state === 'failed' || state === 'unknown' ? 'attention' : 'unknown',
+      statusLabel: runtimeLabel(platformStatus),
+      statusTone:
+        state === 'linked'
+          ? failing
+            ? 'attention'
+            : 'online'
+          : state === 'failed' || state === 'unknown'
+            ? 'attention'
+            : 'unknown',
+      statusFailing: failing,
       connectionNames: names,
+      profileFields: row.platform ? profileFields(row, row.platform) : [],
       footer:
         state === 'linked'
           ? '已关联 · ' + (names || '平台')
@@ -262,6 +358,90 @@ function width(value: unknown, max: number) {
 .mini-badge.yellow {
   background: #39360e;
   color: #e7d231;
+}
+
+.mini-badge.attention {
+  background: #3d1414;
+  color: #ff8a80;
+}
+
+.mini-badge.provider {
+  background: #1d2140;
+  color: #9fb4ff;
+  text-transform: none;
+}
+
+.locked-icon {
+  margin-left: 4px;
+  vertical-align: -1px;
+}
+
+.account-card-created {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-tertiary, #909399);
+}
+
+.platform-profile {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+  margin-top: 10px;
+}
+
+.platform-profile > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.platform-profile small {
+  flex: none;
+  color: var(--text-secondary, #606266);
+}
+
+.platform-profile span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.profile-diff {
+  flex: none;
+  font-style: normal;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #39360e;
+  color: #e7d231;
+}
+
+.platform-reason {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #3d1414;
+  color: #ff8a80;
+  font-size: 12px;
+}
+
+.platform-reason span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-reason small {
+  flex: none;
+  opacity: 0.8;
 }
 
 .usage-card-rule {

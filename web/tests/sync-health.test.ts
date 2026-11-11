@@ -50,3 +50,17 @@ test('older servers without sync_status still map the raw state', () => {
   expect(describeSyncHealth({ ...base, last_sync_state: 'partial', last_sync_at: 'x' }).label).toBe('同步异常')
   expect(describeSyncHealth({ ...base, last_sync_state: 'succeeded', last_sync_at: 'x' }).label).toBe('正常')
 })
+
+test('the web channel health reads like the metrics health', () => {
+  const v = describeSyncHealth({
+    ...base,
+    sync_status: 'failing',
+    last_sync_state: 'failed',
+    error_code: 'WEB_LOGIN_FAILED',
+    consecutive_failures: 3,
+  })
+  expect(v.tone).toBe('danger')
+  expect(v.label).toBe('同步异常')
+  expect(v.detail).toContain('网页后台登录失败')
+  expect(v.detail).toContain('连续失败 3 次')
+})

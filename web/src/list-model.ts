@@ -88,6 +88,16 @@ export const listConfigs: Record<string, ListConfig> = {
       },
       { key: 'plan', label: '账号套餐', field: 'plan', type: 'select', options: plans },
       {
+        key: 'five_hour_min',
+        label: '5 小时窗口',
+        field: 'five_hour_min',
+        type: 'select',
+        options: [
+          { label: '≥ 80%（接近限额）', value: '80' },
+          { label: '≥ 95%', value: '95' },
+        ],
+      },
+      {
         key: 'archived',
         label: '库存状态',
         field: 'archived',

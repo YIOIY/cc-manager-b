@@ -1,5 +1,8 @@
 <template>
   <PageHead :eyebrow="route.meta.eyebrow || 'WORKSPACE'" :title="route.meta.title" :description="config.description">
+    <el-button v-if="listKey === 'accounts' && reconcileConnection" @click="reconcileOpen = true"
+      ><ListChecks :size="16" />平台对账</el-button
+    >
     <el-button v-if="listKey === 'accounts' && can('accounts.import')" @click="importOpen = true"
       ><FileJson :size="16" />JSON 导入</el-button
     >
@@ -219,6 +222,7 @@
     />
   </template>
   <ProxyFormDialog v-if="listKey === 'proxies'" v-model="proxyFormOpen" :proxy="editingProxy" @saved="onProxySaved" />
+  <RemoteAccountsDrawer v-if="reconcileConnection" v-model="reconcileOpen" :connection-id="reconcileConnection.id" />
   <ConnectionFormDialog
     v-if="listKey === 'connections'"
     v-model="connectionFormOpen"
@@ -240,6 +244,7 @@ import AccountFormDialog from '../components/AccountFormDialog.vue'
 import ImportDialog from '../components/ImportDialog.vue'
 import ProxyFormDialog from '../components/ProxyFormDialog.vue'
 import ConnectionFormDialog from '../components/ConnectionFormDialog.vue'
+import RemoteAccountsDrawer from '../components/RemoteAccountsDrawer.vue'
 import ProxyNetworkPanel from '../components/ProxyNetworkPanel.vue'
 import { api, errorMessage } from '../api'
 import { listConfigs, states, type Column } from '../list-model'
@@ -272,6 +277,8 @@ const config = computed(() => listConfigs[listKey.value] || listConfigs.accounts
 
 const proxies = ref<ProxyOption[]>([])
 const connections = ref<ConnectionOption[]>([])
+const reconcileOpen = ref(false)
+const reconcileConnection = computed(() => connections.value.find((c) => c.web_configured && c.enabled) || null)
 async function loadLookups() {
   if (listKey.value !== 'accounts') return
   // Lookups only need accounts.view, so this page never depends on the proxies / connections modules.
