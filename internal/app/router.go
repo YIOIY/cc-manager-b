@@ -57,6 +57,7 @@ func (a *App) Handler() http.Handler {
 
 	needFn("/api/v1/platform-connections", byMethod(PermConnectionsView, map[string]Permission{"POST": PermConnectionsCreate}), a.platformConnections)
 	needFn("/api/v1/platform-connections/{id}", byMethod(PermConnectionsView, map[string]Permission{"PUT": PermConnectionsUpdate, "PATCH": PermConnectionsUpdate, "DELETE": PermConnectionsDelete}), a.platformConnectionDetail)
+	need("POST /api/v1/platform-connections/{id}/web-login-test", PermConnectionsUpdate, a.webLoginTest)
 
 	need("GET /api/v1/jobs", PermJobsView, a.jobs)
 	need("GET /api/v1/audit-events", PermAuditView, a.auditEvents)

@@ -140,13 +140,13 @@
 | `USER_EXISTS` | conflict | 409 | 否 | none | 用户名已存在 | 唯一约束冲突 |
 | `VALIDATION_FAILED` | validation | 422 | 否 | fix_input | 提交的资料不符合要求 | 字段级问题在 fields 中逐项列出；允许调用方自定义文案 |
 | `VERSION_CONFLICT` | conflict | 409 | 否 | retry | 资料已被其他操作更新 | 乐观锁冲突；HTTP 与任务共用 |
-| `WEB_BILL_RANGE_MISMATCH` | upstream | — | 是 | retry | 平台返回的账单范围与请求不符 | /bill/query 的 range 与请求不一致，该批次丢弃 |
-| `WEB_ENDPOINT_MISSING` | upstream | — | 否 | contact_admin | 网页后台接口不存在 | 网页后台读取接口返回 404 |
-| `WEB_FORBIDDEN` | upstream | — | 否 | contact_admin | 网页后台拒绝读取 | 网页后台读取接口返回 403 |
-| `WEB_LOGIN_FAILED` | upstream | — | 否 | contact_admin | 网页后台登录失败 | 供应商网页后台 pubkey/login 返回 401 或两次登录后仍 401 |
+| `WEB_BILL_RANGE_MISMATCH` | upstream | 502 | 是 | retry | 平台返回的账单范围与请求不符 | /bill/query 的 range 与请求不一致，该批次丢弃 |
+| `WEB_ENDPOINT_MISSING` | upstream | 502 | 否 | contact_admin | 网页后台接口不存在 | 网页后台读取接口返回 404 |
+| `WEB_FORBIDDEN` | upstream | 502 | 否 | contact_admin | 网页后台拒绝读取 | 网页后台读取接口返回 403 |
+| `WEB_LOGIN_FAILED` | upstream | 502 | 否 | contact_admin | 网页后台登录失败 | 供应商网页后台 pubkey/login 返回 401 或两次登录后仍 401 |
 | `WEB_NOT_CONFIGURED` | validation | 422 | 否 | fix_input | 该平台连接未配置网页登录 | 连接缺少 web_username/web_password |
-| `WEB_RATE_LIMITED` | upstream | — | 是 | wait | 网页后台限流 | 网页后台返回 429 |
-| `WEB_SUSPENDED` | upstream | — | 否 | fix_input | 网页通道已暂停：登录连续失败 | 连续 3 次 WEB_LOGIN_FAILED 后暂停；重新保存凭证或测试登录成功即恢复 |
+| `WEB_RATE_LIMITED` | upstream | 502 | 是 | wait | 网页后台限流 | 网页后台返回 429 |
+| `WEB_SUSPENDED` | upstream | 502 | 否 | fix_input | 网页通道已暂停：登录连续失败 | 连续 3 次 WEB_LOGIN_FAILED 后暂停；重新保存凭证或测试登录成功即恢复 |
 | `WINDOW_EXPIRED` | upstream | — | 否 | none | 日期已超出平台可查窗口 | 账单同步项 |
 | `WORKER_RESTART_UNKNOWN` | upstream | — | 否 | check_platform | 服务重启前的上号结果待确认 | 进程中断时正在运行的任务 |
 

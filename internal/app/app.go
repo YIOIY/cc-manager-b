@@ -16,6 +16,7 @@ import (
 	"time"
 
 	secretbox "cc-manager/internal/crypto"
+	"cc-manager/internal/supplier"
 
 	_ "modernc.org/sqlite"
 )
@@ -31,6 +32,10 @@ type App struct {
 	billMutex    sync.Mutex
 	billFactory  func(string, string) (billSupplier, error)
 	billInterval time.Duration
+
+	webMu      sync.Mutex
+	webClients map[string]*supplier.WebClient
+	webSyncMu  map[string]*sync.Mutex
 
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -161,6 +166,11 @@ func intValue(v any) int {
 	}
 	return 0
 }
+
+// webPasswordOf reads the console password from a request body without
+// trimming it: passwords may legitimately start or end with spaces.
+func webPasswordOf(m map[string]any) string { v, _ := m["web_password"].(string); return v }
+
 func boolInt(v bool) int {
 	if v {
 		return 1
@@ -889,7 +899,7 @@ func (a *App) platformConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listPlatformConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.QueryContext(r.Context(), `SELECT id,name,base_url,timezone,enabled,version,token_secret FROM platform_connections ORDER BY created_at,rowid`)
+	rows, err := a.DB.QueryContext(r.Context(), `SELECT id,name,base_url,timezone,enabled,version,token_secret,web_username,web_password_secret,web_suspended_at,web_suspended_reason FROM platform_connections ORDER BY created_at,rowid`)
 	if err != nil {
 		writeError(w, r, storageError(err, "平台连接读取失败"))
 		return
@@ -897,13 +907,14 @@ func (a *App) listPlatformConnections(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []any{}
 	for rows.Next() {
-		var id, name, base, timezone, token string
+		var id, name, base, timezone, token, webUser, webSecret, suspendedAt, suspendedReason string
 		var enabled, version int
-		if err = rows.Scan(&id, &name, &base, &timezone, &enabled, &version, &token); err != nil {
+		if err = rows.Scan(&id, &name, &base, &timezone, &enabled, &version, &token, &webUser, &webSecret, &suspendedAt, &suspendedReason); err != nil {
 			writeError(w, r, storageError(err, "平台连接读取失败"))
 			return
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "base_url": base, "timezone": timezone, "enabled": enabled == 1, "version": version, "token_configured": token != ""})
+		out = append(out, map[string]any{"id": id, "name": name, "base_url": base, "timezone": timezone, "enabled": enabled == 1, "version": version, "token_configured": token != "",
+			"web_username": webUser, "web_configured": webUser != "" && webSecret != "", "web_suspended_at": suspendedAt, "web_suspended_reason": suspendedReason})
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, r, storageError(err, "平台连接读取失败"))
@@ -942,6 +953,10 @@ func (a *App) createPlatformConnection(w http.ResponseWriter, r *http.Request) {
 	if timezone != "" && !validTimezone(timezone) {
 		problems.Invalid("timezone", "时区必须是有效的 IANA 时区，例如 Asia/Shanghai")
 	}
+	webUser, webPassword := str(in, "web_username"), webPasswordOf(in)
+	if (webUser == "") != (webPassword == "") {
+		problems.Invalid("web_username", "网页登录账号和密码需要一起填写")
+	}
 	if e := problems.Err(); e != nil {
 		writeError(w, r, e)
 		return
@@ -952,11 +967,21 @@ func (a *App) createPlatformConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, secretError("connection_token", "平台令牌加密失败", err))
 		return
 	}
-	if _, err = a.DB.ExecContext(r.Context(), `INSERT INTO platform_connections(id,name,base_url,token_secret,timezone,allowed_plans_json,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), base.String(), sealed, timezone, `[]`, 1, t, t); err != nil {
+	webSecret := ""
+	if webPassword != "" {
+		if webSecret, err = a.keys.Seal([]byte(webPassword), []byte(id+":web")); err != nil {
+			writeError(w, r, secretError("web_password", "网页登录密码加密失败", err))
+			return
+		}
+	}
+	if _, err = a.DB.ExecContext(r.Context(), `INSERT INTO platform_connections(id,name,base_url,token_secret,timezone,allowed_plans_json,enabled,created_at,updated_at,web_username,web_password_secret) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), base.String(), sealed, timezone, `[]`, 1, t, t, webUser, webSecret); err != nil {
 		dbError(w, r, err, "CONNECTION_EXISTS", "平台连接已存在", "平台连接保存失败")
 		return
 	}
 	a.auditFor(r, "connection.create", "platform_connection", id, base.Host)
+	if webSecret != "" {
+		a.auditFor(r, "connection.web_credentials_set", "platform_connection", id, webUser)
+	}
 	write(w, http.StatusCreated, map[string]any{"id": id, "version": 1})
 }
 
@@ -987,9 +1012,9 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	defer tx.Rollback()
-	var oldName, oldBase, oldTimezone, oldToken string
+	var oldName, oldBase, oldTimezone, oldToken, oldWebUser, oldWebSecret string
 	var oldEnabled, version int
-	if err = tx.QueryRow(`SELECT name,base_url,timezone,token_secret,enabled,version FROM platform_connections WHERE id=?`, id).Scan(&oldName, &oldBase, &oldTimezone, &oldToken, &oldEnabled, &version); err != nil {
+	if err = tx.QueryRow(`SELECT name,base_url,timezone,token_secret,enabled,version,web_username,web_password_secret FROM platform_connections WHERE id=?`, id).Scan(&oldName, &oldBase, &oldTimezone, &oldToken, &oldEnabled, &version, &oldWebUser, &oldWebSecret); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fail(w, http.StatusNotFound, "NOT_FOUND", "平台连接不存在")
 			return
@@ -1029,9 +1054,38 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 			enabled = boolInt(v)
 		}
 	}
+	// Web (console) credentials: web_clear drops them; a new password (with an
+	// optional new username) replaces them; a username alone renames an existing
+	// login. Any change lifts a suspension and forgets the cached client.
+	webUser, webSecret, webEvent := oldWebUser, oldWebSecret, ""
+	webClear, _ := in["web_clear"].(bool)
+	newWebUser, newWebPassword := str(in, "web_username"), webPasswordOf(in)
+	switch {
+	case webClear:
+		webUser, webSecret, webEvent = "", "", "connection.web_credentials_cleared"
+	case newWebPassword != "":
+		if newWebUser != "" {
+			webUser = newWebUser
+		}
+		if webUser == "" {
+			problems.Invalid("web_username", "网页登录账号和密码需要一起填写")
+		}
+		webEvent = "connection.web_credentials_set"
+	case newWebUser != "" && newWebUser != oldWebUser:
+		if oldWebSecret == "" {
+			problems.Invalid("web_password", "网页登录账号和密码需要一起填写")
+		}
+		webUser, webEvent = newWebUser, "connection.web_credentials_set"
+	}
 	if e := problems.Err(); e != nil {
 		writeError(w, r, e)
 		return
+	}
+	if newWebPassword != "" && !webClear {
+		if webSecret, err = a.keys.Seal([]byte(newWebPassword), []byte(id+":web")); err != nil {
+			writeError(w, r, secretError("web_password", "网页登录密码加密失败", err))
+			return
+		}
 	}
 	secret := oldToken
 	if token := str(in, "token"); token != "" {
@@ -1041,7 +1095,11 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 			return
 		}
 	}
-	if _, err = tx.Exec(`UPDATE platform_connections SET name=?,base_url=?,token_secret=?,timezone=?,enabled=?,version=version+1,updated_at=? WHERE id=? AND version=?`, name, base.String(), secret, timezone, enabled, now(), id, version); err != nil {
+	suspension := ""
+	if webEvent != "" {
+		suspension = ",web_suspended_at='',web_suspended_reason=''"
+	}
+	if _, err = tx.Exec(`UPDATE platform_connections SET name=?,base_url=?,token_secret=?,timezone=?,enabled=?,web_username=?,web_password_secret=?`+suspension+`,version=version+1,updated_at=? WHERE id=? AND version=?`, name, base.String(), secret, timezone, enabled, webUser, webSecret, now(), id, version); err != nil {
 		dbError(w, r, err, "CONNECTION_EXISTS", "平台连接已存在", "平台连接更新失败")
 		return
 	}
@@ -1049,7 +1107,11 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 		writeError(w, r, storageError(err, "平台连接更新失败"))
 		return
 	}
+	a.dropWebClient(id)
 	a.auditFor(r, "connection.update", "platform_connection", id, base.Host)
+	if webEvent != "" {
+		a.auditFor(r, webEvent, "platform_connection", id, webUser)
+	}
 	write(w, http.StatusOK, map[string]any{"id": id, "version": version + 1})
 }
 
@@ -1073,6 +1135,7 @@ func (a *App) deletePlatformConnection(w http.ResponseWriter, r *http.Request, i
 		fail(w, http.StatusNotFound, "NOT_FOUND", "平台连接不存在")
 		return
 	}
+	a.dropWebClient(id)
 	a.auditFor(r, "connection.delete", "platform_connection", id, "")
 	write(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
