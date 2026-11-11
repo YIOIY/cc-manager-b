@@ -41,10 +41,13 @@ docker compose -f deploy/docker-compose.yml up -d --build
 
 ### 1.5 Docker 持续交付（推荐的生产方式）
 
-推送到 `main` 后，GitHub Actions 依次运行后端、前端、端到端测试，构建镜像并推送到 GHCR（`ghcr.io/<owner>/cc-manager:sha-<12 位提交号>` 与 `:main`），然后等待你在 GitHub 上批准 `production` 部署；批准后通过 SSH 让服务器执行部署脚本。服务器不再需要源码或手工上传发布包。
+推送到 `main` 后，GitHub Actions 依次运行后端、前端、端到端测试，构建镜像并推送到 GHCR（`ghcr.io/<owner>/cc-manager:sha-<12 位提交号>` 与 `:main`）。上线由你在 GitHub 上手动触发（Actions → CI → Run workflow），工作流再通过 SSH 让服务器执行部署脚本。服务器不再需要源码或手工上传发布包。
+
+> 为什么是手动触发而不是"批准"：GitHub 免费计划的私有仓库不支持环境的 Required reviewers。手动运行工作流起到同样的把关作用：推送只产出镜像，不会自动上线。
 
 ```
-push main ─▶ 测试 ─▶ 构建并推送镜像 ─▶ 等待批准 ─▶ SSH: deploy <tag>
+push main ─▶ 测试 ─▶ 构建并推送镜像           （到此为止，不上线）
+Run workflow ─▶ 测试 ─▶ 构建并推送镜像 ─▶ SSH: deploy <tag>
                                                      │
 服务器 docker-deploy.sh: 拉取镜像 ─▶ 在线备份 SQLite ─▶ 停旧服务 ─▶ 启动新镜像
                          ─▶ /healthz 返回 ok 且 version == tag ? 记录完成 : 回滚
@@ -69,7 +72,7 @@ push main ─▶ 测试 ─▶ 构建并推送镜像 ─▶ 等待批准 ─▶ 
    安装前它会检查环境文件和代理池（只报告键名，不打印值）：
    - **环境文件里含 `$` 的值必须用单引号包住**，例如 `CC_MANAGER_ADMIN_PASSWORD_HASH='$argon2id$v=19$…'`。Docker Compose 会展开未加引号的 `$`，哈希会被改坏。存在这种值时安装和部署都会拒绝继续。
    - 如果 `CC_MANAGER_SUPPLIER_PROXY` 或代理池里的代理指向 `127.0.0.1`/`localhost`，会给出警告：容器里的回环地址是容器自己，切换后要改成 `host.docker.internal`（compose 已把它映射到宿主机），并让宿主机上的代理监听 Docker 网桥地址（如 `172.17.0.1`）或 `0.0.0.0`（配合防火墙）。
-4. **GitHub 配置**：Settings → Environments → 新建 `production`，Required reviewers 选自己，添加 secrets：
+4. **GitHub 配置**：Settings → Environments → `production`（已存在则直接打开），添加 secrets（付费计划可另外勾选 Required reviewers）：
 
    | Secret | 内容 |
    | --- | --- |
@@ -83,14 +86,14 @@ push main ─▶ 测试 ─▶ 构建并推送镜像 ─▶ 等待批准 ─▶ 
 
 #### 首次切换
 
-第一次批准部署时，脚本发现还没有 Docker 记录，会先备份数据库、停止 systemd 的 `cc-manager` 服务、把 `/var/lib/cc-manager` 交给容器用户（UID 10001）、启动容器。健康检查通过后禁用 systemd 服务；失败则交回目录所有权、重新启动 systemd 服务，线上保持原状。
+第一次部署时，脚本发现还没有 Docker 记录，会先备份数据库、停止 systemd 的 `cc-manager` 服务、把 `/var/lib/cc-manager` 交给容器用户（UID 10001）、启动容器。健康检查通过后禁用 systemd 服务；失败则交回目录所有权、重新启动 systemd 服务，线上保持原状。
 
 **回滚时数据库何时恢复**：只有新版本已经执行了数据库迁移（`schema_migrations` 版本变高）才会用部署前的备份覆盖数据库，因为旧版本无法在新结构上运行；这种情况下新版本运行期间的写入会丢失，请在任务中心核对 `unknown` 状态的交付。结构没变时保留数据库原样（包括新版本已经提交的账号），日志写明 `database kept`。nginx 与 Cloudflare Tunnel 不需要改动（容器仍监听 `127.0.0.1:18080`）。旧的 `/opt/cc-manager/releases` 保留，可在必要时手工回到 systemd。
 
 #### 日常
 
-- **上线**：合并到 `main` → Actions 页面批准 `deploy`。
-- **回退到旧版本**：Actions → CI → Run workflow，`tag` 填旧标签（如 `sha-0123456789ab`），批准即可。数据库若已被新版本迁移，回退旧镜像前请先用该次部署前的备份恢复（见第 4 节），因为迁移只能向前。
+- **上线**：推送到 `main`，等 CI 通过后，Actions → CI → Run workflow（分支 `main`，`tag` 留空）。会重新跑一遍测试、构建当前提交并部署。
+- **回退到旧版本**：Actions → CI → Run workflow，`tag` 填旧标签（如 `sha-0123456789ab`），不会重新构建该镜像（仍会先跑测试）。数据库若已被新版本迁移，回退旧镜像前请先用该次部署前的备份恢复（见第 4 节），因为迁移只能向前。
 - **部署记录**：`/opt/cc-manager/docker/state/deploys.log`（时间、标签、上一标签、备份目录）；当前标签在 `state/current-tag`。
 - **日志**：`docker logs -f cc-manager`（单文件 20 MB，保留 5 个）。
 - **备份**：每次部署前自动生成 `/var/backups/cc-manager/<时间>-pre-<tag>/`；定期备份仍按第 4 节。

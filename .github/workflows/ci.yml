@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Redeploy an existing image tag (sha-<12 hex>) without rebuilding; empty = build this commit"
+        description: "Deploy to production. Empty = build and deploy this commit; sha-<12 hex> = redeploy that existing image"
         required: false
         default: ""
 
@@ -116,15 +116,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Waits for approval on the "production" environment, then asks the server
-  # to deploy. The SSH key can only run the deploy entry point; the registry
-  # token is this job's short-lived GITHUB_TOKEN, sent on stdin.
+  # Deploys only when someone runs this workflow by hand on main: pushes just
+  # publish the image. (Required reviewers on private repositories need a paid
+  # GitHub plan, so the manual run is the approval.) The SSH key can only run
+  # the deploy entry point; the registry token is this job's short-lived
+  # GITHUB_TOKEN, sent on stdin.
   deploy:
     runs-on: ubuntu-latest
     needs: [image]
     if: >-
-      ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' &&
-          (needs.image.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')) }}
+      ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+          (needs.image.result == 'success' || inputs.tag != '') }}
     environment: production
     concurrency:
       group: production

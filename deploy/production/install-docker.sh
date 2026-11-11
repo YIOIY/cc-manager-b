@@ -95,7 +95,6 @@ cat <<EOF
 Installed into $root for image $image.
 
 GitHub repository → Settings → Environments → "production":
-  - Required reviewers: yourself (deploys wait for approval)
   - Secrets:
       DEPLOY_HOST         this server's address
       DEPLOY_PORT         SSH port (optional, default 22)
@@ -104,5 +103,6 @@ GitHub repository → Settings → Environments → "production":
       DEPLOY_KNOWN_HOSTS  output of: ssh-keyscan -t ed25519 <host>
 
 Current service: $(systemctl is-active cc-manager 2>/dev/null || echo unknown) (systemd).
-The first approved deploy switches to Docker and rolls back to systemd if it fails.
+Deploy with Actions → CI → Run workflow on main. The first deploy switches
+to Docker and rolls back to systemd if it fails.
 EOF
