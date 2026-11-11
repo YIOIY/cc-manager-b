@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -261,11 +262,16 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
 	}
+	webHealth, err := a.webDashboard(ctx)
+	if err != nil {
+		writeError(w, r, storageError(err, "读取概览失败"))
+		return
+	}
 	write(w, http.StatusOK, map[string]any{
 		"accounts": map[string]any{"total": counts.accounts, "ready": counts.ready, "archived": counts.archived, "platform_linked": counts.linked, "observed_recently": counts.observed, "by_plan": plansByCount},
 		"jobs":     map[string]any{"running": counts.jobsRunning, "queued": counts.jobsQueued, "succeeded": counts.jobsSucceeded, "failed": counts.jobsFailed},
 		"proxies":  map[string]any{"healthy": counts.proxies, "enabled": counts.proxies, "disabled": counts.disabledProxies},
-		"platform": mergeMaps(map[string]any{"today_requests": counts.billRequests, "today_cost_fen": counts.billCost}, syncHealth),
+		"platform": mergeMaps(mergeMaps(map[string]any{"today_requests": counts.billRequests, "today_cost_fen": counts.billCost}, syncHealth), webHealth),
 	})
 }
 
@@ -294,18 +300,24 @@ const accountListBase = `WITH latest AS (
 ), bill AS (
 	SELECT b.account_id,b.cost_fen FROM platform_bill_daily b
 	WHERE b.rowid=(SELECT rowid FROM platform_bill_daily x WHERE x.account_id=b.account_id ORDER BY x.bill_date DESC,x.rowid DESC LIMIT 1)
+), remote AS (
+	SELECT r.connection_id,r.upstream_id,r.five_hour_used,r.last_seen_at FROM platform_remote_accounts r
 )
 SELECT a.id,a.account,a.plan,a.register_location,a.register_time,a.plan_start_time,a.plan_end_time,a.proxy_id,a.version,a.archived,a.created_at,a.updated_at,a.rowid AS rid,
 COALESCE(NULLIF(m.upstream_aid,''),m.upstream_id,NULLIF(l.upstream_aid,''),l.upstream_id,'') AS platform_account_id,
-COALESCE(m.alias,l.alias,'') AS platform_alias,COALESCE(m.runtime_status,l.runtime_status,'') AS platform_status,COALESCE(m.fetched_at,l.last_observed_at,'') AS platform_observed_at,
+COALESCE(m.alias,l.alias,'') AS platform_alias,
+CASE WHEN COALESCE(l.last_observed_at,'')>=COALESCE(m.fetched_at,'') THEN COALESCE(l.runtime_status,m.runtime_status,'') ELSE COALESCE(m.runtime_status,l.runtime_status,'') END AS platform_status,
+CASE WHEN COALESCE(l.last_observed_at,'')>=COALESCE(m.fetched_at,'') THEN COALESCE(l.last_observed_at,m.fetched_at,'') ELSE COALESCE(m.fetched_at,l.last_observed_at,'') END AS platform_observed_at,
 m.requests,m.prompt_tokens,m.completion_tokens,m.success_rate,bill.cost_fen,
 CASE
 	WHEN EXISTS(SELECT 1 FROM platform_links pl WHERE pl.account_id=a.id AND pl.ingestion_state='accepted' AND COALESCE(pl.upstream_id,'')<>'') THEN 'linked'
 	WHEN EXISTS(SELECT 1 FROM deliveries d WHERE d.account_id=a.id AND d.ingestion_state IN ('unknown','accepted')) THEN 'unknown'
 	ELSE COALESCE((SELECT CASE j.state WHEN 'queued' THEN 'submitting' WHEN 'running' THEN 'submitting' WHEN 'failed' THEN 'failed' WHEN 'unknown' THEN 'unknown' WHEN 'succeeded' THEN 'unknown' ELSE 'pending' END
 		FROM jobs j WHERE j.kind='account.submit' AND j.account_id=a.id ORDER BY j.created_at DESC,j.rowid DESC LIMIT 1),'pending')
-END AS onboarding_state
-FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id`
+END AS onboarding_state,
+rem.five_hour_used AS five_hour_used,
+CASE WHEN rem.upstream_id IS NULL THEN '' WHEN COALESCE(rem.last_seen_at,'')>=COALESCE(m.fetched_at,'') THEN 'web' ELSE 'openapi' END AS platform_channel
+FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id LEFT JOIN remote rem ON rem.connection_id=l.connection_id AND rem.upstream_id=l.upstream_id`
 
 // unpagedAccountLimit caps the legacy array response; the UI always pages.
 const unpagedAccountLimit = 2000
@@ -345,6 +357,15 @@ func accountListFilter(w http.ResponseWriter, q url.Values) (listFilter, bool) {
 		return f, false
 	}
 	f.contains("t.platform_status", q.Get("platform_status"))
+	if v := strings.TrimSpace(q.Get("five_hour_min")); v != "" {
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil || n < 0 || n > 100 {
+			writeError(w, nil, queryInvalid("five_hour_min", "5 小时窗口筛选值必须是 0 到 100 的数字"))
+			return f, false
+		}
+		f.where = append(f.where, "t.five_hour_used>=?")
+		f.args = append(f.args, n/100)
+	}
 	f.dateRange("t.plan_end_time", q.Get("end_from"), q.Get("end_to"))
 	f.dateRange("t.created_at", q.Get("created_from"), q.Get("created_to"))
 	f.keyword(q.Get("q"), "t.account", "t.id", "t.plan", "t.register_location", "t.proxy_id", "t.platform_account_id", "t.platform_alias", "t.platform_status")
@@ -370,7 +391,16 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		limit, offset = size, (page-1)*size
 	}
-	rows, err := a.DB.QueryContext(ctx, `SELECT * FROM (`+accountListBase+`) t`+f.sql()+` ORDER BY t.created_at DESC,t.rid DESC LIMIT ? OFFSET ?`, append(append([]any{}, f.args...), limit, offset)...)
+	order := `t.created_at DESC,t.rid DESC`
+	switch strings.TrimSpace(r.URL.Query().Get("sort")) {
+	case "", "created_desc":
+	case "five_hour_desc":
+		order = `t.five_hour_used DESC NULLS LAST,t.created_at DESC,t.rid DESC`
+	default:
+		writeError(w, r, queryInvalid("sort", "排序参数无效"))
+		return
+	}
+	rows, err := a.DB.QueryContext(ctx, `SELECT * FROM (`+accountListBase+`) t`+f.sql()+` ORDER BY `+order+` LIMIT ? OFFSET ?`, append(append([]any{}, f.args...), limit, offset)...)
 	if err != nil {
 		writeError(w, r, storageError(err, "账号读取失败"))
 		return
@@ -383,8 +413,9 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		var version, archived int
 		var rid int64
 		var requests, prompt, completion, cost sql.NullInt64
-		var success sql.NullFloat64
-		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding); err != nil {
+		var success, fiveHour sql.NullFloat64
+		var channel string
+		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding, &fiveHour, &channel); err != nil {
 			writeError(w, r, storageError(err, "账号读取失败"))
 			return
 		}
@@ -404,6 +435,7 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		if cost.Valid {
 			m["platform_cost_fen"] = cost.Int64
 		}
+		m["platform_channel"] = channel
 		out = append(out, m)
 	}
 	if err = rows.Err(); err != nil {
@@ -413,6 +445,10 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 	if err = a.decorateAccountDelivery(out); err != nil {
 		writeError(w, r, storageError(err, "上号状态读取失败"))
+		return
+	}
+	if err = a.attachPlatformBlocks(ctx, out); err != nil {
+		writeError(w, r, storageError(err, "平台状态读取失败"))
 		return
 	}
 	if paged {
@@ -494,7 +530,12 @@ func (a *App) accountGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "账号读取失败"))
 		return
 	}
-	write(w, http.StatusOK, map[string]any{"id": id, "account": account, "plan": plan, "version": version, "credentials_configured": credentials != "{}" && credentials != ""})
+	detail := map[string]any{"id": id, "account": account, "plan": plan, "version": version, "credentials_configured": credentials != "{}" && credentials != ""}
+	if err := a.attachPlatformBlocks(r.Context(), []any{detail}); err != nil {
+		writeError(w, r, storageError(err, "平台状态读取失败"))
+		return
+	}
+	write(w, http.StatusOK, detail)
 }
 
 func (a *App) accountPatch(w http.ResponseWriter, r *http.Request) {

@@ -54,12 +54,23 @@ func (a *App) syncAllWebBills(ctx context.Context) error {
 // 50 listed deliveries. A batch that fails is counted and skipped; its rows
 // are left untouched.
 func (a *App) syncWebBills(ctx context.Context, connectionID string) error {
+	return a.syncWebBillsAs(ctx, connectionID, "")
+}
+
+// syncWebBillsAs is syncWebBills with a caller-chosen run id, so a manual
+// trigger can hand the id back before the run finishes. A busy connection
+// records the run as skipped instead of silently dropping the id.
+func (a *App) syncWebBillsAs(ctx context.Context, connectionID, runID string) error {
 	lock := a.webSyncLock(connectionID)
 	if !lock.TryLock() {
+		if runID != "" {
+			_, finish := a.startWebRun(ctx, connectionID, "web-bills", runID)
+			finish("skipped", "", "another web sync of this connection is running", "", 0, 0)
+		}
 		return nil
 	}
 	defer lock.Unlock()
-	_, finish := a.startWebRun(ctx, connectionID, "web-bills")
+	_, finish := a.startWebRun(ctx, connectionID, "web-bills", runID)
 	client, conn, err := a.webClientFor(ctx, connectionID)
 	if err != nil {
 		finish("failed", upstreamCode(err), err.Error(), "", 0, 0)

@@ -38,6 +38,7 @@ func (a *App) Handler() http.Handler {
 	need("PATCH /api/v1/accounts/{id}/credentials", PermAccountsCredential, a.accountCredentials)
 	need("POST /api/v1/accounts/{id}/preflight", PermAccountsView, a.accountPreflight)
 	need("GET /api/v1/accounts/{id}/platform-usage", PermAccountsUsage, a.accountPlatformUsage)
+	need("GET /api/v1/accounts/{id}/platform-usage-history", PermAccountsUsage, a.accountUsageHistory)
 	need("POST /api/v1/accounts/{id}/submit", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.submitExistingAccount(w, r, r.PathValue("id")) })
 
 	needFn("/api/v1/proxy-settings", byMethod(PermProxiesView, map[string]Permission{"PUT": PermProxiesSettings}), a.proxyNetworkSettings)
@@ -58,6 +59,7 @@ func (a *App) Handler() http.Handler {
 	needFn("/api/v1/platform-connections", byMethod(PermConnectionsView, map[string]Permission{"POST": PermConnectionsCreate}), a.platformConnections)
 	needFn("/api/v1/platform-connections/{id}", byMethod(PermConnectionsView, map[string]Permission{"PUT": PermConnectionsUpdate, "PATCH": PermConnectionsUpdate, "DELETE": PermConnectionsDelete}), a.platformConnectionDetail)
 	need("POST /api/v1/platform-connections/{id}/web-login-test", PermConnectionsUpdate, a.webLoginTest)
+	need("GET /api/v1/platform-connections/{id}/remote-accounts", PermAccountsView, a.remoteAccounts)
 
 	need("GET /api/v1/jobs", PermJobsView, a.jobs)
 	need("GET /api/v1/audit-events", PermAuditView, a.auditEvents)

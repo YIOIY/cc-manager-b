@@ -99,9 +99,11 @@ func (a *App) webSyncCandidates(ctx context.Context) ([]string, error) {
 }
 
 // startWebRun inserts the running sync_runs row and returns the finisher.
-func (a *App) startWebRun(ctx context.Context, connectionID, kind string) (string, func(state, code, message, request string, processed, failed int)) {
+func (a *App) startWebRun(ctx context.Context, connectionID, kind, runID string) (string, func(state, code, message, request string, processed, failed int)) {
 	started := now()
-	runID := newID()
+	if runID == "" {
+		runID = newID()
+	}
 	if _, err := a.DB.ExecContext(ctx, `INSERT INTO sync_runs(id,connection_id,kind,state,started_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, runID, connectionID, kind, "running", started, started, started); err != nil {
 		slog.Error("sync run insert failed", "kind", kind, "error", err)
 	}
@@ -128,7 +130,7 @@ func (a *App) syncWebAccounts(ctx context.Context, connectionID string) error {
 		return nil
 	}
 	defer lock.Unlock()
-	_, finish := a.startWebRun(ctx, connectionID, "web-accounts")
+	_, finish := a.startWebRun(ctx, connectionID, "web-accounts", "")
 	client, _, err := a.webClientFor(ctx, connectionID)
 	if err != nil {
 		finish("failed", upstreamCode(err), err.Error(), "", 0, 0)
