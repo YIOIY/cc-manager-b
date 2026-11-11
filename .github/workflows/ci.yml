@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Redeploy an existing image tag (sha-<12 hex>) without rebuilding; empty = build this commit"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -68,10 +74,86 @@ jobs:
           path: web/test-results
           retention-days: 7
 
+  # Pull requests only prove the image builds. Pushes to main (and manual
+  # runs) publish it to GHCR; only tested commits get an image.
   image:
     runs-on: ubuntu-latest
-    needs: [backend, frontend]
+    needs: [backend, frontend, e2e]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build container image
-        run: docker build -f deploy/Dockerfile -t cc-manager:ci .
+      - id: meta
+        name: Image name and tag
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cc-manager" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          # Only main publishes: anything pushed can later be deployed.
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.tag }}
+            REVISION=${{ github.sha }}
+            SOURCE=${{ github.server_url }}/${{ github.repository }}
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ github.ref == 'refs/heads/main' && format('{0}:main', steps.meta.outputs.image) || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Waits for approval on the "production" environment, then asks the server
+  # to deploy. The SSH key can only run the deploy entry point; the registry
+  # token is this job's short-lived GITHUB_TOKEN, sent on stdin.
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [image]
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' &&
+          (needs.image.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')) }}
+    environment: production
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Deploy over SSH
+        env:
+          TAG: ${{ inputs.tag != '' && inputs.tag || needs.image.outputs.tag }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Only immutable commit tags: ":main" would never pass the version check.
+          [[ "$TAG" =~ ^sha-[0-9a-f]{12}$ ]] || { echo "invalid tag: $TAG (expected sha-<12 hex>)"; exit 1; }
+          for v in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            [ -n "${!v}" ] || { echo "missing secret $v on the production environment"; exit 1; }
+          done
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s' "$REGISTRY_TOKEN" | ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT:-22}" \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o BatchMode=yes \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "deploy $TAG $GITHUB_ACTOR"

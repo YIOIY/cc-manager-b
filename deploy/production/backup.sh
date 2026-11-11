@@ -6,7 +6,8 @@
 #
 # usage: backup.sh [backup-dir] ; RETENTION_DAYS (default 30) prunes old sets.
 set -euo pipefail
-[ "$(id -u)" = 0 ] || { echo 'run as root' >&2; exit 1; }
+# BACKUP_ALLOW_NON_ROOT=1 exists only for local tests of the deploy script.
+[ "$(id -u)" = 0 ] || [ "${BACKUP_ALLOW_NON_ROOT:-0}" = 1 ] || { echo 'run as root' >&2; exit 1; }
 umask 077
 root=${BACKUP_ROOT:-/var/backups/cc-manager}
 db=${CC_MANAGER_DB:-/var/lib/cc-manager/cc-manager.db}

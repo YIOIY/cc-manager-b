@@ -1,0 +1,43 @@
+# Production compose: pulls a pre-built image, never builds from source.
+# Used by deploy/production/docker-deploy.sh, which supplies IMAGE and TAG.
+# Secrets stay in ENV_FILE on the server; the image carries none.
+services:
+  cc-manager:
+    image: ${IMAGE:?IMAGE is required}:${TAG:?TAG is required}
+    container_name: cc-manager
+    env_file:
+      - ${ENV_FILE:-/etc/cc-manager/cc-manager.env}
+    environment:
+      # These override the systemd-era values that may still be in ENV_FILE.
+      CC_MANAGER_LISTEN: 0.0.0.0:8080
+      CC_MANAGER_DB: /data/cc-manager.db
+      CC_MANAGER_WEB_DIR: /app/web/dist
+      # Same wall clock as the host, so day boundaries match the systemd era.
+      TZ: ${HOST_TZ:-UTC}
+    # Inside the container 127.0.0.1 is the container itself. Anything that
+    # used to point at a service on the host must use host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${APP_PORT:-18080}:8080"
+    volumes:
+      - ${DATA_DIR:-/var/lib/cc-manager}:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
