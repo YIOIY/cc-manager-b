@@ -31,6 +31,7 @@ func (a *App) Handler() http.Handler {
 	need("POST /api/v1/accounts/onboard", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.onboardAccount(w, r) })
 	need("GET /api/v1/accounts/{id}", PermAccountsView, a.accountGet)
 	need("PATCH /api/v1/accounts/{id}", PermAccountsUpdate, a.accountPatch)
+	need("POST /api/v1/accounts/{id}/platform-profile", PermAccountsPlatformEdit, a.platformProfileUpdate)
 	need("POST /api/v1/accounts/{id}/onboard", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.onboardAccount(w, r, r.PathValue("id")) })
 	need("DELETE /api/v1/accounts/{id}", PermAccountsDelete, a.accountDelete)
 	need("POST /api/v1/accounts/{id}/archive", PermAccountsArchive, a.accountArchive(true))
