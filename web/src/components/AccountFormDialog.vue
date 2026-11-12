@@ -14,7 +14,12 @@
         <span class="account-dialog-icon"><UsersRound :size="21" /></span>
         <div>
           <h2>{{ edit.id ? '完善资料并上号' : '添加 Claude 账号' }}</h2>
-          <p>连接账号，补充上号资料，确认后提交。</p>
+          <p>
+            连接账号，补充上号资料，确认后提交。
+            <a class="dialog-help-link" href="/help?topic=onboard" target="_blank" rel="noopener noreferrer"
+              ><BookOpen :size="13" />上号手册</a
+            >
+          </p>
         </div>
       </div>
       <ol class="wizard-steps" aria-label="上号步骤">
@@ -236,7 +241,12 @@
             :rows="2"
             placeholder="填写设备 ID，多个 ID 用逗号或换行分隔"
           />
-          <div class="field-hint">从已有有效凭证获取真实设备 ID，授权不返回此项；资料缺失时暂不能上号。</div>
+          <div class="field-hint">
+            从已有有效凭证获取真实设备 ID，授权不返回此项；资料缺失时暂不能上号。
+            <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
+              >如何获取？</a
+            >
+          </div>
           <el-button text type="primary" @click="deviceImportOpen = !deviceImportOpen"
             >从已有凭证导入设备资料</el-button
           >
@@ -360,7 +370,7 @@
   </el-dialog>
 </template>
 <script setup lang="ts">
-import { UsersRound, ShieldCheck, CheckCircle2 } from 'lucide-vue-next'
+import { UsersRound, ShieldCheck, CheckCircle2, BookOpen } from 'lucide-vue-next'
 import { useAccountOnboarding, type AccountOnboardingProps } from '../composables/useAccountOnboarding'
 import type { OnboardResult } from '../types/api'
 import ClaudeOAuthPanel from './ClaudeOAuthPanel.vue'

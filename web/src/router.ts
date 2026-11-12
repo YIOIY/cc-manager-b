@@ -8,6 +8,7 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   UserCog,
+  BookOpen,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import type { Permission } from './types/api'
@@ -115,6 +116,13 @@ export const routes: RouteRecordRaw[] = [
     name: 'users',
     component: () => import('./views/UsersView.vue'),
     meta: { title: '用户与权限', icon: UserCog, eyebrow: 'ACCESS CONTROL', nav: true, permission: 'users.view' },
+  },
+  {
+    // No permission: every signed-in user can read the manual and the FAQ.
+    path: '/help',
+    name: 'help',
+    component: () => import('./views/HelpView.vue'),
+    meta: { title: '帮助文档', icon: BookOpen, eyebrow: 'HELP CENTER', nav: true },
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

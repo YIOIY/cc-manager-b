@@ -346,3 +346,17 @@
     animation: none;
   }
 }
+
+.dialog-help-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.dialog-help-link:hover {
+  text-decoration: underline;
+}

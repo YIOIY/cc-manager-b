@@ -458,3 +458,16 @@ test('editing a field clears its stale inline error while preserving other missi
   expect(w.get('#field-password .stub-error').text()).toBe('')
   expect(w.get('#field-plan-start .stub-error').text()).toContain('请填写')
 })
+
+test('the manual and the device-id guide open in a new tab so the form is not lost', async () => {
+  const w = setup()
+  const manual = w.get('a[href="/help?topic=onboard"]')
+  expect(manual.text()).toContain('上号手册')
+  expect(manual.attributes('target')).toBe('_blank')
+  await authorize(w)
+  await next(w)
+  const guide = w.get('a[href="/help?topic=device-id"]')
+  expect(guide.text()).toContain('如何获取')
+  expect(guide.attributes('target')).toBe('_blank')
+  expect(guide.attributes('rel')).toContain('noopener')
+})
