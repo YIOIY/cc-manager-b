@@ -22,6 +22,7 @@ func (a *App) Handler() http.Handler {
 	route("POST /api/v1/auth/logout", a.authLogout)
 
 	need("GET /api/v1/dashboard", PermDashboardView, a.dashboard)
+	need("GET /api/v1/dashboard/attention", PermDashboardView, a.dashboardAttention)
 	need("POST /api/v1/claude-oauth/sessions", PermAccountsOnboard, a.claudeOAuthStart)
 	need("POST /api/v1/claude-oauth/sessions/{id}/exchange", PermAccountsOnboard, a.claudeOAuthExchange)
 	need("DELETE /api/v1/claude-oauth/sessions/{id}", PermAccountsOnboard, a.claudeOAuthCancel)
