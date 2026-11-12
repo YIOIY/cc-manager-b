@@ -122,10 +122,11 @@ watch(
     error.value = ''
     testResult.value = null
     const c = props.connection
-    Object.assign(
-      form,
-      blank(),
-      c
+    // Replace form.value: assigning onto the ref itself left the form blank,
+    // so 修改 opened as 新建 and saving created a duplicate connection.
+    form.value = {
+      ...blank(),
+      ...(c
         ? {
             id: c.id,
             version: c.version,
@@ -135,8 +136,8 @@ watch(
             enabled: c.enabled !== false,
             web_username: c.web_username || '',
           }
-        : {},
-    )
+        : {}),
+    }
   },
 )
 async function save() {

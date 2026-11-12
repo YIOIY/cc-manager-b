@@ -23,6 +23,7 @@
 </template>
 
 <script setup lang="ts">
+import { copyText } from '../utils/clipboard'
 import { computed, ref } from 'vue'
 import { AlertTriangle, CircleSlash, X } from 'lucide-vue-next'
 import { describeError, errorClipboardText } from '../errors'
@@ -57,11 +58,10 @@ const label = (field: string) => FieldLabels[field] ?? field
 
 async function copy() {
   if (!view.value) return
-  try {
-    await navigator.clipboard.writeText(errorClipboardText(view.value))
+  if (await copyText(errorClipboardText(view.value))) {
     copied.value = true
     window.setTimeout(() => (copied.value = false), 1600)
-  } catch {
+  } else {
     copied.value = false
   }
 }

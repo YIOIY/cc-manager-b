@@ -70,6 +70,7 @@
 </template>
 
 <script setup lang="ts">
+import { copyText } from '../utils/clipboard'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { CheckCircle2, Copy, ExternalLink, KeyRound } from 'lucide-vue-next'
 import { api, ApiError, errorMessage } from '../api'
@@ -163,10 +164,9 @@ async function exchange() {
   }
 }
 async function copyLink() {
-  try {
-    await navigator.clipboard.writeText(pending.value!.authorization_url)
+  if (await copyText(pending.value!.authorization_url)) {
     copied.value = true
-  } catch {
+  } else {
     error.value = '无法自动复制，请选中链接手动复制。'
   }
 }
@@ -240,14 +240,18 @@ onBeforeUnmount(reset)
   flex: 1;
 }
 .oauth-open {
-  width: 34px;
   height: 32px;
+  padding: 0 10px;
   border: 1px solid #dcdfe6;
   border-radius: 5px;
   background: white;
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: #425b57;
+  font-size: 13px;
+  white-space: nowrap;
+  text-decoration: none;
   flex-shrink: 0;
 }
 .oauth-link-caption {

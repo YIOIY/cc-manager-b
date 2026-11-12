@@ -88,6 +88,7 @@
 </template>
 
 <script setup lang="ts">
+import { copyText } from '../utils/clipboard'
 import { computed, ref, watch } from 'vue'
 import { FileJson, Copy, Trash2, CheckCircle2 } from 'lucide-vue-next'
 import { api, errorMessage } from '../api'
@@ -193,13 +194,12 @@ function validate() {
 }
 async function copy() {
   if (!text.value.trim()) return
-  try {
-    await navigator.clipboard.writeText(text.value)
+  if (await copyText(text.value)) {
     copied.value = true
     window.setTimeout(() => (copied.value = false), 1600)
     emit('feedback', 'JSON 已复制到剪贴板', 'success')
-  } catch {
-    emit('feedback', '复制失败，请检查浏览器剪贴板权限', 'warning')
+  } else {
+    emit('feedback', '复制失败，请选中文本手动复制', 'warning')
   }
 }
 function clear() {
