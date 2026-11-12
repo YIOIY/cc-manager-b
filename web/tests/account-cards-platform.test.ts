@@ -33,6 +33,8 @@ function platform(overrides: Partial<PlatformInfo> = {}): PlatformInfo {
     missing_since: '',
     auto_created: true,
     source_channel: 'web',
+    remark: '',
+    web_channel: { configured: true, suspended: false },
     profile: {
       plan: 'claude/cc-max-20x',
       plan_start_time: '2026-11-11',

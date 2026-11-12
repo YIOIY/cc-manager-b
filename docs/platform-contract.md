@@ -250,7 +250,11 @@ OpenAPI 查询接口对当前令牌返回 404 期间，系统用供应商网页�
 | `GET /supplier/accounts/{id}/check-fail-reason`、`.../claude-status-reason` | 失败/封禁原因 | 响应结构未固定，本地保留原文并取第一个可读文本 |
 | `GET /bill/query?account_ids=&start_ds=YYYYMMDD&end_ds=YYYYMMDD` | 按模型账单 | 一次可查多账号、7 天含当天；`list[{account_id, ds, model_name, bill_model_name, cost}]`，`range` 原样回显；只有金额 |
 
-不接入：`/metrics/query`（网页端同样 404）、`record-log-*`（对本供应商恒为 0）。**不实现任何写接口**：`PUT /supplier/accounts/{id}`、`usage-limit`、`claude-ban`、`accounts/batch`、`custom-proxy*`、`verify-proxy` 以及 `/admin/*`。网页接口不是平台承诺的 API，改版即失效；失败按连接退避，登录连续失败 3 次暂停通道。
+不接入：`/metrics/query`（网页端同样 404）、`record-log-*`（对本供应商恒为 0）。
+
+**唯一的写接口（2026-11-12 起）：修改账号资料。** `PUT /supplier/accounts/{id}`，只由本系统的 `POST /api/v1/accounts/{id}/platform-profile` 触发（需 `accounts.platform_edit`，弹窗里人工逐项对照后确认，不会自动调用）。已从平台前端代码与真实抓包核实：请求体是**整条覆盖**，除 `account_type`（数字 2）外全是字符串；`enc_adc_config` 发用登录公钥加密的空串、`cpa_auth_json` 发空串表示密码与凭证不变；`proxy_type`/`proxy_region` 发空串；不发 `cpa_tags`、`proxy_ids`（标签、代理不动）；日期 `YYYY-MM-DD`，`cpa_balance` 为 `"100"` 这样的字符串，`cpa_warranty_period` 空串或 `"1"`。成功响应 `{"id", "msg": "修改成功"}`，200 但 `msg` 不含"成功"按失败处理。提交前客户端带上它看到的快照（`base`），与本地快照不一致则拒绝（409），避免覆盖别人刚改的记录。
+
+其余写接口仍不实现：`usage-limit`、`claude-ban`、`accounts/batch`、`custom-proxy*`、`verify-proxy` 以及 `/admin/*`。网页接口不是平台承诺的 API，改版即失效；失败按连接退避，登录连续失败 3 次暂停通道。
 
 ## 8. 联调前必须确认
 

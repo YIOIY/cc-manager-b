@@ -12,6 +12,7 @@ export type Permission =
   | 'accounts.credentials'
   | 'accounts.onboard'
   | 'accounts.usage'
+  | 'accounts.platform_edit'
   | 'proxies.view'
   | 'proxies.create'
   | 'proxies.update'
@@ -215,8 +216,20 @@ export interface PlatformInfo {
   missing_since: string
   auto_created: boolean
   source_channel: 'web' | 'openapi'
+  /** The console's free-text remark for the delivery. */
+  remark: string
+  /** Whether this connection's console channel can carry a profile edit. */
+  web_channel: { configured: boolean; suspended: boolean }
   profile: PlatformProfile
   usage: PlatformUsage | null
+}
+
+/** Result of POST /accounts/{id}/platform-profile. */
+export interface PlatformProfileResult {
+  verified: boolean
+  hint?: string
+  changed: string[]
+  platform: PlatformInfo | null
 }
 
 /** One row of GET /platform-connections/{id}/remote-accounts. */
@@ -392,6 +405,38 @@ export interface DashboardPlatform {
   remote_counts_by_status?: Record<string, number>
   near_limit_accounts?: number
   today_model_cost_fen?: number
+  week_model_cost_fen?: number
+  cost_by_day?: SpendDay[]
+  cost_by_model?: { model_name: string; cost_fen: number }[]
+  cost_by_account?: { account_id: string; account: string; cost_fen: number }[]
+}
+
+export interface SpendDay {
+  date: string
+  cost_fen: number
+  final: boolean
+}
+
+export type AttentionKind = 'near_limit' | 'banned' | 'expiring' | 'missing' | 'profile_diff'
+
+/** One row of GET /dashboard/attention. */
+export interface AttentionItem {
+  kind: AttentionKind
+  severity: 'danger' | 'warn' | 'info'
+  account_id: string
+  account: string
+  alias: string
+  label: string
+  detail: string
+  upstream_id: string
+  reset_at: string
+  expires_at: string
+  value: number
+}
+
+export interface AttentionResponse {
+  items: AttentionItem[]
+  counts: Record<AttentionKind, number>
 }
 
 export interface PreflightCheck {

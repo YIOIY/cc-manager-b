@@ -52,8 +52,18 @@ func microToFen(micro int64) int64 { return int64(math.Round(float64(micro) / 10
 
 func yuanText(fen int64) string { return fmt.Sprintf("%d.%02d", fen/100, fen%100) }
 
+// webChannelState is what an account response says about the connection's
+// console channel: whether profile edits can reach the platform at all.
+type webChannelState struct{ Configured, Suspended bool }
+
+func (a *App) webChannelState(ctx context.Context, connectionID string) (webChannelState, error) {
+	var configured, suspended int
+	err := a.DB.QueryRowContext(ctx, `SELECT web_username<>'' AND web_password_secret<>'',web_suspended_at<>'' FROM platform_connections WHERE id=?`, connectionID).Scan(&configured, &suspended)
+	return webChannelState{Configured: configured == 1, Suspended: suspended == 1}, err
+}
+
 // platformBlock renders the "platform" object of an account response.
-func platformBlock(x remoteRow, channel string) map[string]any {
+func platformBlock(x remoteRow, channel string, web webChannelState) map[string]any {
 	status := x.ExtStatus
 	if status == "" {
 		status = x.A1Status
@@ -67,9 +77,10 @@ func platformBlock(x remoteRow, channel string) map[string]any {
 	block := map[string]any{
 		"status": status, "status_raw": x.ExtStatus, "locked": x.Locked == 1, "reason_kind": x.ReasonKind, "reason_text": x.ReasonText, "reason_fetched_at": x.ReasonFetchedAt,
 		"observed_at": x.LastSeenAt, "aid": x.AID, "upstream_id": x.UpstreamID, "alias": x.Alias, "provider": x.Provider, "model": x.Model, "models_usable": modelsUsable,
-		"remote_created_at": x.RemoteCreatedAt, "missing_since": x.MissingSince, "auto_created": x.AutoCreated == 1, "source_channel": channel,
-		"profile": map[string]any{"plan": x.Plan, "plan_start_time": x.PlanStart, "plan_end_time": x.PlanEnd, "register_time": x.RegisterTime, "register_location": x.RegisterLocation, "balance": x.Balance, "payment_method": x.PaymentMethod, "register_device": x.RegisterDevice, "recharge_time": x.RechargeTime, "warranty_period": x.WarrantyPeriod, "tags": tags},
-		"usage":   nil,
+		"remote_created_at": x.RemoteCreatedAt, "missing_since": x.MissingSince, "auto_created": x.AutoCreated == 1, "source_channel": channel, "remark": x.Remark,
+		"web_channel": map[string]any{"configured": web.Configured, "suspended": web.Suspended},
+		"profile":     map[string]any{"plan": x.Plan, "plan_start_time": x.PlanStart, "plan_end_time": x.PlanEnd, "register_time": x.RegisterTime, "register_location": x.RegisterLocation, "balance": x.Balance, "payment_method": x.PaymentMethod, "register_device": x.RegisterDevice, "recharge_time": x.RechargeTime, "warranty_period": x.WarrantyPeriod, "tags": tags},
+		"usage":       nil,
 	}
 	if x.CostMicro.Valid || x.InputTokens.Valid || x.FiveHour.Valid {
 		fen := microToFen(x.CostMicro.Int64)
@@ -103,7 +114,7 @@ func (a *App) attachPlatformBlocks(ctx context.Context, out []any) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := a.DB.QueryContext(ctx, `SELECT `+remoteColumns+`,l.account_id,COALESCE((SELECT MAX(fetched_at) FROM platform_metric_snapshots s WHERE s.account_id=l.account_id),'') FROM platform_links l JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id WHERE l.account_id IN (`+marks(len(ids))+`) ORDER BY l.updated_at DESC`, ids...)
+	rows, err := a.DB.QueryContext(ctx, `SELECT `+remoteColumns+`,l.account_id,COALESCE((SELECT MAX(fetched_at) FROM platform_metric_snapshots s WHERE s.account_id=l.account_id),''),COALESCE(c.web_username<>'' AND c.web_password_secret<>'',0),COALESCE(c.web_suspended_at<>'',0) FROM platform_links l JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id LEFT JOIN platform_connections c ON c.id=r.connection_id WHERE l.account_id IN (`+marks(len(ids))+`) ORDER BY l.updated_at DESC`, ids...)
 	if err != nil {
 		return err
 	}
@@ -111,7 +122,8 @@ func (a *App) attachPlatformBlocks(ctx context.Context, out []any) error {
 	for rows.Next() {
 		var x remoteRow
 		var accountID, metricsAt string
-		if err = rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt, &accountID, &metricsAt); err != nil {
+		var webConfigured, webSuspended int
+		if err = rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt, &accountID, &metricsAt, &webConfigured, &webSuspended); err != nil {
 			return err
 		}
 		m := byID[accountID]
@@ -122,7 +134,7 @@ func (a *App) attachPlatformBlocks(ctx context.Context, out []any) error {
 		if metricsAt > x.LastSeenAt {
 			channel = "openapi"
 		}
-		m["platform"] = platformBlock(x, channel)
+		m["platform"] = platformBlock(x, channel, webChannelState{Configured: webConfigured == 1, Suspended: webSuspended == 1})
 	}
 	return rows.Err()
 }
@@ -151,6 +163,11 @@ func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	where := ` WHERE r.connection_id=?`
+	web, err := a.webChannelState(ctx, connectionID)
+	if err != nil {
+		writeError(w, r, storageError(err, "平台连接读取失败"))
+		return
+	}
 	args := []any{connectionID}
 	if status := strings.TrimSpace(q.Get("status")); status != "" {
 		where += ` AND r.ext_status=?`
@@ -192,7 +209,7 @@ func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		item := platformBlock(x, "web")
+		item := platformBlock(x, "web", web)
 		item["email"] = x.Email
 		item["account_id"] = x.AccountID
 		item["account"] = local[5]
@@ -296,11 +313,147 @@ func (a *App) webDashboard(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	var nearLimit int
-	var todayFen sql.NullInt64
-	if err = a.DB.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM platform_remote_accounts WHERE missing_since='' AND five_hour_used>=0.8),(SELECT SUM(b.cost_fen) FROM platform_bill_models b WHERE b.bill_date=(SELECT MAX(bill_date) FROM platform_bill_models WHERE final=0))`).Scan(&nearLimit, &todayFen); err != nil {
+	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM platform_remote_accounts WHERE missing_since='' AND five_hour_used>=0.8`).Scan(&nearLimit); err != nil {
 		return nil, err
 	}
-	return map[string]any{"web_sync_health": worse, "web_accounts_health": accountsHealth, "web_bills_health": billsHealth, "remote_counts_by_status": counts, "near_limit_accounts": nearLimit, "today_model_cost_fen": todayFen.Int64}, nil
+	spend, err := a.spendSummary(ctx, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"web_sync_health": worse, "web_accounts_health": accountsHealth, "web_bills_health": billsHealth, "remote_counts_by_status": counts, "near_limit_accounts": nearLimit}
+	for k, v := range spend {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// connectionLocation resolves a connection's IANA zone; anything empty or
+// unknown falls back to UTC so date buckets are always computable.
+func connectionLocation(zone string) *time.Location {
+	if zone == "" || zone == "Local" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+const spendWindowDays = 7
+
+// spendSummary aggregates the per-model bills of every enabled connection
+// over its own local "today" and the 6 days before, merging connections by
+// local date string.
+func (a *App) spendSummary(ctx context.Context, at time.Time) (map[string]any, error) {
+	rows, err := a.DB.QueryContext(ctx, `SELECT id,timezone FROM platform_connections WHERE enabled=1`)
+	if err != nil {
+		return nil, err
+	}
+	type conn struct{ id, today, start string }
+	var conns []conn
+	for rows.Next() {
+		var id, zone string
+		if err = rows.Scan(&id, &zone); err != nil {
+			break
+		}
+		local := at.In(connectionLocation(zone))
+		conns = append(conns, conn{id, local.Format("2006-01-02"), local.AddDate(0, 0, -(spendWindowDays - 1)).Format("2006-01-02")})
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	byDay := map[string]int64{}
+	byModel := map[string]int64{}
+	byAccount := map[string]*struct {
+		email string
+		fen   int64
+	}{}
+	var today, week int64
+	latestToday, latestStart := "", ""
+	for _, c := range conns {
+		if c.today > latestToday {
+			latestToday, latestStart = c.today, c.start
+		}
+		billRows, err := a.DB.QueryContext(ctx, `SELECT b.bill_date,b.model_name,b.account_id,COALESCE(acc.account,''),b.cost_fen FROM platform_bill_models b LEFT JOIN accounts acc ON acc.id=b.account_id WHERE b.connection_id=? AND b.bill_date>=? AND b.bill_date<=?`, c.id, c.start, c.today)
+		if err != nil {
+			return nil, err
+		}
+		for billRows.Next() {
+			var day, model, accountID, email string
+			var fen int64
+			if err = billRows.Scan(&day, &model, &accountID, &email, &fen); err != nil {
+				break
+			}
+			byDay[day] += fen
+			byModel[model] += fen
+			week += fen
+			if day == c.today {
+				today += fen
+			}
+			if byAccount[accountID] == nil {
+				byAccount[accountID] = &struct {
+					email string
+					fen   int64
+				}{email, 0}
+			}
+			byAccount[accountID].fen += fen
+		}
+		if err == nil {
+			err = billRows.Err()
+		}
+		billRows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	days := make([]map[string]any, 0, spendWindowDays)
+	if latestToday != "" {
+		start, _ := time.Parse("2006-01-02", latestStart)
+		for i := 0; i < spendWindowDays; i++ {
+			day := start.AddDate(0, 0, i).Format("2006-01-02")
+			days = append(days, map[string]any{"date": day, "cost_fen": byDay[day], "final": day < latestToday})
+		}
+	}
+	topN := func(m map[string]int64, key string) []map[string]any {
+		type kv struct {
+			k string
+			v int64
+		}
+		list := make([]kv, 0, len(m))
+		for k, v := range m {
+			list = append(list, kv{k, v})
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].v != list[j].v {
+				return list[i].v > list[j].v
+			}
+			return list[i].k < list[j].k
+		})
+		out := make([]map[string]any, 0, 5)
+		for _, e := range list {
+			if len(out) == 5 {
+				break
+			}
+			out = append(out, map[string]any{key: e.k, "cost_fen": e.v})
+		}
+		return out
+	}
+	accountTotals := map[string]int64{}
+	emails := map[string]string{}
+	for id, v := range byAccount {
+		accountTotals[id] = v.fen
+		emails[id] = v.email
+	}
+	accounts := topN(accountTotals, "account_id")
+	for _, m := range accounts {
+		m["account"] = emails[m["account_id"].(string)]
+	}
+	return map[string]any{"today_model_cost_fen": today, "week_model_cost_fen": week, "cost_by_day": days, "cost_by_model": topN(byModel, "model_name"), "cost_by_account": accounts}, nil
 }
 
 func intOf(v any) int {

@@ -87,7 +87,7 @@ make web-e2e
 
 ## 用户与权限（RBAC）
 
-- **权限目录**按模块细分到动作，共 32 项，例如 `accounts.create`、`accounts.onboard`、`accounts.credentials`、`proxies.test`、`bills.query`、`connections.update`、`users.reset_password`、`roles.manage`。后端路由对每个接口校验对应权限，无权限返回 `403 PERMISSION_DENIED`；前端只根据会话里的权限列表隐藏页面和按钮。
+- **权限目录**按模块细分到动作，共 33 项，例如 `accounts.create`、`accounts.onboard`、`accounts.credentials`、`proxies.test`、`bills.query`、`connections.update`、`users.reset_password`、`roles.manage`。后端路由对每个接口校验对应权限，无权限返回 `403 PERMISSION_DENIED`；前端只根据会话里的权限列表隐藏页面和按钮。
 - **角色**保存在数据库，由任意权限组合而成，可随时新建、改权限、删除；内置三个预设：`管理员`（超级角色，权限不可改，自动拥有以后新增的权限）、`运营`、`只读`（后两者可按需调整权限）。
 - **页面可见性**由每个模块的 `*.view` 权限决定：没有该权限的用户在导航里看不到页面，直接访问会被跳转，接口也返回 403。角色编辑器顶部用开关逐页控制，关闭页面会一并移除页内动作。
 - **用户**可绑定多个角色，有效权限为并集；角色改动对下一次请求立即生效，停用或重置密码会立刻吊销会话。

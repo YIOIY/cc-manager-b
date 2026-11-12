@@ -16,6 +16,7 @@ declare module 'vue' {
     AccountDeliveryDialog: typeof import('./components/AccountDeliveryDialog.vue')['default']
     AccountFormDialog: typeof import('./components/AccountFormDialog.vue')['default']
     AccountOptionalFields: typeof import('./components/AccountOptionalFields.vue')['default']
+    AttentionList: typeof import('./components/AttentionList.vue')['default']
     BillModelsPanel: typeof import('./components/BillModelsPanel.vue')['default']
     BillSyncDialog: typeof import('./components/BillSyncDialog.vue')['default']
     BillSyncProgress: typeof import('./components/BillSyncProgress.vue')['default']
@@ -52,6 +53,7 @@ declare module 'vue' {
     OnboardingProxyPicker: typeof import('./components/OnboardingProxyPicker.vue')['default']
     PageHead: typeof import('./components/PageHead.vue')['default']
     PlatformBills: typeof import('./components/PlatformBills.vue')['default']
+    PlatformProfileDialog: typeof import('./components/PlatformProfileDialog.vue')['default']
     PlatformUsageBlock: typeof import('./components/PlatformUsageBlock.vue')['default']
     ProxyFormDialog: typeof import('./components/ProxyFormDialog.vue')['default']
     ProxyNetworkPanel: typeof import('./components/ProxyNetworkPanel.vue')['default']
@@ -60,6 +62,7 @@ declare module 'vue' {
     RoleEditorDialog: typeof import('./components/users/RoleEditorDialog.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SpendPanel: typeof import('./components/SpendPanel.vue')['default']
     UserFormDialog: typeof import('./components/users/UserFormDialog.vue')['default']
   }
   export interface GlobalDirectives {

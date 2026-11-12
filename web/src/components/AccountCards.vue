@@ -103,6 +103,15 @@
           card.footer
         }}</span>
         <el-button
+          v-if="canEditPlatform(card)"
+          class="card-action"
+          size="small"
+          title="直接修改供应商平台上的账号资料"
+          @click="emit('edit-platform', card)"
+        >
+          修改平台资料 <PencilLine :size="13" />
+        </el-button>
+        <el-button
           class="card-action"
           :type="card.deliveryState === 'linked' ? '' : 'primary'"
           :disabled="card.archived && card.deliveryState !== 'linked'"
@@ -122,7 +131,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RefreshCw, AlertCircle, Info, ArrowUpRight, ChartNoAxesCombined, Lock } from 'lucide-vue-next'
+import { RefreshCw, AlertCircle, Info, ArrowUpRight, ChartNoAxesCombined, Lock, PencilLine } from 'lucide-vue-next'
 import type { Account, PlatformInfo } from '../types/api'
 import { deliveryState, deliveryStates, runtimeLabel, type DeliveryState } from '../account-workflow'
 import { formatCount, formatDateTime, formatMoneyFen, hasValue, planLabel } from '../utils/format'
@@ -131,8 +140,17 @@ import PlatformUsageBlock from './PlatformUsageBlock.vue'
 import { locationLabel, paymentLabel } from '../model/platform-card'
 
 const props = defineProps<{ accounts: Account[]; allAccounts: Account[]; loading: boolean }>()
-const emit = defineEmits<{ select: [account: Account] }>()
+const emit = defineEmits<{ select: [account: Account]; 'edit-platform': [account: Account] }>()
 const { can } = useSession()
+
+// The platform edit needs the permission, a record the platform still lists,
+// and a console channel that is configured and not suspended.
+function canEditPlatform(card: Account): boolean {
+  const p = card.platform
+  return (
+    can('accounts.platform_edit') && !!p && !p.missing_since && !!p.web_channel?.configured && !p.web_channel?.suspended
+  )
+}
 
 type ProfileField = { key: string; label: string; value: string; local: string; diff: boolean }
 type Card = Account & {

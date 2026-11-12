@@ -38,6 +38,13 @@ type webConsoleStub struct {
 	reasons      atomic.Int32
 	billHits     atomic.Int32
 	tokenSeq     atomic.Int32
+	// listStatus, when non-zero, makes every account listing fail with it.
+	listStatus int
+	// updates records every PUT /supplier/accounts/{id} payload; the stub
+	// also applies remark and the cpa_* fields to its account so a later
+	// listing reflects the change. updateResponse overrides the reply.
+	updates        []map[string]any
+	updateResponse func(w http.ResponseWriter)
 }
 
 func newWebConsoleStub(t *testing.T) *webConsoleStub {
@@ -116,10 +123,44 @@ func (s *webConsoleStub) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.Method == http.MethodPut && strings.HasPrefix(path, "/supplier/accounts/"):
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			s.t.Errorf("update body: %v", err)
+		}
+		s.mu.Lock()
+		s.updates = append(s.updates, payload)
+		id := strings.TrimPrefix(path, "/supplier/accounts/")
+		for _, acc := range s.accounts {
+			if fmt.Sprint(acc["id"]) != id {
+				continue
+			}
+			var cfg map[string]any
+			_ = json.Unmarshal([]byte(fmt.Sprint(acc["auth_config"])), &cfg)
+			cfg["account"] = payload["account_id"]
+			for _, k := range []string{"plan", "register_time", "plan_start_time", "plan_end_time", "register_location", "balance", "payment_method", "register_device", "recharge_time", "warranty_period"} {
+				cfg[k] = payload["cpa_"+k]
+			}
+			encoded, _ := json.Marshal(cfg)
+			acc["auth_config"] = string(encoded)
+			acc["remark"] = payload["remark"]
+		}
+		override := s.updateResponse
+		s.mu.Unlock()
+		if override != nil {
+			override(w)
+			return
+		}
+		fmt.Fprintf(w, `{"id":%s,"msg":"修改成功"}`, id)
 	case path == "/supplier/accounts":
 		s.lists.Add(1)
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if s.listStatus != 0 {
+			w.WriteHeader(s.listStatus)
+			fmt.Fprint(w, `{"detail":"console down"}`)
+			return
+		}
 		page := 1
 		fmt.Sscanf(r.URL.Query().Get("page"), "%d", &page)
 		from, to := (page-1)*100, page*100
