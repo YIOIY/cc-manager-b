@@ -28,3 +28,14 @@ export function describeSyncHealth(p: DashboardPlatform): SyncHealthView {
   if (p.error_hint) view.hint = p.error_hint
   return view
 }
+
+/**
+ * The OpenAPI metrics sync: a platform that denies queries is a known,
+ * supplier-side condition, not an alarm for the operator.
+ */
+export function describeMetricsHealth(p: DashboardPlatform): SyncHealthView {
+  if (p.error_code === 'PLATFORM_QUERY_DENIED' && (p.sync_status ?? 'failing') === 'failing') {
+    return { tone: 'info', label: '平台未开通', detail: 'OpenAPI 查询权限未开通，等供应商处理' }
+  }
+  return describeSyncHealth(p)
+}

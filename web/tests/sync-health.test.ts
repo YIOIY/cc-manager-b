@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { describeSyncHealth } from '../src/model/sync-health'
+import { describeMetricsHealth, describeSyncHealth } from '../src/model/sync-health'
 
 const base = { today_requests: 0, today_cost_fen: 0, last_sync_at: '', last_sync_state: '' }
 
@@ -63,4 +63,24 @@ test('the web channel health reads like the metrics health', () => {
   expect(v.label).toBe('同步异常')
   expect(v.detail).toContain('网页后台登录失败')
   expect(v.detail).toContain('连续失败 3 次')
+})
+
+test('the OpenAPI metrics sync reads as not enabled when the platform denies queries', () => {
+  const v = describeMetricsHealth({
+    ...base,
+    sync_status: 'failing',
+    last_sync_state: 'partial',
+    error_code: 'PLATFORM_QUERY_DENIED',
+    consecutive_failures: 16,
+  })
+  expect(v.tone).toBe('info')
+  expect(v.label).toBe('平台未开通')
+  expect(v.detail).not.toContain('连续失败')
+  const other = describeMetricsHealth({
+    ...base,
+    sync_status: 'failing',
+    last_sync_state: 'failed',
+    error_code: 'WEB_LOGIN_FAILED',
+  })
+  expect(other.tone).toBe('danger')
 })
