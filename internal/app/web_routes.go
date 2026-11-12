@@ -296,11 +296,147 @@ func (a *App) webDashboard(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	var nearLimit int
-	var todayFen sql.NullInt64
-	if err = a.DB.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM platform_remote_accounts WHERE missing_since='' AND five_hour_used>=0.8),(SELECT SUM(b.cost_fen) FROM platform_bill_models b WHERE b.bill_date=(SELECT MAX(bill_date) FROM platform_bill_models WHERE final=0))`).Scan(&nearLimit, &todayFen); err != nil {
+	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM platform_remote_accounts WHERE missing_since='' AND five_hour_used>=0.8`).Scan(&nearLimit); err != nil {
 		return nil, err
 	}
-	return map[string]any{"web_sync_health": worse, "web_accounts_health": accountsHealth, "web_bills_health": billsHealth, "remote_counts_by_status": counts, "near_limit_accounts": nearLimit, "today_model_cost_fen": todayFen.Int64}, nil
+	spend, err := a.spendSummary(ctx, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"web_sync_health": worse, "web_accounts_health": accountsHealth, "web_bills_health": billsHealth, "remote_counts_by_status": counts, "near_limit_accounts": nearLimit}
+	for k, v := range spend {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// connectionLocation resolves a connection's IANA zone; anything empty or
+// unknown falls back to UTC so date buckets are always computable.
+func connectionLocation(zone string) *time.Location {
+	if zone == "" || zone == "Local" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+const spendWindowDays = 7
+
+// spendSummary aggregates the per-model bills of every enabled connection
+// over its own local "today" and the 6 days before, merging connections by
+// local date string.
+func (a *App) spendSummary(ctx context.Context, at time.Time) (map[string]any, error) {
+	rows, err := a.DB.QueryContext(ctx, `SELECT id,timezone FROM platform_connections WHERE enabled=1`)
+	if err != nil {
+		return nil, err
+	}
+	type conn struct{ id, today, start string }
+	var conns []conn
+	for rows.Next() {
+		var id, zone string
+		if err = rows.Scan(&id, &zone); err != nil {
+			break
+		}
+		local := at.In(connectionLocation(zone))
+		conns = append(conns, conn{id, local.Format("2006-01-02"), local.AddDate(0, 0, -(spendWindowDays - 1)).Format("2006-01-02")})
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	byDay := map[string]int64{}
+	byModel := map[string]int64{}
+	byAccount := map[string]*struct {
+		email string
+		fen   int64
+	}{}
+	var today, week int64
+	latestToday, latestStart := "", ""
+	for _, c := range conns {
+		if c.today > latestToday {
+			latestToday, latestStart = c.today, c.start
+		}
+		billRows, err := a.DB.QueryContext(ctx, `SELECT b.bill_date,b.model_name,b.account_id,COALESCE(acc.account,''),b.cost_fen FROM platform_bill_models b LEFT JOIN accounts acc ON acc.id=b.account_id WHERE b.connection_id=? AND b.bill_date>=? AND b.bill_date<=?`, c.id, c.start, c.today)
+		if err != nil {
+			return nil, err
+		}
+		for billRows.Next() {
+			var day, model, accountID, email string
+			var fen int64
+			if err = billRows.Scan(&day, &model, &accountID, &email, &fen); err != nil {
+				break
+			}
+			byDay[day] += fen
+			byModel[model] += fen
+			week += fen
+			if day == c.today {
+				today += fen
+			}
+			if byAccount[accountID] == nil {
+				byAccount[accountID] = &struct {
+					email string
+					fen   int64
+				}{email, 0}
+			}
+			byAccount[accountID].fen += fen
+		}
+		if err == nil {
+			err = billRows.Err()
+		}
+		billRows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	days := make([]map[string]any, 0, spendWindowDays)
+	if latestToday != "" {
+		start, _ := time.Parse("2006-01-02", latestStart)
+		for i := 0; i < spendWindowDays; i++ {
+			day := start.AddDate(0, 0, i).Format("2006-01-02")
+			days = append(days, map[string]any{"date": day, "cost_fen": byDay[day], "final": day < latestToday})
+		}
+	}
+	topN := func(m map[string]int64, key string) []map[string]any {
+		type kv struct {
+			k string
+			v int64
+		}
+		list := make([]kv, 0, len(m))
+		for k, v := range m {
+			list = append(list, kv{k, v})
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].v != list[j].v {
+				return list[i].v > list[j].v
+			}
+			return list[i].k < list[j].k
+		})
+		out := make([]map[string]any, 0, 5)
+		for _, e := range list {
+			if len(out) == 5 {
+				break
+			}
+			out = append(out, map[string]any{key: e.k, "cost_fen": e.v})
+		}
+		return out
+	}
+	accountTotals := map[string]int64{}
+	emails := map[string]string{}
+	for id, v := range byAccount {
+		accountTotals[id] = v.fen
+		emails[id] = v.email
+	}
+	accounts := topN(accountTotals, "account_id")
+	for _, m := range accounts {
+		m["account"] = emails[m["account_id"].(string)]
+	}
+	return map[string]any{"today_model_cost_fen": today, "week_model_cost_fen": week, "cost_by_day": days, "cost_by_model": topN(byModel, "model_name"), "cost_by_account": accounts}, nil
 }
 
 func intOf(v any) int {

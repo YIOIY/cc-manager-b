@@ -334,3 +334,48 @@ func TestDashboardWebFields(t *testing.T) {
 		t.Fatalf("metrics health must stay separate: %q", p.SyncStatus)
 	}
 }
+
+func TestConnectionLocationFallsBackToUTC(t *testing.T) {
+	if connectionLocation("") != time.UTC || connectionLocation("Nowhere/Zone") != time.UTC || connectionLocation("Local") != time.UTC {
+		t.Fatal("empty or invalid zones must fall back to UTC")
+	}
+	if connectionLocation("Asia/Shanghai").String() != "Asia/Shanghai" {
+		t.Fatal("valid zone not loaded")
+	}
+}
+
+func TestDashboardSpendFields(t *testing.T) {
+	a, stub, today, yesterday := billsFixture(t)
+	stub.mu.Lock()
+	stub.bills = func(ids []string, start, end string) string {
+		return billBody([]string{billRow(428802, today, "claude-opus-5", "27.61"), billRow(428802, today, "claude-opus-5-5", "7.60"), billRow(428242, yesterday, "claude-opus-5-5", "100.00"), billRow(428242, yesterday, "claude-opus-5", "0.92")}, start, end)
+	}
+	stub.mu.Unlock()
+	if err := a.syncWebBills(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	old := time.Now().In(loc).AddDate(0, 0, -8).Format("2006-01-02")
+	if _, err := a.DB.Exec(`INSERT INTO platform_bill_models(id,connection_id,upstream_id,account_id,bill_date,model_name,bill_model_name,cost_fen,fetched_at,generation,final) VALUES(?,'conn','428802','',?,'claude-opus-5','claude-opus-5',99999,?,1,1)`, newID(), old, now()); err != nil {
+		t.Fatal(err)
+	}
+	spend, err := a.webDashboard(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spend["today_model_cost_fen"] != int64(3521) || spend["week_model_cost_fen"] != int64(13613) {
+		t.Fatalf("today=%v week=%v", spend["today_model_cost_fen"], spend["week_model_cost_fen"])
+	}
+	days, _ := spend["cost_by_day"].([]map[string]any)
+	if len(days) != 7 || days[6]["date"] != today || days[6]["final"] != false || days[6]["cost_fen"] != int64(3521) || days[5]["date"] != yesterday || days[5]["final"] != true || days[5]["cost_fen"] != int64(10092) || days[0]["cost_fen"] != int64(0) {
+		t.Fatalf("cost_by_day=%v", days)
+	}
+	models, _ := spend["cost_by_model"].([]map[string]any)
+	if len(models) != 2 || models[0]["model_name"] != "claude-opus-5-5" || models[0]["cost_fen"] != int64(10760) {
+		t.Fatalf("cost_by_model=%v", models)
+	}
+	accounts, _ := spend["cost_by_account"].([]map[string]any)
+	if len(accounts) != 2 || accounts[0]["account"] != "two@example.test" || accounts[0]["cost_fen"] != int64(10092) {
+		t.Fatalf("cost_by_account=%v", accounts)
+	}
+}
