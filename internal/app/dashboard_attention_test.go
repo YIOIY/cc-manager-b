@@ -119,10 +119,14 @@ func TestDashboardAttentionWithoutWebChannel(t *testing.T) {
 			t.Fatalf("count %s=%d", k, v)
 		}
 	}
-	if _, err := a.DB.Exec(`UPDATE accounts SET plan_end_time=? WHERE id='acc-m'`, time.Now().AddDate(0, 0, 3).Format("2006-01-02")); err != nil {
+	// 20:00 UTC is already the next day in the connection's Asia/Shanghai
+	// zone: 3 days there, 4 in UTC. The fixed instant keeps the test honest
+	// on any runner's clock.
+	at := time.Date(2026, 11, 12, 20, 0, 0, 0, time.UTC)
+	if _, err := a.DB.Exec(`UPDATE accounts SET plan_end_time='2026-11-16' WHERE id='acc-m'`); err != nil {
 		t.Fatal(err)
 	}
-	items, counts, err = a.attentionItems(context.Background(), time.Now())
+	items, counts, err = a.attentionItems(context.Background(), at)
 	if err != nil || len(items) != 1 || items[0].Kind != "expiring" || items[0].Value != 3 || counts["expiring"] != 1 {
 		t.Fatalf("local fallback items=%+v counts=%v err=%v", items, counts, err)
 	}

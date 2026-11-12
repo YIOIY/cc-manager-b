@@ -216,6 +216,7 @@
       v-model="platformProfileOpen"
       :account="platformProfileAccount"
       @saved="onPlatformProfileSaved"
+      @conflict="page.load"
     />
     <AccountFormDialog
       v-model="accountFormOpen"

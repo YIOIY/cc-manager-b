@@ -87,7 +87,12 @@ import { plans } from '../list-model'
 import type { Account, PlatformProfileResult } from '../types/api'
 
 const props = defineProps<{ modelValue: boolean; account: Account | null }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [result: PlatformProfileResult] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  saved: [result: PlatformProfileResult]
+  /** The platform record changed under us; the owner should reload so a reopen sees the fresh snapshot. */
+  conflict: []
+}>()
 
 type ProfileForm = Record<(typeof fieldOrder)[number], string>
 const fieldOrder = [
@@ -172,10 +177,13 @@ const planOptions = computed(() => {
   return [{ label: current, value: current }, ...plans]
 })
 
+// Element Plus date pickers emit undefined when cleared; treat that as empty.
+const valueOf = (k: (typeof fieldOrder)[number]) => String(form.value[k] ?? '').trim()
+
 const changes = computed(() =>
   fieldOrder
-    .filter((k) => form.value[k].trim() !== base.value[k])
-    .map((k) => ({ key: k, label: labels[k], before: base.value[k], after: form.value[k].trim() })),
+    .filter((k) => valueOf(k) !== base.value[k])
+    .map((k) => ({ key: k, label: labels[k], before: base.value[k], after: valueOf(k) })),
 )
 
 watch(
@@ -227,6 +235,7 @@ async function submit() {
   } catch (e) {
     if (e instanceof ApiError && e.status === 409) {
       conflict.value = '平台资料刚更新，请重新打开后再改'
+      emit('conflict')
     } else {
       notice.value = e
     }

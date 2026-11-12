@@ -26,7 +26,13 @@ const stubs = {
   'el-form': { template: '<form @submit.prevent><slot /></form>' },
   'el-form-item': { template: '<div :data-label="label"><slot /></div>', props: ['label'] },
   'el-input': inputStub,
-  'el-date-picker': inputStub,
+  // Element Plus date pickers emit undefined when cleared.
+  'el-date-picker': {
+    template:
+      '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value === \'\' ? undefined : $event.target.value)" />',
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+  },
   'el-input-number': {
     template:
       '<input class="number" :value="modelValue" @input="$emit(\'update:modelValue\', Number($event.target.value))" />',
@@ -202,4 +208,28 @@ test('an unverified result still closes with a hint', async () => {
   await button(w, '提交到平台').trigger('click')
   await flushPromises()
   expect(w.emitted('saved')?.[0]?.[0]).toMatchObject({ verified: false })
+})
+
+test('clearing a date picker is shown as an empty new value instead of breaking the dialog', async () => {
+  const w = await open()
+  await field(w, '套餐结束日期').get('input').setValue('')
+  await button(w, '下一步').trigger('click')
+  await flushPromises()
+  const rows = w.findAll('[data-compare]')
+  expect(rows.map((r) => r.attributes('data-compare'))).toEqual(['plan_end_time'])
+  expect(rows[0]!.text()).toContain('（空）')
+  expect((button(w, '提交到平台').element as HTMLButtonElement).disabled).toBe(false)
+})
+
+test('a conflict asks the list to reload so the next open sees the fresh snapshot', async () => {
+  const w = await open()
+  await field(w, '备注').get('input').setValue('1 cc-manager')
+  await button(w, '下一步').trigger('click')
+  await flushPromises()
+  fetchMock.mockResolvedValueOnce(
+    new Response(JSON.stringify({ error: { code: 'VERSION_CONFLICT', message: '平台记录已变化' } }), { status: 409 }),
+  )
+  await button(w, '提交到平台').trigger('click')
+  await flushPromises()
+  expect(w.emitted('conflict')).toBeTruthy()
 })

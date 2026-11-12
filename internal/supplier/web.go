@@ -637,8 +637,8 @@ func floatOf(v any) float64 {
 // UpdateAccountProfile overwrites the console record of one Claude account
 // with p. The password and credential fields are sent as "unchanged" (an
 // encrypted empty string and an empty cpa_auth_json), tags and proxies are
-// not sent at all. A 200 whose msg is not a success is reported as
-// PLATFORM_RESPONSE_INVALID.
+// not sent at all. A 200 whose msg is not exactly "修改成功" (the console's
+// success text) is reported as PLATFORM_RESPONSE_INVALID.
 func (c *WebClient) UpdateAccountProfile(ctx context.Context, id int64, p WebProfileUpdate) error {
 	if id <= 0 {
 		return errors.New("invalid account id")
@@ -672,7 +672,7 @@ func (c *WebClient) UpdateAccountProfile(ctx context.Context, id int64, p WebPro
 	var resp struct {
 		Msg string `json:"msg"`
 	}
-	if json.Unmarshal(data, &resp) != nil || !strings.Contains(resp.Msg, "成功") {
+	if json.Unmarshal(data, &resp) != nil || strings.TrimSpace(resp.Msg) != "修改成功" {
 		return &WebHTTPError{Status: 200, Summary: webSummary(data, "unexpected update response")}
 	}
 	return nil

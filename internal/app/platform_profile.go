@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -124,9 +125,28 @@ func (a *App) platformProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	snapshot, err := a.linkedSnapshot(ctx, id)
+	// The first read only tells us which connection to lock. The snapshot
+	// the base is checked against, and the record the PUT is built from,
+	// are read again under that lock so neither a background sync nor a
+	// concurrent edit can slip in between the check and the write.
+	first, err := a.linkedSnapshot(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		profileConflict(w, "账号没有可修改的平台记录")
+		return
+	}
+	if err != nil {
+		writeError(w, r, storageError(err, "平台账号读取失败"))
+		return
+	}
+	lock := a.webSyncLock(first.ConnectionID)
+	if err = lockWithContext(ctx, lock); err != nil {
+		writeError(w, r, errs.New(errs.CodePlatformUnavailable).WithCause(err))
+		return
+	}
+	defer lock.Unlock()
+	snapshot, err := a.linkedSnapshot(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && snapshot.ConnectionID != first.ConnectionID) {
+		profileConflict(w, "平台记录已变化，请刷新后重试")
 		return
 	}
 	if err != nil {
@@ -173,13 +193,6 @@ func (a *App) platformProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	upstreamID, _ := strconv.ParseInt(snapshot.UpstreamID, 10, 64)
 	update := buildProfileUpdate(snapshot, changes)
-
-	lock := a.webSyncLock(snapshot.ConnectionID)
-	if err = lockWithContext(ctx, lock); err != nil {
-		writeError(w, r, errs.New(errs.CodePlatformUnavailable).WithCause(err))
-		return
-	}
-	defer lock.Unlock()
 	callCtx, cancel := context.WithTimeout(ctx, supplierRequestTimeout)
 	err = client.UpdateAccountProfile(callCtx, upstreamID, update)
 	cancel()
@@ -189,12 +202,15 @@ func (a *App) platformProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	verified, hint := a.refreshSnapshotAfterUpdate(ctx, client, snapshot, update)
-	if err = a.writeBackLocalProfile(ctx, id, update); err != nil {
+	actor := sessionUser(r).Username
+	if actor == "" {
+		actor = "anonymous"
+	}
+	verified, hint, err := a.completeProfileUpdate(ctx, client, snapshot, update, id, actor, changed)
+	if err != nil {
 		writeError(w, r, storageError(err, "本地账号更新失败"))
 		return
 	}
-	a.auditFor(r, "account.platform_profile_update", "account", id, strings.Join(changed, ","))
 
 	var block map[string]any
 	if fresh, err := a.linkedSnapshot(ctx, id); err == nil {
@@ -206,6 +222,23 @@ func (a *App) platformProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		out["hint"] = hint
 	}
 	write(w, http.StatusOK, out)
+}
+
+// completeProfileUpdate does everything that must happen once the platform
+// has accepted the change: audit first (the platform is already modified,
+// so the record must exist even if the rest fails), then the snapshot
+// refresh and the local write-back. It runs detached from the request's
+// cancellation with its own deadline, so a client that went away cannot
+// leave the platform changed and the local side silent.
+func (a *App) completeProfileUpdate(ctx context.Context, client *supplier.WebClient, snapshot remoteRow, update supplier.WebProfileUpdate, accountID, actor string, changed []string) (bool, string, error) {
+	a.auditAs(actor, "account.platform_profile_update", "account", accountID, strings.Join(changed, ","))
+	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*supplierRequestTimeout)
+	defer cancel()
+	verified, hint := a.refreshSnapshotAfterUpdate(bg, client, snapshot, update)
+	if err := a.writeBackLocalProfile(bg, accountID, update); err != nil {
+		return verified, hint, err
+	}
+	return verified, hint, nil
 }
 
 // refreshSnapshotAfterUpdate re-reads the account from the console so the
@@ -227,8 +260,10 @@ func (a *App) refreshSnapshotAfterUpdate(ctx context.Context, client *supplier.W
 			break
 		}
 	}
-	_, _ = a.DB.ExecContext(ctx, `UPDATE platform_remote_accounts SET plan=?,register_time=?,plan_start_time=?,plan_end_time=?,register_location=?,balance=?,payment_method=?,register_device=?,recharge_time=?,warranty_period=?,remark=? WHERE connection_id=? AND upstream_id=?`,
-		update.Plan, update.RegisterTime, update.PlanStart, update.PlanEnd, update.RegisterLocation, update.Balance, update.PaymentMethod, update.RegisterDevice, update.RechargeTime, update.WarrantyPeriod, update.Remark, snapshot.ConnectionID, snapshot.UpstreamID)
+	if _, err = a.DB.ExecContext(ctx, `UPDATE platform_remote_accounts SET plan=?,register_time=?,plan_start_time=?,plan_end_time=?,register_location=?,balance=?,payment_method=?,register_device=?,recharge_time=?,warranty_period=?,remark=? WHERE connection_id=? AND upstream_id=?`,
+		update.Plan, update.RegisterTime, update.PlanStart, update.PlanEnd, update.RegisterLocation, update.Balance, update.PaymentMethod, update.RegisterDevice, update.RechargeTime, update.WarrantyPeriod, update.Remark, snapshot.ConnectionID, snapshot.UpstreamID); err != nil {
+		slog.Warn("platform profile: snapshot fallback update failed", "upstream_id", snapshot.UpstreamID, "error", err)
+	}
 	return false, "平台已接受修改，但刷新平台记录失败；下次网页同步后会自动核对"
 }
 

@@ -253,3 +253,79 @@ func TestPermissionCatalogueIncludesPlatformEdit(t *testing.T) {
 		}
 	}
 }
+
+// Two edits opened against the same snapshot: the second must see the
+// first one's change and be refused, which only works when the base check
+// runs under the connection lock.
+func TestPlatformProfileChecksBaseUnderLock(t *testing.T) {
+	a, stub, admin := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	lock := a.webSyncLock("conn")
+	lock.Lock()
+	type reply struct {
+		status int
+		body   string
+	}
+	done := make(chan reply, 1)
+	go func() {
+		res := admin.do(http.MethodPost, "/api/v1/accounts/"+id+"/platform-profile", profileRequest(t, map[string]string{"balance": "90"}, profileBase(nil)))
+		var env errorEnvelope
+		_ = jsonDecode(res, &env)
+		done <- reply{res.StatusCode, env.Error.Code}
+	}()
+	time.Sleep(300 * time.Millisecond)
+	select {
+	case r := <-done:
+		t.Fatalf("request finished without waiting for the lock: %+v", r)
+	default:
+	}
+	// Someone else's edit lands while the request waits.
+	if _, err := a.DB.Exec(`UPDATE platform_remote_accounts SET remark='edited elsewhere' WHERE upstream_id='428802'`); err != nil {
+		t.Fatal(err)
+	}
+	lock.Unlock()
+	r := <-done
+	if r.status != http.StatusConflict || r.body != "VERSION_CONFLICT" {
+		t.Fatalf("got %d %s, want 409 VERSION_CONFLICT", r.status, r.body)
+	}
+	if len(stub.updates) != 0 {
+		t.Fatalf("stub received %d updates after a stale base", len(stub.updates))
+	}
+}
+
+// Once the platform accepted the change, the snapshot refresh, local
+// write-back and audit must not be lost because the client went away.
+func TestPlatformProfileFinishesAfterClientCancel(t *testing.T) {
+	a, stub, _ := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	snapshot, err := a.linkedSnapshot(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, _, err := a.webClientFor(context.Background(), "conn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := buildProfileUpdate(snapshot, map[string]string{"plan_end_time": "2026-12-31"})
+	if err = client.UpdateAccountProfile(context.Background(), 428802, update); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	verified, hint, err := a.completeProfileUpdate(cancelled, client, snapshot, update, id, "admin", []string{"plan_end_time"})
+	if err != nil || !verified || hint != "" {
+		t.Fatalf("verified=%v hint=%q err=%v", verified, hint, err)
+	}
+	if v := queryString(t, a, `SELECT plan_end_time FROM accounts WHERE id=?`, id); v != "2026-12-31" {
+		t.Fatalf("local plan_end_time=%q", v)
+	}
+	if v := queryString(t, a, `SELECT plan_end_time FROM platform_remote_accounts WHERE upstream_id='428802'`); v != "2026-12-31" {
+		t.Fatalf("snapshot plan_end_time=%q", v)
+	}
+	if n := queryInt(t, a, `SELECT COUNT(*) FROM audit_events WHERE action='account.platform_profile_update' AND resource_id=? AND actor='admin'`, id); n != 1 {
+		t.Fatalf("audit rows=%d", n)
+	}
+	if len(stub.updates) != 1 {
+		t.Fatalf("updates=%d", len(stub.updates))
+	}
+}

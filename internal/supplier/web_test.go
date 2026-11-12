@@ -441,6 +441,12 @@ func TestUpdateAccountProfileRejectsNonSuccessMessage(t *testing.T) {
 		t.Fatalf("200 with non-success msg: %v", err)
 	}
 
+	stub.updateResponse = func(w http.ResponseWriter) { fmt.Fprint(w, `{"id":411177,"msg":"修改不成功"}`) }
+	err = c.UpdateAccountProfile(context.Background(), 411177, profileFixture())
+	if !errors.As(err, &we) || we.UpstreamCode() != "PLATFORM_RESPONSE_INVALID" || we.Summary != "修改不成功" {
+		t.Fatalf("200 with 修改不成功: %v", err)
+	}
+
 	stub.updateResponse = func(w http.ResponseWriter) { w.WriteHeader(422); fmt.Fprint(w, `{"detail":"x"}`) }
 	err = c.UpdateAccountProfile(context.Background(), 411177, profileFixture())
 	if !errors.As(err, &we) || we.UpstreamCode() != "PLATFORM_RESPONSE_INVALID" || we.Status != 422 || we.Summary != "x" {
@@ -448,11 +454,11 @@ func TestUpdateAccountProfileRejectsNonSuccessMessage(t *testing.T) {
 	}
 
 	stub.updateResponse = nil
-	stub.rejectUpdate = func(attempt int) bool { return attempt == 3 }
+	stub.rejectUpdate = func(attempt int) bool { return attempt == 4 }
 	if err = c.UpdateAccountProfile(context.Background(), 411177, profileFixture()); err != nil {
 		t.Fatalf("after 401 re-login: %v", err)
 	}
-	if stub.logins.Load() != 2 || len(stub.accountUpdates) != 3 {
+	if stub.logins.Load() != 2 || len(stub.accountUpdates) != 4 {
 		t.Fatalf("logins=%d updates=%d, want one re-login and the retried PUT", stub.logins.Load(), len(stub.accountUpdates))
 	}
 	if err = c.UpdateAccountProfile(context.Background(), 0, profileFixture()); err == nil {
