@@ -34,6 +34,9 @@ env_file=${ENV_FILE:-/etc/cc-manager/cc-manager.env}
 data_dir=${DATA_DIR:-/var/lib/cc-manager}
 backup_root=${BACKUP_ROOT:-/var/backups/cc-manager}
 app_port=${APP_PORT:-18080}
+# Host address the port is published on. Loopback unless this server says
+# otherwise in $root/bind-addr (one line, an IPv4 address such as 0.0.0.0).
+bind_addr=${BIND_ADDR:-}
 pull=${PULL:-1}
 systemd_unit=${SYSTEMD_UNIT-cc-manager}   # empty: no systemd handling
 systemd_user=${SYSTEMD_USER:-cc-manager}
@@ -44,6 +47,10 @@ host_tz=${HOST_TZ:-$(cat /etc/timezone 2>/dev/null || echo UTC)}
 container_uid=10001
 
 compose_file=$root/compose.yml
+if [ -z "$bind_addr" ]; then
+    bind_addr=$(tr -d '[:space:]' < "$root/bind-addr" 2>/dev/null || true)
+fi
+bind_addr=${bind_addr:-127.0.0.1}
 state=$root/state
 db=$data_dir/cc-manager.db
 mkdir -p "$state"
@@ -60,6 +67,7 @@ log() {
 die() { log "ERROR: $*"; exit 1; }
 
 [[ $tag =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid tag: $tag"
+[[ $bind_addr =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "invalid bind address: $bind_addr"
 if [ -z "${IMAGE:-}" ]; then
     [ -s "$root/image" ] || die "missing $root/image (run install-docker.sh)"
     IMAGE=$(tr -d '[:space:]' < "$root/image")
@@ -100,7 +108,7 @@ trap cleanup EXIT
 # can contain account data from the application log.
 compose() {
     local use_tag=$1; shift
-    IMAGE=$image TAG=$use_tag ENV_FILE=$env_file DATA_DIR=$data_dir APP_PORT=$app_port HOST_TZ=$host_tz \
+    IMAGE=$image TAG=$use_tag ENV_FILE=$env_file DATA_DIR=$data_dir APP_PORT=$app_port BIND_ADDR=$bind_addr HOST_TZ=$host_tz \
         docker compose -p cc-manager -f "$compose_file" "$@" >> "$run_log" 2>&1
 }
 
@@ -127,9 +135,26 @@ systemd_present() {
         systemctl cat "$systemd_unit" >/dev/null 2>&1
 }
 
+# Python with a SQLite new enough for this database: the schema uses partial
+# indexes (SQLite >= 3.8) and the backup uses Connection.backup (Python >= 3.7).
+# Hosts that ship older ones (CentOS 7: Python 3.6, SQLite 3.7.17) run the same
+# code in a throwaway official Python container, with the given directories
+# mounted at the same paths.
+#   sqlite_python <dir>... -- <python args>
+sqlite_python() {
+    local mounts=()
+    while [ "$1" != "--" ]; do mounts+=(-v "$1:$1"); shift; done
+    shift
+    if python3 -c 'import sqlite3, sys; sys.exit(0 if sys.version_info >= (3, 7) and sqlite3.sqlite_version_info >= (3, 8, 3) else 1)' 2>/dev/null; then
+        python3 "$@"
+    else
+        docker run --rm -i --network none "${mounts[@]}" "${SQLITE_PYTHON_IMAGE:-python:3.12-alpine}" python "$@"
+    fi
+}
+
 schema_version() {   # prints the highest applied migration, or 0
     [ -f "$1" ] || { echo 0; return; }
-    python3 -c 'import sqlite3,sys
+    sqlite_python "$(dirname "$1")" -- -c 'import sqlite3,sys
 try:
     v = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True).execute("select coalesce(max(version),0) from schema_migrations").fetchone()[0]
 except Exception:

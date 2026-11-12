@@ -18,8 +18,11 @@ services:
     # used to point at a service on the host must use host.docker.internal.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Loopback by default (nginx/Cloudflare in front). A server without a
+    # reverse proxy can publish on all interfaces by writing 0.0.0.0 to
+    # /opt/cc-manager/docker/bind-addr; see docker-deploy.sh.
     ports:
-      - "127.0.0.1:${APP_PORT:-18080}:8080"
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-18080}:8080"
     volumes:
       - ${DATA_DIR:-/var/lib/cc-manager}:/data
     restart: unless-stopped
