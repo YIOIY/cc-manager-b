@@ -12,6 +12,7 @@ export type Permission =
   | 'accounts.credentials'
   | 'accounts.onboard'
   | 'accounts.usage'
+  | 'accounts.platform_edit'
   | 'proxies.view'
   | 'proxies.create'
   | 'proxies.update'
@@ -215,8 +216,20 @@ export interface PlatformInfo {
   missing_since: string
   auto_created: boolean
   source_channel: 'web' | 'openapi'
+  /** The console's free-text remark for the delivery. */
+  remark: string
+  /** Whether this connection's console channel can carry a profile edit. */
+  web_channel: { configured: boolean; suspended: boolean }
   profile: PlatformProfile
   usage: PlatformUsage | null
+}
+
+/** Result of POST /accounts/{id}/platform-profile. */
+export interface PlatformProfileResult {
+  verified: boolean
+  hint?: string
+  changed: string[]
+  platform: PlatformInfo | null
 }
 
 /** One row of GET /platform-connections/{id}/remote-accounts. */

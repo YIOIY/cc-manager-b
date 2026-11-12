@@ -50,6 +50,7 @@
       :all-accounts="accountsFiltered"
       :loading="page.loading.value"
       @select="selectAccount"
+      @edit-platform="editPlatform"
     />
     <div v-else class="table-scroll">
       <el-table v-loading="page.loading.value" :data="page.pagedItems.value" row-key="id">
@@ -211,6 +212,11 @@
       @deleted="onAccountDeleted"
     />
     <ImportDialog v-model="importOpen" @feedback="feedback" @imported="onImported" />
+    <PlatformProfileDialog
+      v-model="platformProfileOpen"
+      :account="platformProfileAccount"
+      @saved="onPlatformProfileSaved"
+    />
     <AccountFormDialog
       v-model="accountFormOpen"
       :account="editingAccount"
@@ -242,6 +248,7 @@ import AccountCards from '../components/AccountCards.vue'
 import AccountDeliveryDialog from '../components/AccountDeliveryDialog.vue'
 import AccountFormDialog from '../components/AccountFormDialog.vue'
 import ImportDialog from '../components/ImportDialog.vue'
+import PlatformProfileDialog from '../components/PlatformProfileDialog.vue'
 import ProxyFormDialog from '../components/ProxyFormDialog.vue'
 import ConnectionFormDialog from '../components/ConnectionFormDialog.vue'
 import RemoteAccountsDrawer from '../components/RemoteAccountsDrawer.vue'
@@ -259,6 +266,7 @@ import type {
   ListRow,
   OnboardResult,
   PlatformConnection,
+  PlatformProfileResult,
   Proxy,
   ProxyOption,
 } from '../types/api'
@@ -389,6 +397,19 @@ const importOpen = ref(false)
 const accountFormOpen = ref(false)
 const editingAccount = ref<Account | null>(null)
 const editingConnectionId = ref('')
+const platformProfileOpen = ref(false)
+const platformProfileAccount = ref<Account | null>(null)
+function editPlatform(row: Account) {
+  platformProfileAccount.value = accountsAll.value.find((item) => item.id === row.id) || row
+  platformProfileOpen.value = true
+  actionMessage.value = ''
+}
+function onPlatformProfileSaved(result: PlatformProfileResult) {
+  actionMessage.value = result.verified
+    ? '平台资料已修改：' + result.changed.join('、')
+    : '平台已接受修改，但未能立即核对' + (result.hint ? '：' + result.hint : '')
+  void page.load()
+}
 function selectAccount(row: Account) {
   selectedAccount.value = accountsAll.value.find((item) => item.id === row.id) || row
   deliveryOpen.value = true
