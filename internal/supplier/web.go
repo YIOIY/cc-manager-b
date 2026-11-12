@@ -16,10 +16,11 @@ import (
 	"time"
 )
 
-// WebClient reads the supplier's web console with a console account. It is
-// read-only by construction: every method here issues GET requests except the
-// two login calls. The session token lives in memory only and is renewed when
-// it expires or the console answers 401.
+// WebClient reads the supplier's web console with a console account. Every
+// method issues GET requests except the two login calls and
+// UpdateAccountProfile, the one write the console channel allows. The session
+// token lives in memory only and is renewed when it expires or the console
+// answers 401.
 type WebClient struct {
 	base     *url.URL
 	username string
@@ -29,6 +30,10 @@ type WebClient struct {
 	mu        sync.Mutex
 	token     string
 	expiresAt time.Time
+	// publicKey is the console's RSA key as the login response carried it
+	// (or the /pubkey answer when login omits it); profile updates encrypt
+	// the untouched password field with it.
+	publicKey string
 }
 
 type WebSession struct {
@@ -43,6 +48,15 @@ type WebProfile struct {
 	Balance, PaymentMethod, RegisterDevice, RechargeTime     string
 	WarrantyPeriod                                           string
 	Tags                                                     []string
+}
+
+// WebProfileUpdate is the whole record PUT /supplier/accounts/{id} expects
+// for a Claude (CPA) account. Every field is sent, so the caller fills it
+// from the current snapshot and overlays the changes.
+type WebProfileUpdate struct {
+	Provider, Model, Email, Remark                                    string
+	Plan, RegisterTime, PlanStart, PlanEnd, RegisterLocation, Balance string
+	PaymentMethod, RegisterDevice, RechargeTime, WarrantyPeriod       string
 }
 
 // WebUsage is the console's "账号用量" block. CostMicro is in millionths of a
@@ -164,6 +178,7 @@ func (c *WebClient) loginLocked(ctx context.Context) (WebSession, error) {
 	if err != nil {
 		return WebSession{}, err
 	}
+	c.publicKey = pub.PublicKey
 	data, status, err = c.send(ctx, http.MethodPost, "/supplier-account/api/supplier/login", nil, map[string]string{"username": c.username, "enc_password": enc}, "")
 	if err != nil {
 		return WebSession{}, err
@@ -174,6 +189,7 @@ func (c *WebClient) loginLocked(ctx context.Context) (WebSession, error) {
 	var login struct {
 		Token     string `json:"token"`
 		Name      string `json:"name"`
+		PublicKey string `json:"public_key"`
 		ExpiresIn int    `json:"expires_in"`
 	}
 	if json.Unmarshal(data, &login) != nil || login.Token == "" {
@@ -184,6 +200,9 @@ func (c *WebClient) loginLocked(ctx context.Context) (WebSession, error) {
 		ttl = 5 * time.Hour
 	}
 	c.token, c.expiresAt = login.Token, time.Now().Add(ttl-webTokenSlack)
+	if login.PublicKey != "" {
+		c.publicKey = login.PublicKey
+	}
 	return WebSession{SupplierName: login.Name, ExpiresIn: login.ExpiresIn}, nil
 }
 
@@ -202,11 +221,28 @@ func (c *WebClient) ensureToken(ctx context.Context) (string, error) {
 // get performs one authenticated GET. A 401 is retried exactly once after a
 // fresh login; a second 401 is reported as WEB_LOGIN_FAILED.
 func (c *WebClient) get(ctx context.Context, path string, query url.Values) ([]byte, error) {
+	return c.call(ctx, http.MethodGet, path, query, nil)
+}
+
+// call performs one authenticated request with the 401-retry rule of get.
+// bodyFn builds the request body against the current session so a retry
+// after re-login can use the renewed public key.
+func (c *WebClient) call(ctx context.Context, method, path string, query url.Values, bodyFn func() (any, error)) ([]byte, error) {
 	token, err := c.ensureToken(ctx)
 	if err != nil {
 		return nil, err
 	}
-	data, status, err := c.send(ctx, http.MethodGet, path, query, nil, token)
+	body := func() (any, error) {
+		if bodyFn == nil {
+			return nil, nil
+		}
+		return bodyFn()
+	}
+	b, err := body()
+	if err != nil {
+		return nil, err
+	}
+	data, status, err := c.send(ctx, method, path, query, b, token)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +256,10 @@ func (c *WebClient) get(ctx context.Context, path string, query url.Values) ([]b
 		if err != nil {
 			return nil, err
 		}
-		if data, status, err = c.send(ctx, http.MethodGet, path, query, nil, token); err != nil {
+		if b, err = body(); err != nil {
+			return nil, err
+		}
+		if data, status, err = c.send(ctx, method, path, query, b, token); err != nil {
 			return nil, err
 		}
 	}
@@ -593,4 +632,48 @@ func floatOf(v any) float64 {
 		return f
 	}
 	return 0
+}
+
+// UpdateAccountProfile overwrites the console record of one Claude account
+// with p. The password and credential fields are sent as "unchanged" (an
+// encrypted empty string and an empty cpa_auth_json), tags and proxies are
+// not sent at all. A 200 whose msg is not a success is reported as
+// PLATFORM_RESPONSE_INVALID.
+func (c *WebClient) UpdateAccountProfile(ctx context.Context, id int64, p WebProfileUpdate) error {
+	if id <= 0 {
+		return errors.New("invalid account id")
+	}
+	bodyFn := func() (any, error) {
+		c.mu.Lock()
+		key := c.publicKey
+		c.mu.Unlock()
+		if key == "" {
+			return nil, &WebHTTPError{Status: 200, Summary: "public key missing", Login: true}
+		}
+		enc, err := EncryptLoginPassword(key, "")
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"provider": p.Provider, "model": p.Model, "adc_config": "", "api_key": "", "region": "",
+			"aws_region": "", "aws_project_id": "", "aws_auth_type": "arn", "account_id": p.Email,
+			"proxy_type": "", "proxy_region": "", "account_type": 2, "remark": p.Remark,
+			"cpa_plan": p.Plan, "cpa_register_time": p.RegisterTime, "cpa_plan_start_time": p.PlanStart,
+			"cpa_plan_end_time": p.PlanEnd, "cpa_register_location": p.RegisterLocation, "cpa_balance": p.Balance,
+			"cpa_payment_method": p.PaymentMethod, "cpa_register_device": p.RegisterDevice,
+			"cpa_recharge_time": p.RechargeTime, "cpa_warranty_period": p.WarrantyPeriod,
+			"cpa_auth_json": "", "enc_adc_config": enc,
+		}, nil
+	}
+	data, err := c.call(ctx, http.MethodPut, fmt.Sprintf("/supplier-account/api/supplier/accounts/%d", id), nil, bodyFn)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Msg string `json:"msg"`
+	}
+	if json.Unmarshal(data, &resp) != nil || !strings.Contains(resp.Msg, "成功") {
+		return &WebHTTPError{Status: 200, Summary: webSummary(data, "unexpected update response")}
+	}
+	return nil
 }

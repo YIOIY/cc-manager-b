@@ -91,6 +91,13 @@ type consoleStub struct {
 	billBody      func(r *http.Request) string
 	reasonBody    string
 	loginOverride func(w http.ResponseWriter)
+	// emptyLoginKey makes the login response omit public_key, the way an
+	// older console build did, so the client must fall back to /pubkey.
+	emptyLoginKey  bool
+	accountUpdates []map[string]any
+	updateHits     int
+	rejectUpdate   func(attempt int) bool
+	updateResponse func(w http.ResponseWriter)
 }
 
 func newConsoleStub(t *testing.T) *consoleStub {
@@ -132,7 +139,11 @@ func (s *consoleStub) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.tokenSeq.Add(1)
-		fmt.Fprintf(w, `{"token":%q,"name":"住享科智","public_key":"","expires_in":18000,"allow_fast_brush":0}`, s.currentToken())
+		key := publicKeyPEM(s.t, &s.priv.PublicKey)
+		if s.emptyLoginKey {
+			key = ""
+		}
+		fmt.Fprintf(w, `{"token":%q,"name":"住享科智","public_key":%q,"expires_in":18000,"allow_fast_brush":0}`, s.currentToken(), key)
 	default:
 		if r.Header.Get("Authorization") != "Bearer "+s.currentToken() {
 			w.WriteHeader(401)
@@ -140,6 +151,23 @@ func (s *consoleStub) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch {
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/supplier-account/api/supplier/accounts/"):
+			s.updateHits++
+			if s.rejectUpdate != nil && s.rejectUpdate(s.updateHits) {
+				w.WriteHeader(401)
+				fmt.Fprint(w, `{"detail":"供应商未登录或凭证失效"}`)
+				return
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				s.t.Errorf("update body: %v", err)
+			}
+			s.accountUpdates = append(s.accountUpdates, payload)
+			if s.updateResponse != nil {
+				s.updateResponse(w)
+				return
+			}
+			fmt.Fprint(w, `{"id":411177,"msg":"修改成功"}`)
 		case r.URL.Path == "/supplier-account/api/supplier/accounts":
 			page := 1
 			fmt.Sscanf(r.URL.Query().Get("page"), "%d", &page)
@@ -342,5 +370,92 @@ func TestWebClientLoginClassifiesNon401(t *testing.T) {
 		if !errors.As(err, &we) || we.UpstreamCode() != tc.code {
 			t.Fatalf("status %d: err=%v", tc.status, err)
 		}
+	}
+}
+
+func profileFixture() WebProfileUpdate {
+	return WebProfileUpdate{
+		Provider: "claude", Model: "claude/cc-max-20x", Email: "fixture@example.test", Remark: "1 cc-manager",
+		Plan: "claude/cc-max-20x", RegisterTime: "2026-11-03", PlanStart: "2026-11-11", PlanEnd: "2026-12-10",
+		RegisterLocation: "US", Balance: "100", PaymentMethod: "google_pay", RegisterDevice: "Mac", RechargeTime: "", WarrantyPeriod: "",
+	}
+}
+
+func TestUpdateAccountProfileSendsWholeRecord(t *testing.T) {
+	for _, emptyLoginKey := range []bool{false, true} {
+		stub := newConsoleStub(t)
+		stub.emptyLoginKey = emptyLoginKey
+		c, err := NewWebClient(stub.server.URL, "zhuxiangkezhi-cpa", "secret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = c.UpdateAccountProfile(context.Background(), 411177, profileFixture()); err != nil {
+			t.Fatalf("emptyLoginKey=%v: %v", emptyLoginKey, err)
+		}
+		if len(stub.accountUpdates) != 1 {
+			t.Fatalf("updates=%d", len(stub.accountUpdates))
+		}
+		got := stub.accountUpdates[0]
+		want := map[string]any{
+			"provider": "claude", "model": "claude/cc-max-20x", "adc_config": "", "api_key": "", "region": "",
+			"aws_region": "", "aws_project_id": "", "aws_auth_type": "arn", "account_id": "fixture@example.test",
+			"proxy_type": "", "proxy_region": "", "account_type": float64(2), "remark": "1 cc-manager",
+			"cpa_plan": "claude/cc-max-20x", "cpa_register_time": "2026-11-03", "cpa_plan_start_time": "2026-11-11",
+			"cpa_plan_end_time": "2026-12-10", "cpa_register_location": "US", "cpa_balance": "100",
+			"cpa_payment_method": "google_pay", "cpa_register_device": "Mac", "cpa_recharge_time": "",
+			"cpa_warranty_period": "", "cpa_auth_json": "",
+		}
+		for k, v := range want {
+			if gv, ok := got[k]; !ok || gv != v {
+				t.Errorf("%s: got %#v (present=%v), want %#v", k, gv, ok, v)
+			}
+		}
+		if len(got) != len(want)+1 {
+			t.Errorf("payload has %d keys, want %d: %v", len(got), len(want)+1, got)
+		}
+		for _, k := range []string{"cpa_tags", "proxy_ids"} {
+			if _, ok := got[k]; ok {
+				t.Errorf("payload must not carry %s", k)
+			}
+		}
+		enc, _ := got["enc_adc_config"].(string)
+		if plain, env := decryptLoginPassword(t, stub.priv, enc); plain != "" || env["__enc__"] != "hybrid-aesgcm" {
+			t.Errorf("enc_adc_config plaintext=%q env=%v, want empty hybrid-aesgcm", plain, env)
+		}
+		if stub.logins.Load() != 1 {
+			t.Errorf("logins=%d", stub.logins.Load())
+		}
+	}
+}
+
+func TestUpdateAccountProfileRejectsNonSuccessMessage(t *testing.T) {
+	stub := newConsoleStub(t)
+	stub.updateResponse = func(w http.ResponseWriter) { fmt.Fprint(w, `{"id":411177,"msg":"参数错误"}`) }
+	c, err := NewWebClient(stub.server.URL, "zhuxiangkezhi-cpa", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.UpdateAccountProfile(context.Background(), 411177, profileFixture())
+	var we *WebHTTPError
+	if !errors.As(err, &we) || we.UpstreamCode() != "PLATFORM_RESPONSE_INVALID" || we.Status != 200 || we.Summary != "参数错误" {
+		t.Fatalf("200 with non-success msg: %v", err)
+	}
+
+	stub.updateResponse = func(w http.ResponseWriter) { w.WriteHeader(422); fmt.Fprint(w, `{"detail":"x"}`) }
+	err = c.UpdateAccountProfile(context.Background(), 411177, profileFixture())
+	if !errors.As(err, &we) || we.UpstreamCode() != "PLATFORM_RESPONSE_INVALID" || we.Status != 422 || we.Summary != "x" {
+		t.Fatalf("422: %v", err)
+	}
+
+	stub.updateResponse = nil
+	stub.rejectUpdate = func(attempt int) bool { return attempt == 3 }
+	if err = c.UpdateAccountProfile(context.Background(), 411177, profileFixture()); err != nil {
+		t.Fatalf("after 401 re-login: %v", err)
+	}
+	if stub.logins.Load() != 2 || len(stub.accountUpdates) != 3 {
+		t.Fatalf("logins=%d updates=%d, want one re-login and the retried PUT", stub.logins.Load(), len(stub.accountUpdates))
+	}
+	if err = c.UpdateAccountProfile(context.Background(), 0, profileFixture()); err == nil {
+		t.Fatal("accepted id 0")
 	}
 }
