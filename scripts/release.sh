@@ -83,7 +83,13 @@ cp -R web/dist "$stage/web/dist"
 # build`: the legacy builder cannot COPY across platforms (Docker 20.10), and
 # BuildKit cannot always pull through local registry mirrors. Keep this in step
 # with the final stage of deploy/Dockerfile (the healthcheck lives in compose.yml).
-docker pull -q --platform "$platform" alpine:3.22 >/dev/null
+# Refresh the base image when Docker Hub is reachable; otherwise go on with a
+# cached copy of the right platform rather than block the release.
+if ! docker pull -q --platform "$platform" alpine:3.22 >/dev/null 2>&1; then
+    cached=$(docker image inspect alpine:3.22 --format '{{.Os}}/{{.Architecture}}' 2>/dev/null || true)
+    [ "$cached" = "$platform" ] || die "cannot pull alpine:3.22 and no cached $platform copy (found: ${cached:-none})"
+    echo "note: Docker Hub unreachable; using the cached alpine:3.22 ($cached)"
+fi
 cid=$(docker create --platform "$platform" alpine:3.22 sh -c '
     apk add --no-cache ca-certificates tzdata wget >/dev/null &&
     addgroup -g 10001 app && adduser -D -H -u 10001 -G app app &&
