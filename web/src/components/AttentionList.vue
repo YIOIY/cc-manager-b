@@ -2,8 +2,8 @@
   <section class="dashboard-panel attention-panel">
     <div class="dashboard-panel-head">
       <div>
-        <span class="panel-kicker">ATTENTION</span>
         <h2>需要处理</h2>
+        <p class="panel-sub">接近限额、封禁、快到期或和平台对不上的账号。</p>
       </div>
       <el-button v-if="items.length" text type="primary" @click="emit('all')"
         >查看全部 <ArrowUpRight :size="14"
@@ -38,7 +38,7 @@
       </li>
     </ul>
     <div v-else class="dashboard-muted attention-empty">
-      {{ loading ? '正在读取…' : '暂无需要处理的账号' }}
+      {{ failed ? '清单暂时读取失败，点右上角「刷新」重试。' : loading ? '正在读取…' : '暂无需要处理的账号' }}
     </div>
   </section>
 </template>
@@ -52,6 +52,7 @@ import { attentionLabel } from '../model/dashboard'
 const props = defineProps<{
   items: AttentionItem[]
   counts: Partial<Record<AttentionKind, number>>
+  failed?: boolean
   loading: boolean
 }>()
 const emit = defineEmits<{ open: [item: AttentionItem]; all: [] }>()

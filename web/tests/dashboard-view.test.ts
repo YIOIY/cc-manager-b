@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import type { AttentionResponse, Dashboard } from '../src/types/api'
+import type { AttentionResponse, Dashboard, DashboardInsights } from '../src/types/api'
 
 const push = vi.fn()
 vi.mock('vue-router', () => ({ useRouter: () => ({ push }), useRoute: () => ({ meta: {}, query: {} }) }))
@@ -109,10 +109,90 @@ const attention: AttentionResponse = {
   counts: { near_limit: 2, banned: 2, expiring: 0, missing: 0, profile_diff: 0 },
 }
 
-async function render(dash: Dashboard, att: AttentionResponse = attention) {
+const hours = Array.from({ length: 24 }, (_, i) => ({
+  hour: new Date(Date.UTC(2026, 10, 12, 5 + i)).toISOString().replace('.000Z', 'Z'),
+  cost_fen: i === 20 ? 12000 : i === 23 ? 6000 : 0,
+}))
+const insights: DashboardInsights = {
+  usd_cny_rate: 7.2,
+  fleet: {
+    accounts: 8,
+    cost_fen_total: 720000,
+    input_tokens: 487159683,
+    output_tokens: 124015127,
+    avg_five_hour_percent: 24.1,
+    avg_week_percent: 31.5,
+  },
+  quota: [
+    {
+      account_id: 'a2',
+      account: 'ca@example.test',
+      alias: 'claude-ca',
+      status: 'using',
+      five_hour_percent: 88,
+      five_hour_reset_at: '2026-11-13T06:50:00Z',
+      week_percent: 35,
+      week_reset_at: '2026-11-18T05:00:00Z',
+      cost_fen: 258624,
+    },
+    {
+      account_id: 'a1',
+      account: 'cj@example.test',
+      alias: 'claude-cj',
+      status: 'using',
+      five_hour_percent: 12,
+      five_hour_reset_at: '',
+      week_percent: 71,
+      week_reset_at: '',
+      cost_fen: 720997,
+    },
+    {
+      account_id: 'a3',
+      account: 'gr@example.test',
+      alias: 'claude-gr',
+      status: 'ban',
+      five_hour_percent: null,
+      five_hour_reset_at: '',
+      week_percent: null,
+      week_reset_at: '',
+      cost_fen: null,
+    },
+  ],
+  hourly: hours,
+  composition: {
+    by_delivery: { linked: 8, pending: 1, submitting: 0, failed: 1, unknown: 0 },
+    expiry: { expired: 0, within_7: 1, within_30: 5, later: 2, unknown: 0 },
+  },
+  recent_jobs: [
+    {
+      id: 'j2',
+      account_id: 'a9',
+      account: 'ka@example.test',
+      connection: 'TX CCMAX',
+      state: 'failed',
+      code: 'PLATFORM_AUTH_FAILED',
+      updated_at: '2026-11-12T14:01:07Z',
+    },
+    {
+      id: 'j1',
+      account_id: 'a1',
+      account: 'cj@example.test',
+      connection: 'TX CCMAX',
+      state: 'succeeded',
+      code: 'ACCEPTED_PENDING_VERIFICATION',
+      updated_at: '2026-11-12T09:05:27Z',
+    },
+  ],
+}
+
+async function render(dash: Dashboard, att: AttentionResponse = attention, ins: DashboardInsights | Error = insights) {
   apiMock.mockImplementation(async (path: string) => {
     if (path === '/dashboard') return { data: dash }
     if (path === '/dashboard/attention') return { data: att }
+    if (path === '/dashboard/insights') {
+      if (ins instanceof Error) throw ins
+      return { data: ins }
+    }
     throw new Error('unexpected ' + path)
   })
   const w = mount(DashboardView, { global: { stubs } })
@@ -175,4 +255,60 @@ test('without the web channel the top row falls back to local counts with a hint
   expect(text).toContain('配置网页登录后显示平台状态')
   expect(text).toContain('暂无需要处理的账号')
   expect(text).toContain('暂无账单数据')
+})
+
+test('amounts are shown in RMB and dollars, with the daily average and the totals strip', async () => {
+  const text = (await render(dashboard())).text()
+  expect(text).toContain('$2,067.05') // ¥14,882.78 ÷ 7.2
+  expect(text).toContain('$6,875.95') // ¥49,506.82 ÷ 7.2
+  expect(text).toContain('日均')
+  expect(text).toContain('累计花费')
+  expect(text).toContain('¥7,200.00')
+  expect(text).toContain('$1,000.00')
+  expect(text).toContain('累计 Token')
+  expect(text).toContain('平均占用')
+})
+
+test('the quota board lists every account with both windows and opens the account', async () => {
+  const w = await render(dashboard())
+  const rows = w.findAll('[data-quota]')
+  expect(rows.map((r) => r.attributes('data-quota'))).toEqual(['a2', 'a1', 'a3'])
+  expect(rows[0]!.text()).toContain('ca@example.test')
+  expect(rows[0]!.text()).toContain('88%')
+  expect(rows[0]!.text()).toContain('35%')
+  expect(rows[2]!.text()).toContain('已封禁')
+  await rows[1]!.trigger('click')
+  expect(push).toHaveBeenCalledWith({ name: 'accounts', query: { q: 'cj@example.test' } })
+})
+
+test('composition, hourly spend and recent onboarding are shown', async () => {
+  const text = (await render(dashboard())).text()
+  for (const expected of [
+    '账号构成',
+    '平台状态',
+    '上号状态',
+    '到期',
+    '7 天内',
+    '近 24 小时',
+    '最近上号',
+    'ka@example.test',
+    '平台拒绝了本次请求的身份验证',
+    '平台已接收',
+    '系统状态',
+    '汇率',
+  ])
+    expect(text, expected).toContain(expected)
+})
+
+test('a failing insights request leaves the headline numbers and says what is missing', async () => {
+  const text = (await render(dashboard(), attention, new Error('boom'))).text()
+  expect(text).toContain('¥14,882.78')
+  expect(text).toContain('5 小时窗口 88%')
+  expect(text).toContain('配额数据暂时读取失败')
+  expect(text).not.toContain('$')
+})
+
+test('recent onboarding is hidden from users who cannot see the task centre', async () => {
+  const w = await render(dashboard(), attention, { ...insights, recent_jobs: null })
+  expect(w.text()).not.toContain('最近上号')
 })

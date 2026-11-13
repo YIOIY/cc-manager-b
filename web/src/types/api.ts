@@ -415,6 +415,54 @@ export interface DashboardPlatform {
   cost_by_account?: { account_id: string; account: string; cost_fen: number }[]
 }
 
+/** One account on the dashboard's quota board. Percentages are 0–100; null when the platform reports no usage. */
+export interface QuotaRow {
+  account_id: string
+  account: string
+  alias: string
+  status: string
+  five_hour_percent: number | null
+  five_hour_reset_at: string
+  week_percent: number | null
+  week_reset_at: string
+  cost_fen: number | null
+}
+
+export interface HourlyCost {
+  /** Start of the hour, RFC 3339 UTC. */
+  hour: string
+  cost_fen: number
+}
+
+export interface RecentJob {
+  id: string
+  account_id: string
+  account: string
+  connection: string
+  state: string
+  code: string
+  updated_at: string
+}
+
+/** GET /dashboard/insights: the fleet panels below the headline numbers. */
+export interface DashboardInsights {
+  /** The platform rate when every enabled connection shares one; null otherwise. */
+  usd_cny_rate: number | null
+  fleet: {
+    accounts: number
+    cost_fen_total: number
+    input_tokens: number
+    output_tokens: number
+    avg_five_hour_percent: number
+    avg_week_percent: number
+  }
+  quota: QuotaRow[]
+  hourly: HourlyCost[]
+  composition: { by_delivery: Record<string, number>; expiry: Record<string, number> }
+  /** null when the user may not see the task centre. */
+  recent_jobs: RecentJob[] | null
+}
+
 export interface SpendDay {
   date: string
   cost_fen: number

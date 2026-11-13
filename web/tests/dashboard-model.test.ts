@@ -1,6 +1,16 @@
 import { expect, test } from 'vitest'
-import { accountQuery, attentionLabel, spendBars } from '../src/model/dashboard'
-import type { AttentionItem } from '../src/types/api'
+import {
+  accountQuery,
+  attentionLabel,
+  dailyAverageFen,
+  dayChange,
+  hourlyBars,
+  hourlySummary,
+  jobOutcome,
+  shareSegments,
+  spendBars,
+} from '../src/model/dashboard'
+import type { AttentionItem, RecentJob } from '../src/types/api'
 
 const base: AttentionItem = {
   kind: 'near_limit',
@@ -48,4 +58,76 @@ test('spend bars scale to the largest day and never divide by zero', () => {
     ]),
   ).toEqual([0, 0])
   expect(spendBars([])).toEqual([])
+})
+
+test('the day-over-day change compares the last two complete days', () => {
+  const days = [
+    { date: '11-10', cost_fen: 100, final: true },
+    { date: '11-11', cost_fen: 150, final: true },
+    { date: '11-12', cost_fen: 30, final: false },
+  ]
+  expect(dayChange(days)).toEqual({ percent: 50, up: true })
+  expect(
+    dayChange([
+      { date: 'a', cost_fen: 200, final: true },
+      { date: 'b', cost_fen: 150, final: true },
+    ]),
+  ).toEqual({
+    percent: 25,
+    up: false,
+  })
+  expect(
+    dayChange([
+      { date: 'a', cost_fen: 0, final: true },
+      { date: 'b', cost_fen: 150, final: true },
+    ]),
+  ).toBeNull()
+  expect(dayChange(days.slice(1))).toBeNull()
+  expect(dailyAverageFen(days)).toBe(125)
+  expect(dailyAverageFen([{ date: 'x', cost_fen: 30, final: false }])).toBe(0)
+})
+
+test('share segments keep the given order, drop empty groups and add up to the whole', () => {
+  expect(shareSegments({ ban: 2, using: 9, check_fail: 0 }, ['using', 'ban'])).toEqual([
+    { key: 'using', count: 9, percent: 81.8 },
+    { key: 'ban', count: 2, percent: 18.2 },
+  ])
+  expect(shareSegments({ b: 1, a: 3 })).toEqual([
+    { key: 'a', count: 3, percent: 75 },
+    { key: 'b', count: 1, percent: 25 },
+  ])
+  expect(shareSegments({})).toEqual([])
+})
+
+test('hourly bars scale to the busiest hour and the summary names it', () => {
+  const hours = [
+    { hour: '2026-11-13T01:00:00Z', cost_fen: 200 },
+    { hour: '2026-11-13T02:00:00Z', cost_fen: 0 },
+    { hour: '2026-11-13T03:00:00Z', cost_fen: 2 },
+    { hour: '2026-11-13T04:00:00Z', cost_fen: 100 },
+  ]
+  expect(hourlyBars(hours).map((b) => b.height)).toEqual([100, 0, 3, 50])
+  expect(hourlySummary(hours)).toEqual({ total: 302, peak: 200, peakHour: '2026-11-13T01:00:00Z' })
+  expect(hourlyBars([{ hour: 'x', cost_fen: 0 }]).map((b) => b.height)).toEqual([0])
+  expect(hourlySummary([])).toEqual({ total: 0, peak: 0, peakHour: null })
+})
+
+test('a recent onboarding job reads as its outcome', () => {
+  const job: RecentJob = {
+    id: 'j',
+    account_id: 'a',
+    account: 'x@example.test',
+    connection: 'TX',
+    state: 'succeeded',
+    code: 'ACCEPTED_PENDING_VERIFICATION',
+    updated_at: '',
+  }
+  expect(jobOutcome(job)).toEqual({ label: '平台已接收', tone: 'success' })
+  expect(jobOutcome({ ...job, state: 'failed', code: 'PLATFORM_AUTH_FAILED' })).toEqual({
+    label: '平台拒绝了本次请求的身份验证',
+    tone: 'danger',
+  })
+  expect(jobOutcome({ ...job, state: 'failed', code: '' })).toEqual({ label: '上号失败', tone: 'danger' })
+  expect(jobOutcome({ ...job, state: 'queued', code: '' })).toEqual({ label: '提交中', tone: 'info' })
+  expect(jobOutcome({ ...job, state: 'unknown', code: '' })).toEqual({ label: '结果待确认', tone: 'warning' })
 })
