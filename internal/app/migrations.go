@@ -30,6 +30,7 @@ var migrations = []migration{
 	{9, "sync-run-error-code", migrateSyncRunErrorCodeV9},
 	{10, "web-channel", migrateWebChannelV10},
 	{11, "exchange-rates", migrateExchangeRatesV11},
+	{12, "platform-rate", migratePlatformRateV12},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -357,9 +358,23 @@ func migrateWebChannelV10(tx *sql.Tx) error {
 	return err
 }
 
-// migrateExchangeRatesV11 adds the table holding the latest USD/CNY
-// reference rate shown next to RMB costs.
+// migrateExchangeRatesV11 added a table for a market reference rate. It was
+// the wrong rate (the platform bills at its own fixed rate) and version 12
+// removes the table again; the step stays so applied versions line up.
 func migrateExchangeRatesV11(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS exchange_rates(pair TEXT PRIMARY KEY,rate REAL NOT NULL,source TEXT NOT NULL DEFAULT '',rate_date TEXT NOT NULL DEFAULT '',fetched_at TEXT NOT NULL)`)
+	return err
+}
+
+// platformRateColumns is shared with baseSchema's platform_connections.
+var platformRateColumns = []string{"usd_cny_rate REAL NOT NULL DEFAULT 7.2"}
+
+// migratePlatformRateV12 gives every connection the platform's fixed
+// USD→RMB rate and drops the market-rate table of version 11.
+func migratePlatformRateV12(tx *sql.Tx) error {
+	if err := addColumns(tx, "platform_connections", platformRateColumns); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`DROP TABLE IF EXISTS exchange_rates`)
 	return err
 }

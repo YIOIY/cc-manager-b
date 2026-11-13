@@ -38,9 +38,6 @@ type App struct {
 	webClients map[string]*supplier.WebClient
 	webSyncMu  map[string]*sync.Mutex
 
-	// rateSources overrides defaultRateSources (tests).
-	rateSources []rateSource
-
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -69,7 +66,7 @@ func newApp(path string, workers bool) (*App, error) {
 const baseSchema = `
 CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, account TEXT UNIQUE NOT NULL, plan TEXT NOT NULL DEFAULT '', register_location TEXT NOT NULL DEFAULT '', register_time TEXT NOT NULL DEFAULT '', plan_start_time TEXT NOT NULL DEFAULT '', plan_end_time TEXT NOT NULL DEFAULT '', proxy_id TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', credentials_json TEXT NOT NULL DEFAULT '{}', version INTEGER NOT NULL DEFAULT 1, archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',scheme TEXT NOT NULL DEFAULT '',host TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,username TEXT NOT NULL DEFAULT '',password_secret TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
-CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',web_username TEXT NOT NULL DEFAULT '',web_password_secret TEXT NOT NULL DEFAULT '',web_suspended_at TEXT NOT NULL DEFAULT '',web_suspended_reason TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',web_username TEXT NOT NULL DEFAULT '',web_password_secret TEXT NOT NULL DEFAULT '',web_suspended_at TEXT NOT NULL DEFAULT '',web_suspended_reason TEXT NOT NULL DEFAULT '',usd_cny_rate REAL NOT NULL DEFAULT 7.2);
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',connection_id TEXT NOT NULL DEFAULT '',payload_json TEXT NOT NULL DEFAULT '{}',result_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
 CREATE TABLE IF NOT EXISTS roles(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,description TEXT NOT NULL DEFAULT '',builtin INTEGER NOT NULL DEFAULT 0,permissions_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
@@ -943,7 +940,7 @@ func (a *App) platformConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listPlatformConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.QueryContext(r.Context(), `SELECT id,name,base_url,timezone,enabled,version,token_secret,web_username,web_password_secret,web_suspended_at,web_suspended_reason FROM platform_connections ORDER BY created_at,rowid`)
+	rows, err := a.DB.QueryContext(r.Context(), `SELECT id,name,base_url,timezone,enabled,version,token_secret,web_username,web_password_secret,web_suspended_at,web_suspended_reason,usd_cny_rate FROM platform_connections ORDER BY created_at,rowid`)
 	if err != nil {
 		writeError(w, r, storageError(err, "平台连接读取失败"))
 		return
@@ -953,12 +950,13 @@ func (a *App) listPlatformConnections(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, name, base, timezone, token, webUser, webSecret, suspendedAt, suspendedReason string
 		var enabled, version int
-		if err = rows.Scan(&id, &name, &base, &timezone, &enabled, &version, &token, &webUser, &webSecret, &suspendedAt, &suspendedReason); err != nil {
+		var usdRate float64
+		if err = rows.Scan(&id, &name, &base, &timezone, &enabled, &version, &token, &webUser, &webSecret, &suspendedAt, &suspendedReason, &usdRate); err != nil {
 			writeError(w, r, storageError(err, "平台连接读取失败"))
 			return
 		}
 		out = append(out, map[string]any{"id": id, "name": name, "base_url": base, "timezone": timezone, "enabled": enabled == 1, "version": version, "token_configured": token != "",
-			"web_username": webUser, "web_configured": webUser != "" && webSecret != "", "web_suspended_at": suspendedAt, "web_suspended_reason": suspendedReason})
+			"web_username": webUser, "web_configured": webUser != "" && webSecret != "", "web_suspended_at": suspendedAt, "web_suspended_reason": suspendedReason, "usd_cny_rate": usdRate})
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, r, storageError(err, "平台连接读取失败"))
@@ -1001,6 +999,10 @@ func (a *App) createPlatformConnection(w http.ResponseWriter, r *http.Request) {
 	if (webUser == "") != (webPassword == "") {
 		problems.Invalid("web_username", "网页登录账号和密码需要一起填写")
 	}
+	usdRate, hasRate := usdRateInput(in, &problems)
+	if !hasRate {
+		usdRate = defaultUSDCNYRate
+	}
 	if e := problems.Err(); e != nil {
 		writeError(w, r, e)
 		return
@@ -1018,7 +1020,7 @@ func (a *App) createPlatformConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err = a.DB.ExecContext(r.Context(), `INSERT INTO platform_connections(id,name,base_url,token_secret,timezone,allowed_plans_json,enabled,created_at,updated_at,web_username,web_password_secret) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), base.String(), sealed, timezone, `[]`, 1, t, t, webUser, webSecret); err != nil {
+	if _, err = a.DB.ExecContext(r.Context(), `INSERT INTO platform_connections(id,name,base_url,token_secret,timezone,allowed_plans_json,enabled,created_at,updated_at,web_username,web_password_secret,usd_cny_rate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), base.String(), sealed, timezone, `[]`, 1, t, t, webUser, webSecret, usdRate); err != nil {
 		dbError(w, r, err, "CONNECTION_EXISTS", "平台连接已存在", "平台连接保存失败")
 		return
 	}
@@ -1058,7 +1060,8 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 	defer tx.Rollback()
 	var oldName, oldBase, oldTimezone, oldToken, oldWebUser, oldWebSecret string
 	var oldEnabled, version int
-	if err = tx.QueryRow(`SELECT name,base_url,timezone,token_secret,enabled,version,web_username,web_password_secret FROM platform_connections WHERE id=?`, id).Scan(&oldName, &oldBase, &oldTimezone, &oldToken, &oldEnabled, &version, &oldWebUser, &oldWebSecret); err != nil {
+	var oldRate float64
+	if err = tx.QueryRow(`SELECT name,base_url,timezone,token_secret,enabled,version,web_username,web_password_secret,usd_cny_rate FROM platform_connections WHERE id=?`, id).Scan(&oldName, &oldBase, &oldTimezone, &oldToken, &oldEnabled, &version, &oldWebUser, &oldWebSecret, &oldRate); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fail(w, http.StatusNotFound, "NOT_FOUND", "平台连接不存在")
 			return
@@ -1097,6 +1100,10 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 		} else {
 			enabled = boolInt(v)
 		}
+	}
+	usdRate, hasRate := usdRateInput(in, &problems)
+	if !hasRate {
+		usdRate = oldRate
 	}
 	// Web (console) credentials: web_clear drops them; a new password (with an
 	// optional new username) replaces them; a username alone renames an existing
@@ -1143,7 +1150,7 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 	if webEvent != "" {
 		suspension = ",web_suspended_at='',web_suspended_reason=''"
 	}
-	if _, err = tx.Exec(`UPDATE platform_connections SET name=?,base_url=?,token_secret=?,timezone=?,enabled=?,web_username=?,web_password_secret=?`+suspension+`,version=version+1,updated_at=? WHERE id=? AND version=?`, name, base.String(), secret, timezone, enabled, webUser, webSecret, now(), id, version); err != nil {
+	if _, err = tx.Exec(`UPDATE platform_connections SET name=?,base_url=?,token_secret=?,timezone=?,enabled=?,web_username=?,web_password_secret=?,usd_cny_rate=?`+suspension+`,version=version+1,updated_at=? WHERE id=? AND version=?`, name, base.String(), secret, timezone, enabled, webUser, webSecret, usdRate, now(), id, version); err != nil {
 		dbError(w, r, err, "CONNECTION_EXISTS", "平台连接已存在", "平台连接更新失败")
 		return
 	}
@@ -1155,6 +1162,9 @@ func (a *App) updatePlatformConnection(w http.ResponseWriter, r *http.Request, i
 	a.auditFor(r, "connection.update", "platform_connection", id, base.Host)
 	if webEvent != "" {
 		a.auditFor(r, webEvent, "platform_connection", id, webUser)
+	}
+	if usdRate != oldRate {
+		a.auditFor(r, "connection.usd_rate_set", "platform_connection", id, formatRate(oldRate)+" → "+formatRate(usdRate))
 	}
 	write(w, http.StatusOK, map[string]any{"id": id, "version": version + 1})
 }

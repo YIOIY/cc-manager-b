@@ -51,7 +51,11 @@
           <span>{{ card.platform.reason_text }}</span>
           <small v-if="card.platform.reason_fetched_at">{{ formatDateTime(card.platform.reason_fetched_at) }}</small>
         </div>
-        <PlatformUsageBlock :usage="card.platform.usage" :observed-at="card.platform.observed_at" />
+        <PlatformUsageBlock
+          :usage="card.platform.usage"
+          :observed-at="card.platform.observed_at"
+          :usd-rate="card.platform.usd_cny_rate"
+        />
         <div v-if="hasValue(card.platform_requests)" class="usage-stats">
           <div>
             <small>今日请求</small><b>{{ formatCount(card.platform_requests) }}</b>

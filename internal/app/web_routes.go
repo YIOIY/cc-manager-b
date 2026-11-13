@@ -52,14 +52,19 @@ func microToFen(micro int64) int64 { return int64(math.Round(float64(micro) / 10
 
 func yuanText(fen int64) string { return fmt.Sprintf("%d.%02d", fen/100, fen%100) }
 
-// webChannelState is what an account response says about the connection's
-// console channel: whether profile edits can reach the platform at all.
-type webChannelState struct{ Configured, Suspended bool }
+// webChannelState is what an account response says about its connection:
+// whether profile edits can reach the platform at all, and the platform's
+// fixed USD→RMB rate for showing the RMB cost in dollars.
+type webChannelState struct {
+	Configured, Suspended bool
+	USDRate               float64
+}
 
 func (a *App) webChannelState(ctx context.Context, connectionID string) (webChannelState, error) {
 	var configured, suspended int
-	err := a.DB.QueryRowContext(ctx, `SELECT web_username<>'' AND web_password_secret<>'',web_suspended_at<>'' FROM platform_connections WHERE id=?`, connectionID).Scan(&configured, &suspended)
-	return webChannelState{Configured: configured == 1, Suspended: suspended == 1}, err
+	rate := defaultUSDCNYRate
+	err := a.DB.QueryRowContext(ctx, `SELECT web_username<>'' AND web_password_secret<>'',web_suspended_at<>'',usd_cny_rate FROM platform_connections WHERE id=?`, connectionID).Scan(&configured, &suspended, &rate)
+	return webChannelState{Configured: configured == 1, Suspended: suspended == 1, USDRate: rate}, err
 }
 
 // platformBlock renders the "platform" object of an account response.
@@ -78,9 +83,9 @@ func platformBlock(x remoteRow, channel string, web webChannelState) map[string]
 		"status": status, "status_raw": x.ExtStatus, "locked": x.Locked == 1, "reason_kind": x.ReasonKind, "reason_text": x.ReasonText, "reason_fetched_at": x.ReasonFetchedAt,
 		"observed_at": x.LastSeenAt, "aid": x.AID, "upstream_id": x.UpstreamID, "alias": x.Alias, "provider": x.Provider, "model": x.Model, "models_usable": modelsUsable,
 		"remote_created_at": x.RemoteCreatedAt, "missing_since": x.MissingSince, "auto_created": x.AutoCreated == 1, "source_channel": channel, "remark": x.Remark,
-		"web_channel": map[string]any{"configured": web.Configured, "suspended": web.Suspended},
-		"profile":     map[string]any{"plan": x.Plan, "plan_start_time": x.PlanStart, "plan_end_time": x.PlanEnd, "register_time": x.RegisterTime, "register_location": x.RegisterLocation, "balance": x.Balance, "payment_method": x.PaymentMethod, "register_device": x.RegisterDevice, "recharge_time": x.RechargeTime, "warranty_period": x.WarrantyPeriod, "tags": tags},
-		"usage":       nil,
+		"web_channel": map[string]any{"configured": web.Configured, "suspended": web.Suspended}, "usd_cny_rate": web.USDRate,
+		"profile": map[string]any{"plan": x.Plan, "plan_start_time": x.PlanStart, "plan_end_time": x.PlanEnd, "register_time": x.RegisterTime, "register_location": x.RegisterLocation, "balance": x.Balance, "payment_method": x.PaymentMethod, "register_device": x.RegisterDevice, "recharge_time": x.RechargeTime, "warranty_period": x.WarrantyPeriod, "tags": tags},
+		"usage":   nil,
 	}
 	if x.CostMicro.Valid || x.InputTokens.Valid || x.FiveHour.Valid {
 		fen := microToFen(x.CostMicro.Int64)
@@ -114,7 +119,7 @@ func (a *App) attachPlatformBlocks(ctx context.Context, out []any) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := a.DB.QueryContext(ctx, `SELECT `+remoteColumns+`,l.account_id,COALESCE((SELECT MAX(fetched_at) FROM platform_metric_snapshots s WHERE s.account_id=l.account_id),''),COALESCE(c.web_username<>'' AND c.web_password_secret<>'',0),COALESCE(c.web_suspended_at<>'',0) FROM platform_links l JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id LEFT JOIN platform_connections c ON c.id=r.connection_id WHERE l.account_id IN (`+marks(len(ids))+`) ORDER BY l.updated_at DESC`, ids...)
+	rows, err := a.DB.QueryContext(ctx, `SELECT `+remoteColumns+`,l.account_id,COALESCE((SELECT MAX(fetched_at) FROM platform_metric_snapshots s WHERE s.account_id=l.account_id),''),COALESCE(c.web_username<>'' AND c.web_password_secret<>'',0),COALESCE(c.web_suspended_at<>'',0),COALESCE(c.usd_cny_rate,7.2) FROM platform_links l JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id LEFT JOIN platform_connections c ON c.id=r.connection_id WHERE l.account_id IN (`+marks(len(ids))+`) ORDER BY l.updated_at DESC`, ids...)
 	if err != nil {
 		return err
 	}
@@ -123,7 +128,8 @@ func (a *App) attachPlatformBlocks(ctx context.Context, out []any) error {
 		var x remoteRow
 		var accountID, metricsAt string
 		var webConfigured, webSuspended int
-		if err = rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt, &accountID, &metricsAt, &webConfigured, &webSuspended); err != nil {
+		var usdRate float64
+		if err = rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt, &accountID, &metricsAt, &webConfigured, &webSuspended, &usdRate); err != nil {
 			return err
 		}
 		m := byID[accountID]
@@ -134,7 +140,7 @@ func (a *App) attachPlatformBlocks(ctx context.Context, out []any) error {
 		if metricsAt > x.LastSeenAt {
 			channel = "openapi"
 		}
-		m["platform"] = platformBlock(x, channel, webChannelState{Configured: webConfigured == 1, Suspended: webSuspended == 1})
+		m["platform"] = platformBlock(x, channel, webChannelState{Configured: webConfigured == 1, Suspended: webSuspended == 1, USDRate: usdRate})
 	}
 	return rows.Err()
 }

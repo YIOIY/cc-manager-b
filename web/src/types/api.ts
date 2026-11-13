@@ -220,18 +220,10 @@ export interface PlatformInfo {
   remark: string
   /** Whether this connection's console channel can carry a profile edit. */
   web_channel: { configured: boolean; suspended: boolean }
+  /** The platform's fixed RMB-per-dollar rate (from the connection), for showing RMB costs in dollars. */
+  usd_cny_rate: number
   profile: PlatformProfile
   usage: PlatformUsage | null
-}
-
-/** GET /exchange-rate: the reference rate used to show RMB costs in dollars. */
-export interface ExchangeRate {
-  pair: string
-  /** CNY per USD; null until the server has fetched one. */
-  rate: number | null
-  source: string
-  rate_date: string
-  fetched_at: string
 }
 
 /** Result of POST /accounts/{id}/platform-profile. */
@@ -355,6 +347,8 @@ export interface ConnectionOption {
 export interface PlatformConnection extends ConnectionOption {
   version: number
   token_configured: boolean
+  /** The platform's fixed RMB-per-dollar rate, 7.2 unless changed. */
+  usd_cny_rate?: number
   web_username?: string
   web_suspended_at?: string
   web_suspended_reason?: string

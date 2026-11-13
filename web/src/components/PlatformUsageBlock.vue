@@ -33,12 +33,13 @@
         <small>累计花费</small>
         <div class="cost-amounts">
           <b class="purple-number">¥{{ usage.cost_yuan }}</b>
-          <b v-if="usd" class="usd-number" data-usd>≈ {{ usd }}</b>
+          <template v-if="usd"
+            ><i>/</i><b class="usd-number" data-usd>{{ usd }}</b></template
+          >
         </div>
-        <small v-if="usd && rate?.rate" class="cost-rate" data-rate :title="rateTitle">
-          汇率 {{ describeRate(rate.rate) }} · {{ rate.rate_date }}<template v-if="rateStale"> · 可能过期</template>
+        <small v-if="usd && usdRate" class="cost-rate" data-rate :title="rateTitle">
+          汇率 {{ formatRate(usdRate) }} · 平台固定汇率
         </small>
-        <small v-else class="cost-rate">汇率暂不可用，仅显示人民币</small>
       </div>
     </div>
     <p v-else class="platform-usage-empty">平台未返回用量</p>
@@ -49,24 +50,25 @@
 import { computed } from 'vue'
 import type { PlatformUsage } from '../types/api'
 import { formatPercent, formatResetAt, formatTokens, usageStale, usageTone } from '../model/platform-card'
-import { describeRate, fenToUsdCents, formatUsdCents, rateIsStale, rateSourceLabel } from '../model/money'
-import { useExchangeRate } from '../composables/useExchangeRate'
+import { fenToUsdCents, formatRate, formatUsdCents } from '../model/money'
 
-const props = defineProps<{ usage: PlatformUsage | null; observedAt?: string }>()
+const props = defineProps<{
+  usage: PlatformUsage | null
+  observedAt?: string
+  /** The connection's fixed RMB-per-dollar rate; without it only RMB is shown. */
+  usdRate?: number
+}>()
 const stale = computed(() => usageStale(props.usage?.observed_at || props.observedAt))
 
-// The platform reports the cost in RMB; the dollar figure is derived from
-// the shared reference rate and shown only when that rate is known.
-const { rate } = useExchangeRate()
+// The platform reports the cost in RMB, computed from dollar prices at its
+// fixed rate; dividing by the same rate shows the dollar figure.
 const usd = computed(() => {
-  const cents = props.usage ? fenToUsdCents(props.usage.cost_fen, rate.value?.rate) : null
+  const cents = props.usage ? fenToUsdCents(props.usage.cost_fen, props.usdRate) : null
   return cents === null ? '' : formatUsdCents(cents)
 })
-const rateStale = computed(() => rateIsStale(rate.value?.fetched_at || ''))
-const rateTitle = computed(() => {
-  const source = rateSourceLabel(rate.value?.source || '')
-  return (source ? '来源：' + source + '。' : '') + '美元金额按此汇率由人民币换算，仅供参考。'
-})
+const rateTitle = computed(() =>
+  props.usdRate ? `美元金额按平台固定汇率 1 美元 = ${formatRate(props.usdRate)} 人民币换算` : '',
+)
 </script>
 
 <style scoped>
@@ -131,7 +133,11 @@ const rateTitle = computed(() => {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 4px 8px;
+}
+.cost-amounts i {
+  font-style: normal;
+  color: var(--text-tertiary, #909399);
 }
 .cost-amounts .usd-number {
   color: #2f6f5e;

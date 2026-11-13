@@ -1,10 +1,5 @@
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, expect, test } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
-// The usage block looks up the shared exchange rate; keep these tests off the network.
-vi.mock('../src/composables/useExchangeRate', async () => {
-  const { ref } = await import('vue')
-  return { useExchangeRate: () => ({ rate: ref(null) }) }
-})
 import AccountCards from '../src/components/AccountCards.vue'
 import { session } from '../src/api'
 import type { Account, PlatformInfo } from '../src/types/api'
@@ -40,6 +35,7 @@ function platform(overrides: Partial<PlatformInfo> = {}): PlatformInfo {
     source_channel: 'web',
     remark: '',
     web_channel: { configured: true, suspended: false },
+    usd_cny_rate: 7.2,
     profile: {
       plan: 'claude/cc-max-20x',
       plan_start_time: '2026-11-11',
@@ -150,4 +146,10 @@ test('the card no longer carries the request / input / output bars', () => {
   const w = render(account(platform()))
   expect(w.find('.usage-bars').exists()).toBe(false)
   expect(w.find('.bar-row').exists()).toBe(false)
+})
+
+test('the card shows the cost in RMB and in dollars at the connection rate', () => {
+  const w = render(account(platform()))
+  expect(w.get('[data-usd]').text()).toMatch(/^\$[\d,]+\.\d{2}$/)
+  expect(w.get('[data-rate]').text()).toContain('汇率 7.2')
 })

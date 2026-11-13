@@ -6,11 +6,6 @@ vi.mock('../src/composables/useSession', () => ({
   useSession: () => ({ can: (p: string) => p === 'accounts.platform_edit' || p === 'accounts.view' }),
 }))
 
-// The usage block looks up the shared exchange rate; keep these tests off the network.
-vi.mock('../src/composables/useExchangeRate', async () => {
-  const { ref } = await import('vue')
-  return { useExchangeRate: () => ({ rate: ref(null) }) }
-})
 import AccountCards from '../src/components/AccountCards.vue'
 
 const wrappers: VueWrapper[] = []
@@ -42,6 +37,7 @@ function platform(overrides: Partial<PlatformInfo> = {}): PlatformInfo {
     source_channel: 'web',
     remark: '',
     web_channel: { configured: true, suspended: false },
+    usd_cny_rate: 7.2,
     profile: {
       plan: 'claude/cc-max-20x',
       plan_start_time: '2026-11-11',

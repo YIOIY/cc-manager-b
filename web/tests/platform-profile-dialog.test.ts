@@ -76,6 +76,7 @@ function platform(): PlatformInfo {
     source_channel: 'web',
     remark: '',
     web_channel: { configured: true, suspended: false },
+    usd_cny_rate: 7.2,
     profile: {
       plan: 'claude/cc-max-20x',
       plan_start_time: '2026-11-11',

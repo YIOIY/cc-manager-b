@@ -40,6 +40,13 @@
       <el-form-item label="启用状态"
         ><el-switch v-model="form.enabled" active-text="启用" inactive-text="停用"
       /></el-form-item>
+      <el-form-item label="美元汇率" :error="fieldErrors.usd_cny_rate">
+        <el-input-number v-model="form.usd_cny_rate" :min="1" :max="20" :step="0.1" controls-position="right" />
+        <div class="field-hint">
+          平台按固定汇率把美元原价折算成人民币（目前 1 美元 = 7.2
+          人民币）。账号卡片用它把花费换算回美元；平台调整汇率时在这里修改。
+        </div>
+      </el-form-item>
       <div class="form-section-title">网页后台登录（只读通道）</div>
       <el-form-item label="登录账号" :error="fieldErrors.web_username">
         <el-input
@@ -103,6 +110,7 @@ const blank = () => ({
   token: '',
   timezone: 'Asia/Shanghai',
   enabled: true,
+  usd_cny_rate: 7.2 as number | null,
   web_username: '',
   web_password: '',
   web_clear: false,
@@ -134,6 +142,7 @@ watch(
             base_url: c.base_url,
             timezone: c.timezone || 'Asia/Shanghai',
             enabled: c.enabled !== false,
+            usd_cny_rate: c.usd_cny_rate ?? 7.2,
             web_username: c.web_username || '',
           }
         : {}),
@@ -154,6 +163,8 @@ async function save() {
       enabled: form.value.enabled,
     }
     if (form.value.token) body.token = form.value.token
+    // A cleared field keeps the saved rate (or the default for a new connection).
+    if (typeof form.value.usd_cny_rate === 'number') body.usd_cny_rate = form.value.usd_cny_rate
     if (form.value.id) body.expected_version = form.value.version
     if (form.value.web_clear) {
       body.web_clear = true

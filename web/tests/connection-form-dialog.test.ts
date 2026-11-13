@@ -36,6 +36,12 @@ const stubs = {
     emits: ['update:modelValue'],
   },
   'el-checkbox': { template: '<input type="checkbox" />' },
+  'el-input-number': {
+    template:
+      '<input class="number" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value === \'\' ? null : Number($event.target.value))" />',
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+  },
   'el-alert': { template: '<div class="alert">{{ title }}</div>', props: ['title'] },
   'el-button': {
     template: '<button :disabled="disabled || loading" @click="$emit(\'click\')"><slot /></button>',
@@ -55,6 +61,7 @@ const connection: PlatformConnection = {
   token_configured: false,
   web_configured: false,
   web_username: 'zhuxiangkezhi-cpa',
+  usd_cny_rate: 7.3,
 }
 
 const field = (w: VueWrapper, label: string) =>
@@ -100,4 +107,39 @@ test('creating after an edit starts from a blank form', async () => {
   await flushPromises()
   expect(w.get('h2').text()).toBe('新建平台连接')
   expect(field(w, '名称').value).toBe('')
+})
+
+test('the platform rate is shown on edit and saved as a number', async () => {
+  const w = mount(ConnectionFormDialog, { props: { modelValue: false, connection }, global: { stubs } })
+  wrappers.push(w)
+  await w.setProps({ modelValue: true })
+  await flushPromises()
+  expect(field(w, '美元汇率').value).toBe('7.3')
+  await w.get('[data-label="美元汇率"] input').setValue('7.2')
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: 'KK-conn' } }), { status: 200 }))
+  await w
+    .findAll('button')
+    .find((b) => b.text() === '保存修改')!
+    .trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).usd_cny_rate).toBe(7.2)
+})
+
+test('a new connection starts at the platform rate 7.2 and a cleared rate is not sent', async () => {
+  const w = mount(ConnectionFormDialog, { props: { modelValue: false, connection: null }, global: { stubs } })
+  wrappers.push(w)
+  await w.setProps({ modelValue: true })
+  await flushPromises()
+  expect(field(w, '美元汇率').value).toBe('7.2')
+  await w.get('[data-label="名称"] input').setValue('n')
+  await w.get('[data-label="Base URL"] input').setValue('https://x.example')
+  await w.get('[data-label="OpenAPI Token"] input').setValue('t')
+  await w.get('[data-label="美元汇率"] input').setValue('')
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: 'new' } }), { status: 201 }))
+  await w
+    .findAll('button')
+    .find((b) => b.text() === '保存连接')!
+    .trigger('click')
+  await flushPromises()
+  expect('usd_cny_rate' in JSON.parse(fetchMock.mock.calls[0]![1].body)).toBe(false)
 })
