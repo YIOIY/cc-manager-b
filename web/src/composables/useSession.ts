@@ -13,6 +13,11 @@ export function sessionReady(): Promise<void> {
   return inflight ?? Promise.resolve()
 }
 
+/** True once somebody is signed in. */
+export function signedIn(): boolean {
+  return user.value !== null
+}
+
 /** True when the signed-in user holds the permission. */
 export function can(permission: Permission): boolean {
   return !!user.value?.permissions.includes(permission)

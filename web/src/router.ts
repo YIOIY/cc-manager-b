@@ -12,7 +12,7 @@ import {
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import type { Permission } from './types/api'
-import { can, sessionReady } from './composables/useSession'
+import { can, sessionReady, signedIn } from './composables/useSession'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -131,8 +131,11 @@ export const router = createRouter({ history: createWebHistory(), routes })
 
 /** First page the current user may open; used when a route is forbidden. */
 export function firstAllowedRoute(): string {
-  const hit = routes.find((r) => r.meta?.nav && (!r.meta.permission || can(r.meta.permission)))
-  return hit ? String(hit.name) : 'dashboard'
+  const hit = routes.find((r) => r.meta?.nav && r.meta.permission && can(r.meta.permission))
+  if (hit) return String(hit.name)
+  // Nobody is signed in yet: keep the dashboard address so signing in opens
+  // it. A signed-in user with no page permission still has the help page.
+  return signedIn() ? 'help' : 'dashboard'
 }
 
 router.beforeEach(async (to) => {
