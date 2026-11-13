@@ -47,7 +47,6 @@
     <AccountCards
       v-if="listKey === 'accounts'"
       :accounts="accountsPaged"
-      :all-accounts="accountsFiltered"
       :loading="page.loading.value"
       @select="selectAccount"
       @edit-platform="editPlatform"
@@ -315,7 +314,6 @@ const page = useListPage<ListRow>(config, {
 currentItems = () => page.items.value
 const accountsAll = computed(() => page.items.value as unknown as Account[])
 const accountsPaged = computed(() => page.pagedItems.value as unknown as Account[])
-const accountsFiltered = computed(() => page.filteredItems.value as unknown as Account[])
 
 const actionMessage = ref('')
 const actionType = ref<'success' | 'info' | 'warning' | 'error'>('info')

@@ -37,7 +37,15 @@ func (a *App) startWorker(ctx context.Context) {
 	if _, err := a.DB.Exec(`UPDATE deliveries SET ingestion_state='unknown',updated_at=? WHERE ingestion_state='running'`, now()); err != nil {
 		slog.Error("marking interrupted deliveries failed", "error", err)
 	}
-	a.wg.Add(6)
+	a.wg.Add(7)
+	go func() {
+		defer a.wg.Done()
+		a.loopAfter(ctx, exchangeRateFirst, exchangeRateInterval, safeTick("exchange-rate", func() {
+			if err := a.refreshExchangeRate(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("exchange rate refresh failed", "error", err)
+			}
+		}))
+	}()
 	go func() {
 		defer a.wg.Done()
 		a.loop(ctx, workerPollInterval, safeTick("jobs", func() {

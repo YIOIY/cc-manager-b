@@ -179,6 +179,14 @@ sudo docker exec -it cc-manager /app/cc-manager reset-password admin   # Docker 
 - 用量快照只在数值变化时记录，保留 90 天；`sync_runs` 里的 `web-accounts`、`web-bills` 记录与指标同步同样保留 7 天。
 - 手动触发一次账单同步：账单页「按模型消费」标签里的「立即同步」，或 `POST /api/v1/platform-usage/bills/models/sync`。
 
+## 6.3 汇率（卡片上的美元金额）
+
+账号卡片把平台的人民币花费同时换算成美元显示。服务启动 15 秒后、之后每 6 小时，服务端依次请求 `api.frankfurter.dev`（欧洲央行参考汇率）和 `open.er-api.com`（备用）取美元兑人民币汇率，保存在 `exchange_rates` 表（迁移 v11）。
+
+- 请求是不带任何账号或会话数据的 GET；两个来源都不可用时保留上一次的汇率，日志里有 `exchange rate refresh failed`。
+- 服务器访问不了这两个地址时，卡片只显示人民币并注明「汇率暂不可用」；超过 3 天没更新成功会标「可能过期」。
+- 汇率只用于显示，不参与账单和对账，金额仍以人民币为准。
+
 ## 7. 安全基线
 
 - 服务只监听回环地址，由 nginx/Cloudflare 提供 TLS 与公网入口；`CC_MANAGER_TRUST_PROXY=1` 仅在该拓扑下开启。

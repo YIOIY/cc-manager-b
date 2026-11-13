@@ -29,6 +29,7 @@ var migrations = []migration{
 	{8, "account-delete-permission", migrateAccountDeletePermissionV8},
 	{9, "sync-run-error-code", migrateSyncRunErrorCodeV9},
 	{10, "web-channel", migrateWebChannelV10},
+	{11, "exchange-rates", migrateExchangeRatesV11},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -353,5 +354,12 @@ func migrateWebChannelV10(tx *sql.Tx) error {
 		return err
 	}
 	_, err := tx.Exec(webChannelTables)
+	return err
+}
+
+// migrateExchangeRatesV11 adds the table holding the latest USD/CNY
+// reference rate shown next to RMB costs.
+func migrateExchangeRatesV11(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS exchange_rates(pair TEXT PRIMARY KEY,rate REAL NOT NULL,source TEXT NOT NULL DEFAULT '',rate_date TEXT NOT NULL DEFAULT '',fetched_at TEXT NOT NULL)`)
 	return err
 }

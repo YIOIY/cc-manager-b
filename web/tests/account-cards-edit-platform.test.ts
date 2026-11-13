@@ -6,6 +6,11 @@ vi.mock('../src/composables/useSession', () => ({
   useSession: () => ({ can: (p: string) => p === 'accounts.platform_edit' || p === 'accounts.view' }),
 }))
 
+// The usage block looks up the shared exchange rate; keep these tests off the network.
+vi.mock('../src/composables/useExchangeRate', async () => {
+  const { ref } = await import('vue')
+  return { useExchangeRate: () => ({ rate: ref(null) }) }
+})
 import AccountCards from '../src/components/AccountCards.vue'
 
 const wrappers: VueWrapper[] = []
@@ -80,7 +85,7 @@ function account(info: PlatformInfo | null): Account {
 }
 
 function render(row: Account) {
-  const w = mount(AccountCards, { props: { accounts: [row], allAccounts: [row], loading: false }, global: { stubs } })
+  const w = mount(AccountCards, { props: { accounts: [row], loading: false }, global: { stubs } })
   wrappers.push(w)
   return w
 }

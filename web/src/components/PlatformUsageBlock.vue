@@ -29,8 +29,16 @@
       <div>
         <small>累计输出 Token</small><b class="date-number">{{ formatTokens(usage.output_tokens) }}</b>
       </div>
-      <div class="span-2">
-        <small>累计花费</small><b class="purple-number">¥{{ usage.cost_yuan }}</b>
+      <div class="span-2 cost-row">
+        <small>累计花费</small>
+        <div class="cost-amounts">
+          <b class="purple-number">¥{{ usage.cost_yuan }}</b>
+          <b v-if="usd" class="usd-number" data-usd>≈ {{ usd }}</b>
+        </div>
+        <small v-if="usd && rate?.rate" class="cost-rate" data-rate :title="rateTitle">
+          汇率 {{ describeRate(rate.rate) }} · {{ rate.rate_date }}<template v-if="rateStale"> · 可能过期</template>
+        </small>
+        <small v-else class="cost-rate">汇率暂不可用，仅显示人民币</small>
       </div>
     </div>
     <p v-else class="platform-usage-empty">平台未返回用量</p>
@@ -41,9 +49,24 @@
 import { computed } from 'vue'
 import type { PlatformUsage } from '../types/api'
 import { formatPercent, formatResetAt, formatTokens, usageStale, usageTone } from '../model/platform-card'
+import { describeRate, fenToUsdCents, formatUsdCents, rateIsStale, rateSourceLabel } from '../model/money'
+import { useExchangeRate } from '../composables/useExchangeRate'
 
 const props = defineProps<{ usage: PlatformUsage | null; observedAt?: string }>()
 const stale = computed(() => usageStale(props.usage?.observed_at || props.observedAt))
+
+// The platform reports the cost in RMB; the dollar figure is derived from
+// the shared reference rate and shown only when that rate is known.
+const { rate } = useExchangeRate()
+const usd = computed(() => {
+  const cents = props.usage ? fenToUsdCents(props.usage.cost_fen, rate.value?.rate) : null
+  return cents === null ? '' : formatUsdCents(cents)
+})
+const rateStale = computed(() => rateIsStale(rate.value?.fetched_at || ''))
+const rateTitle = computed(() => {
+  const source = rateSourceLabel(rate.value?.source || '')
+  return (source ? '来源：' + source + '。' : '') + '美元金额按此汇率由人民币换算，仅供参考。'
+})
 </script>
 
 <style scoped>
@@ -102,6 +125,20 @@ const stale = computed(() => usageStale(props.usage?.observed_at || props.observ
 .platform-usage-empty {
   margin: 0;
   font-size: 13px;
+  color: var(--text-tertiary, #909399);
+}
+.cost-amounts {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.cost-amounts .usd-number {
+  color: #2f6f5e;
+}
+.cost-rate {
+  margin-top: 2px;
+  font-size: 11px;
   color: var(--text-tertiary, #909399);
 }
 </style>

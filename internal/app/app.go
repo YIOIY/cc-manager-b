@@ -38,6 +38,9 @@ type App struct {
 	webClients map[string]*supplier.WebClient
 	webSyncMu  map[string]*sync.Mutex
 
+	// rateSources overrides defaultRateSources (tests).
+	rateSources []rateSource
+
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	closeOnce sync.Once

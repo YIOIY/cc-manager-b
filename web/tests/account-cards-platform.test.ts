@@ -1,5 +1,10 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
+// The usage block looks up the shared exchange rate; keep these tests off the network.
+vi.mock('../src/composables/useExchangeRate', async () => {
+  const { ref } = await import('vue')
+  return { useExchangeRate: () => ({ rate: ref(null) }) }
+})
 import AccountCards from '../src/components/AccountCards.vue'
 import { session } from '../src/api'
 import type { Account, PlatformInfo } from '../src/types/api'
@@ -89,7 +94,7 @@ function account(info: PlatformInfo | null): Account {
 
 function render(row: Account) {
   session.value = { authenticated: true, csrf_token: 'csrf', user: { permissions: ['accounts.view'] } } as never
-  const w = mount(AccountCards, { props: { accounts: [row], allAccounts: [row], loading: false }, global: { stubs } })
+  const w = mount(AccountCards, { props: { accounts: [row], loading: false }, global: { stubs } })
   wrappers.push(w)
   return w
 }
@@ -139,4 +144,10 @@ test('an account the platform never listed keeps the old layout', () => {
   const text = render(account(null)).text()
   expect(text).not.toContain('账号用量')
   expect(text).not.toContain('平台未返回用量')
+})
+
+test('the card no longer carries the request / input / output bars', () => {
+  const w = render(account(platform()))
+  expect(w.find('.usage-bars').exists()).toBe(false)
+  expect(w.find('.bar-row').exists()).toBe(false)
 })

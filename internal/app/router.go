@@ -21,6 +21,8 @@ func (a *App) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/auth/login", a.authLogin)
 	route("POST /api/v1/auth/logout", a.authLogout)
 
+	// Signed-in users of any role: the rate only annotates amounts they can already see.
+	route("GET /api/v1/exchange-rate", a.exchangeRateGet)
 	need("GET /api/v1/dashboard", PermDashboardView, a.dashboard)
 	need("GET /api/v1/dashboard/attention", PermDashboardView, a.dashboardAttention)
 	need("POST /api/v1/claude-oauth/sessions", PermAccountsOnboard, a.claudeOAuthStart)

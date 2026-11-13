@@ -224,6 +224,16 @@ export interface PlatformInfo {
   usage: PlatformUsage | null
 }
 
+/** GET /exchange-rate: the reference rate used to show RMB costs in dollars. */
+export interface ExchangeRate {
+  pair: string
+  /** CNY per USD; null until the server has fetched one. */
+  rate: number | null
+  source: string
+  rate_date: string
+  fetched_at: string
+}
+
 /** Result of POST /accounts/{id}/platform-profile. */
 export interface PlatformProfileResult {
   verified: boolean

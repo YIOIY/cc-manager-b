@@ -66,24 +66,6 @@
             <small>最近账单</small><b class="purple-number">{{ formatMoneyFen(card.platform_cost_fen, '未同步') }}</b>
           </div>
         </div>
-        <div class="usage-bars">
-          <div class="bar-row">
-            <span>请求</span
-            ><i><em class="bar-blue" :style="{ width: width(card.platform_requests, maxRequests) + '%' }"></em></i
-            ><strong>{{ formatCount(card.platform_requests) }}</strong>
-          </div>
-          <div class="bar-row">
-            <span>输入</span
-            ><i><em class="bar-pink" :style="{ width: width(card.platform_prompt_tokens, maxTokens) + '%' }"></em></i
-            ><strong>{{ formatCount(card.platform_prompt_tokens) }}</strong>
-          </div>
-          <div class="bar-row">
-            <span>输出</span
-            ><i
-              ><em class="bar-cyan" :style="{ width: width(card.platform_completion_tokens, maxTokens) + '%' }"></em></i
-            ><strong>{{ formatCount(card.platform_completion_tokens) }}</strong>
-          </div>
-        </div>
       </template>
       <div v-else class="account-delivery-placeholder" :class="card.delivery.tone">
         <component
@@ -139,7 +121,7 @@ import { useSession } from '../composables/useSession'
 import PlatformUsageBlock from './PlatformUsageBlock.vue'
 import { locationLabel, paymentLabel } from '../model/platform-card'
 
-const props = defineProps<{ accounts: Account[]; allAccounts: Account[]; loading: boolean }>()
+const props = defineProps<{ accounts: Account[]; loading: boolean }>()
 const emit = defineEmits<{ select: [account: Account]; 'edit-platform': [account: Account] }>()
 const { can } = useSession()
 
@@ -247,23 +229,6 @@ const cards = computed<Card[]>(() =>
     }
   }),
 )
-function maxOf(values: number[]) {
-  let max = 1
-  for (const v of values) if (v > max) max = v
-  return max
-}
-const maxRequests = computed(() => maxOf(props.allAccounts.map((row) => Number(row.platform_requests) || 0)))
-const maxTokens = computed(() =>
-  maxOf(
-    props.allAccounts.flatMap((row) => [
-      Number(row.platform_prompt_tokens) || 0,
-      Number(row.platform_completion_tokens) || 0,
-    ]),
-  ),
-)
-function width(value: unknown, max: number) {
-  return hasValue(value) ? Math.max(2, Math.min(100, (Number(value) / max) * 100)) : 0
-}
 </script>
 
 <style scoped>
@@ -498,52 +463,6 @@ function width(value: unknown, max: number) {
   color: #a8d4ff;
 }
 
-.usage-bars {
-  display: grid;
-  gap: 8px;
-  margin-top: 15px;
-}
-
-.bar-row {
-  display: grid;
-  grid-template-columns: 30px 1fr 36px;
-  align-items: center;
-  gap: 7px;
-  color: #6d839a;
-  font: 10px/1 monospace;
-}
-
-:global(.bar-row i) {
-  height: 4px;
-  overflow: hidden;
-  background: #1a2a40;
-  border-radius: 99px;
-}
-
-:global(.bar-row em) {
-  display: block;
-  height: 100%;
-  border-radius: 99px;
-}
-
-.bar-blue {
-  background: #4caeff;
-}
-
-.bar-pink {
-  background: #f25776;
-}
-
-.bar-cyan {
-  background: #68c7f4;
-}
-
-:global(.bar-row strong) {
-  text-align: right;
-  color: #56adf1;
-  font: 700 10px/1 monospace;
-}
-
 .usage-card-foot {
   display: flex;
   align-items: center;
@@ -675,22 +594,6 @@ function width(value: unknown, max: number) {
 
 .platform-monitor .usage-stats .date-number {
   color: #52728b;
-}
-
-.platform-monitor .usage-bars {
-  margin-top: 16px;
-}
-
-.platform-monitor .bar-row {
-  color: #7e8d95;
-}
-
-:global(.platform-monitor .bar-row i) {
-  background: #edf2f3;
-}
-
-:global(.platform-monitor .bar-row strong) {
-  color: #397da5;
 }
 
 .platform-monitor .usage-card-foot {
