@@ -21,6 +21,12 @@ func (a *App) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/auth/login", a.authLogin)
 	route("POST /api/v1/auth/logout", a.authLogout)
 
+	// 用户之声: every signed-in user may submit and follow their own feedback.
+	route("POST /api/v1/feedback", a.feedbackCreate)
+	route("GET /api/v1/feedback", a.feedbackList)
+	route("GET /api/v1/feedback/summary", a.feedbackSummary)
+	need("PATCH /api/v1/feedback/{id}", PermFeedbackManage, a.feedbackUpdate)
+
 	need("GET /api/v1/dashboard", PermDashboardView, a.dashboard)
 	need("GET /api/v1/dashboard/attention", PermDashboardView, a.dashboardAttention)
 	need("GET /api/v1/dashboard/insights", PermDashboardView, a.dashboardInsights)

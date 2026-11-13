@@ -14,6 +14,7 @@
       <p v-if="view.requestId" class="error-notice-meta">
         请求编号 {{ view.requestId }}
         <button type="button" class="error-notice-copy" @click="copy">{{ copied ? '已复制' : '复制错误信息' }}</button>
+        <button type="button" class="error-notice-copy error-notice-report" @click="report">反馈这个问题</button>
       </p>
     </div>
     <button v-if="closable" type="button" class="error-notice-close" aria-label="关闭" @click="emit('close')">
@@ -24,6 +25,7 @@
 
 <script setup lang="ts">
 import { copyText } from '../utils/clipboard'
+import { openFeedback } from '../composables/useFeedback'
 import { computed, ref } from 'vue'
 import { AlertTriangle, CircleSlash, X } from 'lucide-vue-next'
 import { describeError, errorClipboardText } from '../errors'
@@ -56,6 +58,11 @@ const tone = computed(() => {
 const toneClass = computed(() => `tone-${tone.value}`)
 const label = (field: string) => FieldLabels[field] ?? field
 
+// Hands the error to 用户之声 so the report carries its code and request id.
+function report() {
+  if (!view.value) return
+  openFeedback({ title: view.value.title, errorCode: view.value.code, requestId: view.value.requestId })
+}
 async function copy() {
   if (!view.value) return
   if (await copyText(errorClipboardText(view.value))) {

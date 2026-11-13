@@ -36,6 +36,7 @@ export type Permission =
   | 'users.reset_password'
   | 'roles.view'
   | 'roles.manage'
+  | 'feedback.manage'
 
 export interface RoleRef {
   id: string
@@ -224,6 +225,39 @@ export interface PlatformInfo {
   usd_cny_rate: number
   profile: PlatformProfile
   usage: PlatformUsage | null
+}
+
+export type FeedbackKind = 'problem' | 'suggestion' | 'other'
+export type FeedbackStatus = 'open' | 'in_progress' | 'resolved' | 'closed'
+
+/** One entry of 用户之声. */
+export interface Feedback {
+  id: string
+  username: string
+  kind: FeedbackKind
+  title: string
+  body: string
+  /** Path of the page it was sent from (no query string). */
+  page: string
+  context: Partial<Record<'error_code' | 'request_id' | 'user_agent' | 'viewport', string>>
+  app_version: string
+  status: FeedbackStatus
+  reply: string
+  handled_by: string
+  handled_at: string
+  version: number
+  created_at: string
+  updated_at: string
+  /** Sent by the signed-in user. */
+  mine: boolean
+}
+
+export interface FeedbackList {
+  items: Feedback[]
+  pagination: { page: number; page_size: number; total: number }
+  /** How many there are of each status, within the other filters. */
+  counts: Record<FeedbackStatus, number>
+  can_manage: boolean
 }
 
 /** Result of POST /accounts/{id}/platform-profile. */

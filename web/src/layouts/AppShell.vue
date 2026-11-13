@@ -16,6 +16,9 @@
           @click="go(item)"
         >
           <component :is="item.meta.icon" :size="18" :stroke-width="1.8" /><span>{{ item.meta.title }}</span>
+          <em v-if="item.name === 'feedback' && feedbackBadge" class="nav-badge" :title="feedbackBadge + ' 条待处理'">{{
+            feedbackBadge
+          }}</em>
           <i v-if="route.name === item.name" class="nav-mark" />
         </button>
       </nav>
@@ -34,24 +37,32 @@
         <div class="breadcrumb">
           工作台<span>/</span><strong>{{ route.meta.title || '工作台' }}</strong>
         </div>
-        <span class="status-dot">会话正常</span>
+        <div class="header-actions">
+          <button type="button" class="header-feedback" @click="openFeedback()">
+            <MessageSquarePlus :size="15" />反馈
+          </button>
+          <span class="status-dot">会话正常</span>
+        </div>
       </header>
       <section class="content">
         <router-view :key="route.path" />
       </section>
     </main>
     <ChangePasswordDialog v-model="passwordOpen" />
+    <FeedbackDialog />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { KeyRound, LogOut } from 'lucide-vue-next'
+import { computed, onMounted, ref, watch } from 'vue'
+import { KeyRound, LogOut, MessageSquarePlus } from 'lucide-vue-next'
 import { useRoute, useRouter, type RouteRecordRaw } from 'vue-router'
 import { routes } from '../router'
 import { useSession } from '../composables/useSession'
 import { rememberedQuery } from '../composables/useListPage'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
+import FeedbackDialog from '../components/FeedbackDialog.vue'
+import { feedbackOpenCount, openFeedback, refreshFeedbackSummary } from '../composables/useFeedback'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,6 +75,12 @@ const navItems = computed(() =>
       !!r.meta?.nav && (!r.meta.permission || can(r.meta.permission)),
   ),
 )
+
+// People who handle feedback see how much is waiting; everyone else only
+// has their own, which they sent themselves, so no number is shown.
+const feedbackBadge = computed(() => (can('feedback.manage') ? feedbackOpenCount.value : 0))
+onMounted(refreshFeedbackSummary)
+watch(() => route.name, refreshFeedbackSummary)
 
 function go(item: RouteRecordRaw) {
   router.push({ name: item.name as string, query: rememberedQuery(String(item.name)) })
@@ -223,6 +240,49 @@ async function signOut() {
   padding: 34px 42px 54px;
   max-width: 1540px;
   margin: 0 auto;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--line-tint);
+  border-radius: 99px;
+  background: var(--surface);
+  color: var(--ink-mid);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.header-feedback:hover,
+.header-feedback:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+  outline: none;
+}
+
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: #e0a030;
+  color: #1a1204;
+  font:
+    700 11px/1.6 'DM Mono',
+    ui-monospace,
+    monospace;
+  font-style: normal;
+  text-align: center;
 }
 
 .status-dot {

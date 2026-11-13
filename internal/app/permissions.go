@@ -55,6 +55,7 @@ const (
 	PermUsersResetPassword   Permission = "users.reset_password"
 	PermRolesView            Permission = "roles.view"
 	PermRolesManage          Permission = "roles.manage"
+	PermFeedbackManage       Permission = "feedback.manage"
 )
 
 var permissionCatalogue = []permissionModule{
@@ -103,6 +104,11 @@ var permissionCatalogue = []permissionModule{
 	{"roles", "角色管理", "", []permissionDef{
 		{PermRolesView, "查看角色与权限目录", ""},
 		{PermRolesManage, "新建 / 修改 / 删除角色", "可授予的权限不超过自身权限"},
+	}},
+	// The page itself is open to every signed-in user (submit, follow their
+	// own feedback); the permission is for seeing and answering everyone's.
+	{"feedback", "用户之声", "", []permissionDef{
+		{PermFeedbackManage, "处理用户反馈", "查看全部反馈、回复、修改状态；提交和查看自己的反馈不需要权限"},
 	}},
 }
 

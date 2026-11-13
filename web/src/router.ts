@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   UserCog,
   BookOpen,
+  MessagesSquare,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import type { Permission } from './types/api'
@@ -116,6 +117,13 @@ export const routes: RouteRecordRaw[] = [
     name: 'users',
     component: () => import('./views/UsersView.vue'),
     meta: { title: '用户与权限', icon: UserCog, eyebrow: 'ACCESS CONTROL', nav: true, permission: 'users.view' },
+  },
+  {
+    // No permission: everyone can send feedback and follow their own.
+    path: '/feedback',
+    name: 'feedback',
+    component: () => import('./views/FeedbackView.vue'),
+    meta: { title: '用户之声', icon: MessagesSquare, eyebrow: 'USER VOICE', nav: true },
   },
   {
     // No permission: every signed-in user can read the manual and the FAQ.

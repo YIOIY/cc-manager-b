@@ -490,3 +490,15 @@ Token受控轮换、允许套餐和启停修改仍增加版本，已排队上传
 | `GET /dashboard` | `platform` 块新增 `web_sync_health`（两种网页同步中较差者，结构同指标同步健康）、`web_accounts_health`、`web_bills_health`、`remote_counts_by_status`、`near_limit_accounts`（5 小时窗口 ≥80%）、`today_model_cost_fen` |
 
 同步记录 `sync_runs.kind` 新增 `web-accounts` 与 `web-bills`；审计事件新增 `connection.web_credentials_set`、`connection.web_credentials_cleared`、`connection.web_suspended`、`connection.web_login_test`、`account.platform_import`（自动建号，detail 为交付 ID）、`account.platform_relink`（同邮箱换交付，detail 为 `旧->新`）、`bills.web_sync`。网页通道只调用读取接口；平台侧的修改、改代理、封禁等操作不提供。
+
+## 附录：用户之声（2026-11-13）
+
+以下路径均带 `/api/v1` 前缀，都需要登录。提交和查看自己的反馈不需要权限；查看全部并处理需要 `feedback.manage`。
+
+| 方法与路径 | 实际行为 |
+| --- | --- |
+| `POST /feedback` | `{kind: problem|suggestion|other, title?, body, page?, context?}`。`body` 必填、最多 2000 字；`title` 最多 80 字，留空取正文首行前 30 字。`page` 只保存路径（`?`、`#` 之后丢弃）；`context` 只保留 `error_code`、`request_id`、`user_agent`、`viewport` 四个键，每个值最多 300 字，其余键丢弃；服务端记录当前版本号。201 `{id}`；校验失败 422 `VALIDATION_FAILED`（逐字段）。审计 `feedback.create`。 |
+| `GET /feedback` | 分页（`page`、`page_size`），可选 `status`（`open|in_progress|resolved|closed`）、`kind`、`q`（标题、正文、提交人）；非法的 `status`/`kind` 返回 422 `QUERY_INVALID`。有 `feedback.manage` 时返回全部，否则只返回本人的。`items[{id, username, kind, title, body, page, context, app_version, status, reply, handled_by, handled_at, version, created_at, updated_at, mine}]`（新的在前）、`pagination`、`counts`（各状态数量，遵循除 `status` 外的筛选）、`can_manage`。 |
+| `PATCH /feedback/{id}` | 需 `feedback.manage`。`{status?, reply?, expected_version}`，至少给一项；`reply` 最多 1000 字。不存在 404；`expected_version` 不符 409 `VERSION_CONFLICT`。成功后记录处理人和时间，`version+1`；审计 `feedback.update`。 |
+| `GET /feedback/summary` | `{open}`：待处理数量，范围同列表（管理者是全部，其他人是本人的）。 |
+

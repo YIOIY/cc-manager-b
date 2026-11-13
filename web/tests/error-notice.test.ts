@@ -53,3 +53,16 @@ test('renders nothing without an error and plain errors keep their message', () 
   expect(plain.text()).toContain('boom')
   expect(plain.find('.error-notice-copy').exists()).toBe(false)
 })
+
+test('an error can be reported with its code and request id', async () => {
+  const feedback = await import('../src/composables/useFeedback')
+  const wrapper = mount(ErrorNotice, { props: { error: envelope } })
+  await wrapper.get('.error-notice-report').trigger('click')
+  expect(feedback.useFeedbackDialog().open.value).toBe(true)
+  expect(feedback.useFeedbackDialog().prefill.value).toMatchObject({
+    title: '数据存储暂时不可用',
+    errorCode: 'STORAGE_UNAVAILABLE',
+    requestId: 'req-42',
+  })
+  feedback.useFeedbackDialog().open.value = false
+})

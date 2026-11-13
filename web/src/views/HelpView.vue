@@ -222,6 +222,7 @@ import {
   Info,
   LayoutDashboard,
   ListChecks,
+  MessagesSquare,
   PencilLine,
   SlidersHorizontal,
   TriangleAlert,
@@ -268,6 +269,7 @@ const icons: Record<string, Component> = {
   edit: PencilLine,
   settings: SlidersHorizontal,
   dashboard: LayoutDashboard,
+  feedback: MessagesSquare,
 }
 const iconOf = (name?: string) => icons[name || ''] ?? BookOpen
 

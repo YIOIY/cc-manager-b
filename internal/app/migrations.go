@@ -31,6 +31,7 @@ var migrations = []migration{
 	{10, "web-channel", migrateWebChannelV10},
 	{11, "exchange-rates", migrateExchangeRatesV11},
 	{12, "platform-rate", migratePlatformRateV12},
+	{13, "feedback", migrateFeedbackV13},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -376,5 +377,13 @@ func migratePlatformRateV12(tx *sql.Tx) error {
 		return err
 	}
 	_, err := tx.Exec(`DROP TABLE IF EXISTS exchange_rates`)
+	return err
+}
+
+// migrateFeedbackV13 adds the table behind 用户之声.
+func migrateFeedbackV13(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY,user_id TEXT NOT NULL DEFAULT '',username TEXT NOT NULL DEFAULT '',kind TEXT NOT NULL DEFAULT 'problem',title TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',page TEXT NOT NULL DEFAULT '',context_json TEXT NOT NULL DEFAULT '{}',app_version TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'open',reply TEXT NOT NULL DEFAULT '',handled_by TEXT NOT NULL DEFAULT '',handled_at TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_feedback_status_created ON feedback(status,created_at);
+CREATE INDEX IF NOT EXISTS ix_feedback_user ON feedback(user_id,created_at);`)
 	return err
 }
