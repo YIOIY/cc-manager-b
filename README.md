@@ -23,6 +23,7 @@
 | [本地 API 契约](docs/api-contract.md) | `/api/v1` 接口、类型、权限、幂等和错误约定 |
 | [供应商平台对接说明](docs/platform-contract.md) | 已核实的上游接口、字段、限制 |
 | [运维手册](docs/operations.md) | Docker 发布（1.5）、安装、升级、配置项、备份恢复、密钥与密码、日志 |
+| [开发规范](CONTRIBUTING.md) | 分支、提交、PR、质量要求和红线；多人协作前必读 |
 | [优化项清单](docs/optimization-backlog.md) | 已完成与待办的工程优化 |
 | [变更记录](CHANGELOG.md) | 版本变更 |
 

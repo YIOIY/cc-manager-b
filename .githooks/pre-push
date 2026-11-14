@@ -1,0 +1,24 @@
+#!/bin/sh
+# Keeps changes to main going through pull requests. Maintainers opt out with
+#   git config ccmanager.maintainer true
+# Nobody may delete main or rewrite its history. See CONTRIBUTING.md §3.
+zero=0000000000000000000000000000000000000000
+maintainer=$(git config --bool ccmanager.maintainer 2>/dev/null || echo false)
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$remote_ref" = refs/heads/main ] || continue
+    if [ "$local_sha" = "$zero" ]; then
+        echo "pre-push: 不允许删除 main 分支。" >&2
+        exit 1
+    fi
+    if [ "$remote_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+        echo "pre-push: 这次推送会改写 main 的历史（强制推送），不允许。" >&2
+        echo "  如果只是本地落后，先 git pull --rebase 再推。" >&2
+        exit 1
+    fi
+    if [ "$maintainer" != true ]; then
+        echo "pre-push: 不要直接推送 main。请推送自己的分支并开 PR：" >&2
+        echo "  git switch -c feat/你的改动 && git push -u origin HEAD" >&2
+        exit 1
+    fi
+done
+exit 0

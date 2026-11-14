@@ -1,0 +1,35 @@
+#!/bin/sh
+# Stops the mistakes that are expensive to undo once pushed: database files,
+# key material and tokens. Enabled by `make setup`. See CONTRIBUTING.md §8.
+fail=0
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -n "$staged" ] || exit 0
+
+# 1. Files that must never be committed, even with `git add -f`.
+bad=$(printf '%s\n' "$staged" | grep -E '(^|/)\.local-run/|\.(db|db-shm|db-wal|sqlite|pem|key|p12|pfx)$|(^|/)\.env(\..*)?$|\.env$|(^|/)id_(rsa|ed25519)' | grep -v '\.env\.example$' || true)
+if [ -n "$bad" ]; then
+    echo "pre-commit: 这些文件不允许提交（数据库、密钥或本地配置）：" >&2
+    printf '  %s\n' $bad >&2
+    fail=1
+fi
+
+# 2. Added lines that look like credentials.
+hits=$(git diff --cached -U0 --diff-filter=ACMR -- . ':(exclude).githooks/pre-commit' | grep -E '^\+[^+]' | grep -E -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -e 'gh[pousr]_[A-Za-z0-9]{30,}' -e 'github_pat_[A-Za-z0-9_]{30,}' -e 'sk-ant-[A-Za-z0-9_-]{20,}' -e 'AKIA[0-9A-Z]{16}' -e 'xox[baprs]-[A-Za-z0-9-]{10,}' || true)
+if [ -n "$hits" ]; then
+    echo "pre-commit: 暂存的改动里有疑似密钥或令牌：" >&2
+    printf '%s\n' "$hits" | cut -c1-60 | sed 's/^/  /' >&2
+    echo "  如果已经推送过，立刻告诉维护者：密钥需要作废重发。" >&2
+    fail=1
+fi
+
+# 3. Go formatting, the same check CI runs.
+gofiles=$(printf '%s\n' "$staged" | grep -E '\.go$' || true)
+if [ -n "$gofiles" ] && command -v gofmt >/dev/null 2>&1; then
+    unformatted=$(gofmt -l $gofiles 2>/dev/null || true)
+    if [ -n "$unformatted" ]; then
+        echo "pre-commit: 这些 Go 文件没有格式化，先执行 gofmt -w：" >&2
+        printf '  %s\n' $unformatted >&2
+        fail=1
+    fi
+fi
+exit $fail

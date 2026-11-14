@@ -1,0 +1,18 @@
+#!/bin/sh
+# Rejects commit titles that say nothing. See CONTRIBUTING.md §4.
+title=$(sed -n '/^[^#]/{p;q;}' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+case "$title" in
+    Merge\ *|Revert\ *|fixup!\ *|squash!\ *) exit 0 ;;
+esac
+lower=$(printf '%s' "$title" | tr 'A-Z' 'a-z')
+case "$lower" in
+    ''|update|updates|fix|fixes|test|tests|wip|tmp|temp|change|changes|commit|修改|更新|提交|测试|修复|调整|优化)
+        vague=1 ;;
+    *) vague=0 ;;
+esac
+# Shorter than 10 bytes is about three Chinese characters or one English word.
+if [ "$vague" = 1 ] || [ "$(printf '%s' "$title" | wc -c | tr -d ' ')" -lt 10 ]; then
+    echo "commit-msg: 提交标题「$title」看不出改了什么。" >&2
+    echo "  写成一句话：改了什么、为什么，例如「登录后回到仪表盘：未登录时不再跳到帮助文档」。" >&2
+    exit 1
+fi

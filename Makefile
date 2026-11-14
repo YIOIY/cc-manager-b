@@ -3,9 +3,14 @@ GO_PACKAGES := ./cmd/... ./internal/...
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: all web-install web-build web-test web-e2e web-lint go-build go-test go-vet test lint build release clean
+.PHONY: all setup web-install web-build web-test web-e2e web-lint go-build go-test go-vet test lint build release clean
 
 all: build
+
+# One-time per clone: use the repository's Git hooks (CONTRIBUTING.md).
+setup:
+	git config core.hooksPath .githooks
+	@echo "Git hooks enabled (.githooks)"
 
 web-install:
 	cd web && npm ci --no-audit --no-fund

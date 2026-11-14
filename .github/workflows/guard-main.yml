@@ -1,0 +1,52 @@
+name: Guard main
+
+# Changes reach main through pull requests (CONTRIBUTING.md §3). GitHub only
+# enforces that with branch protection, which this repository's plan may not
+# include, so this job is the alarm: when someone other than the repository
+# owner updates main, by pushing directly or by merging a pull request
+# themselves, it opens an issue for the owner and fails.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  direct-push:
+    if: github.actor != github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the update to the owner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+          BEFORE: ${{ github.event.before }}
+          FORCED: ${{ github.event.forced }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null)][0].number // empty')
+          if [ -n "$pr" ] && [ "$FORCED" != "true" ]; then
+            what="自己合并了 PR #$pr 到 \`main\`（合并应由维护者完成）"
+          else
+            what="绕过 Pull Request 直接推送了 \`main\`"
+          fi
+          short=$(printf '%s' "$SHA" | cut -c1-7)
+          {
+            echo "@$OWNER：@$ACTOR $what。"
+            echo
+            echo "- 提交：$SHA"
+            echo "- 推送前：$BEFORE"
+            echo "- 是否强制推送：$FORCED"
+            echo "- 对比：https://github.com/$REPO/compare/$BEFORE...$SHA"
+            echo
+            echo "规范见 CONTRIBUTING.md 第 3 节。请确认这次改动：需要的话补一个 PR 说明，不需要的话回退。"
+          } > body.md
+          gh issue create --repo "$REPO" --title "main 被未经维护者的方式更新（$short）" --body-file body.md --assignee "$OWNER"
+          echo "::error::main was updated by $ACTOR without the maintainer."
+          exit 1

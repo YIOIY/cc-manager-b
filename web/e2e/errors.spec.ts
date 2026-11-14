@@ -83,7 +83,7 @@ test('存储错误通知展示请求编号且可复制', async ({ page, context 
   const notice = dialog.locator('.error-notice')
   await expect(notice).toContainText('数据存储暂时不可用')
   await expect(notice).toContainText('req-e2e-77')
-  await notice.locator('.error-notice-copy').click()
+  await notice.getByRole('button', { name: '复制错误信息' }).click()
   const clipboard = await page.evaluate(() => navigator.clipboard.readText())
   expect(clipboard).toContain('STORAGE_UNAVAILABLE')
   expect(clipboard).toContain('req-e2e-77')
