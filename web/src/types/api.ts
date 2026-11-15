@@ -164,7 +164,7 @@ export interface Account {
   credentials_configured?: boolean
   password_configured?: boolean
   submission_job?: SubmissionJob
-  /** System login user who created this Claude account; empty for legacy / platform-synced rows. */
+  /** Owning system user (assigned / creator); empty = admin-only until assigned. */
   created_by_user_id?: string
   created_by_nickname?: string
   created_by_username?: string
@@ -371,7 +371,10 @@ export interface Proxy extends ProxyOption {
   username: string
   password_configured: boolean
   latest_check: ProxyCheck | null
+  /** Owning system user; empty = admin-only until assigned. */
   created_by_user_id?: string
+  created_by_nickname?: string
+  created_by_username?: string
 }
 
 /** Picker option from GET /lookups/platform-connections; never carries the token. */

@@ -138,6 +138,7 @@
 | `UPSTREAM_UNAVAILABLE` | upstream | — | 是 | retry | 平台暂时无法访问 | 账单同步项 |
 | `USER_DISABLED` | auth | 401 | 否 | login | 当前账号已停用或不存在 | 会话有效但用户行已停用或删除 |
 | `USER_EXISTS` | conflict | 409 | 否 | none | 账号已存在 | 唯一约束冲突 |
+| `USER_INVALID` | validation | 422 | 否 | fix_input | 目标用户不可用 | 资源分配：目标用户不存在或已停用；允许调用方自定义文案 |
 | `VALIDATION_FAILED` | validation | 422 | 否 | fix_input | 提交的资料不符合要求 | 字段级问题在 fields 中逐项列出；允许调用方自定义文案 |
 | `VERSION_CONFLICT` | conflict | 409 | 否 | retry | 资料已被其他操作更新 | 乐观锁冲突；HTTP 与任务共用 |
 | `WEB_BILL_RANGE_MISMATCH` | upstream | 502 | 是 | retry | 平台返回的账单范围与请求不符 | /bill/query 的 range 与请求不一致，该批次丢弃 |

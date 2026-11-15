@@ -932,7 +932,7 @@ func (a *App) proxies(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) listProxies(w http.ResponseWriter, r *http.Request) {
 	scope := ownershipFrom(r)
-	query := `SELECT p.id,p.name,p.scheme,p.host,p.port,p.enabled,p.version,p.username,p.password_secret<>'',c.ok,c.latency_ms,COALESCE(c.exit_ip,''),COALESCE(c.error_code,''),COALESCE(c.checked_at,''),COALESCE(d.route_mode,'unknown'),COALESCE(d.message,''),COALESCE(p.created_by_user_id,'') FROM proxies p LEFT JOIN proxy_checks c ON c.id=(SELECT id FROM proxy_checks WHERE proxy_id=p.id ORDER BY checked_at DESC,rowid DESC LIMIT 1) LEFT JOIN proxy_check_details d ON d.check_id=c.id`
+	query := `SELECT p.id,p.name,p.scheme,p.host,p.port,p.enabled,p.version,p.username,p.password_secret<>'',c.ok,c.latency_ms,COALESCE(c.exit_ip,''),COALESCE(c.error_code,''),COALESCE(c.checked_at,''),COALESCE(d.route_mode,'unknown'),COALESCE(d.message,''),COALESCE(p.created_by_user_id,''),COALESCE(u.nickname,''),COALESCE(u.username,'') FROM proxies p LEFT JOIN proxy_checks c ON c.id=(SELECT id FROM proxy_checks WHERE proxy_id=p.id ORDER BY checked_at DESC,rowid DESC LIMIT 1) LEFT JOIN proxy_check_details d ON d.check_id=c.id LEFT JOIN users u ON u.id=p.created_by_user_id`
 	args := []any{}
 	if !scope.Admin {
 		query += ` WHERE p.created_by_user_id=?`
@@ -947,12 +947,12 @@ func (a *App) listProxies(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []any{}
 	for rows.Next() {
-		var id, name, scheme, host, username, createdBy string
+		var id, name, scheme, host, username, createdBy, createdByNickname, createdByUsername string
 		var port, enabled, version int
 		var hasPassword bool
 		var ok, latency sql.NullInt64
 		var exitIP, code, checkedAt, route, message string
-		if err = rows.Scan(&id, &name, &scheme, &host, &port, &enabled, &version, &username, &hasPassword, &ok, &latency, &exitIP, &code, &checkedAt, &route, &message, &createdBy); err != nil {
+		if err = rows.Scan(&id, &name, &scheme, &host, &port, &enabled, &version, &username, &hasPassword, &ok, &latency, &exitIP, &code, &checkedAt, &route, &message, &createdBy, &createdByNickname, &createdByUsername); err != nil {
 			writeError(w, r, storageError(err, "代理读取失败"))
 			return
 		}
@@ -965,7 +965,7 @@ func (a *App) listProxies(w http.ResponseWriter, r *http.Request) {
 			}
 			latest = map[string]any{"ok": ok.Int64 == 1, "latency_ms": latency.Int64, "exit_ip": exitIP, "error_code": code, "checked_at": checkedAt, "route_mode": route, "message": message}
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "scheme": scheme, "host": host, "port": port, "enabled": enabled == 1, "version": version, "username": username, "password_configured": hasPassword, "latest_check": latest, "created_by_user_id": createdBy})
+		out = append(out, map[string]any{"id": id, "name": name, "scheme": scheme, "host": host, "port": port, "enabled": enabled == 1, "version": version, "username": username, "password_configured": hasPassword, "latest_check": latest, "created_by_user_id": createdBy, "created_by_nickname": createdByNickname, "created_by_username": createdByUsername})
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, r, storageError(err, "代理读取失败"))

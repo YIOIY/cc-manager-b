@@ -25,10 +25,13 @@
           {{ card.statusLabel }}<Lock v-if="card.platform?.locked" :size="10" class="locked-icon" />
         </span>
         <span
-          v-if="creatorLabel(card)"
+          v-if="ownerLabel(card)"
           class="mini-badge creator"
-          :title="'由 ' + creatorLabel(card) + ' 创建'"
-          >创建人 {{ creatorLabel(card) }}</span
+          :title="'所属用户 ' + ownerLabel(card)"
+          >所属 {{ ownerLabel(card) }}</span
+        >
+        <span v-else-if="isAdmin" class="mini-badge creator muted-owner" title="尚未分配给用户，仅管理员可见"
+          >未分配</span
         >
         <span v-if="card.platform?.auto_created" class="mini-badge" title="由平台同步自动创建的本地账号">来自平台</span>
         <span v-if="card.platform?.missing_since" class="mini-badge attention" :title="card.platform.missing_since"
@@ -98,6 +101,15 @@
           >{{ card.footer }}</span
         >
         <el-button
+          v-if="isAdmin"
+          class="card-action"
+          size="small"
+          title="将账号分配给指定用户"
+          @click="emit('assign', card)"
+        >
+          分配 <UserRoundPlus :size="13" />
+        </el-button>
+        <el-button
           v-if="canEditPlatform(card)"
           class="card-action"
           size="small"
@@ -126,7 +138,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RefreshCw, AlertCircle, Info, ArrowUpRight, ChartNoAxesCombined, Lock, PencilLine } from 'lucide-vue-next'
+import { RefreshCw, AlertCircle, Info, ArrowUpRight, ChartNoAxesCombined, Lock, PencilLine, UserRoundPlus } from 'lucide-vue-next'
 import type { Account, PlatformInfo } from '../types/api'
 import { deliveryState, deliveryStates, runtimeLabel, type DeliveryState } from '../account-workflow'
 import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/format'
@@ -142,8 +154,13 @@ function billUsd(fen: number | undefined, rate: number | undefined) {
 }
 
 const props = defineProps<{ accounts: Account[]; loading: boolean }>()
-const emit = defineEmits<{ select: [account: Account]; 'edit-platform': [account: Account] }>()
-const { can, owns } = useSession()
+const emit = defineEmits<{
+  select: [account: Account]
+  'edit-platform': [account: Account]
+  assign: [account: Account]
+}>()
+const { can, owns, user } = useSession()
+const isAdmin = computed(() => !!user.value?.is_admin)
 
 // The platform edit needs ownership, the permission, a record the platform
 // still lists, and a console channel that is configured and not suspended.
@@ -159,7 +176,7 @@ function canEditPlatform(card: Account): boolean {
   )
 }
 
-function creatorLabel(row: Account): string {
+function ownerLabel(row: Account): string {
   return (row.created_by_nickname || row.created_by_username || '').trim()
 }
 
@@ -382,6 +399,11 @@ const cards = computed<Card[]>(() =>
   background: #1a2a3a;
   color: #8ec8e8;
   text-transform: none;
+}
+
+.mini-badge.muted-owner {
+  opacity: 0.85;
+  color: #a8b4c0;
 }
 
 .locked-icon {

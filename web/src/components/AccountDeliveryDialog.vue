@@ -37,6 +37,15 @@
           <dt>套餐到期</dt>
           <dd>{{ account.plan_end_time || '未配置' }}</dd>
         </div>
+        <div>
+          <dt>所属用户</dt>
+          <dd>
+            {{ ownerLabel || (isAdmin ? '未分配' : '—') }}
+            <el-button v-if="isAdmin" text type="primary" size="small" class="assign-inline" @click="assignOpen = true"
+              >分配</el-button
+            >
+          </dd>
+        </div>
       </dl>
       <template v-if="state === 'linked'">
         <section v-for="link in account.platform_links" :key="link.connection_id" class="delivery-linked-platform">
@@ -162,6 +171,15 @@
       </div></template
     >
   </el-dialog>
+  <AssignUserDialog
+    v-if="account && assignOpen"
+    v-model="assignOpen"
+    endpoint="/accounts"
+    :resource-id="account.id"
+    :resource-label="account.account || account.id"
+    :current-user-id="account.created_by_user_id || ''"
+    @assigned="forwardAssigned"
+  />
 </template>
 
 <script setup lang="ts">
@@ -175,6 +193,7 @@ import { planLabel } from '../utils/format'
 import { shortPlatformAlias } from '../model/platform-card'
 import { ElMessageBox } from 'element-plus'
 import { deliveryState, deliveryStates, runtimeLabel, deliveryIssue, outcomeText } from '../account-workflow'
+import AssignUserDialog from './AssignUserDialog.vue'
 const props = defineProps<{ modelValue: boolean; account: Account | null; connections: ConnectionOption[] }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -182,9 +201,15 @@ const emit = defineEmits<{
   configure: []
   complete: [account: Account, connectionId?: string]
   deleted: [accountId: string]
+  assigned: [result: { userId: string; message?: string; proxy_action?: string }]
 }>()
-const { can, owns } = useSession()
+const { can, owns, user } = useSession()
+const isAdmin = computed(() => !!user.value?.is_admin)
 const canMutateAccount = computed(() => owns(props.account?.created_by_user_id))
+const ownerLabel = computed(() =>
+  (props.account?.created_by_nickname || props.account?.created_by_username || '').trim(),
+)
+const assignOpen = ref(false)
 const connectionId = ref(''),
   preflight = ref<Preflight | null>(null),
   checking = ref(false),
@@ -193,6 +218,10 @@ const connectionId = ref(''),
 const state = computed(() => deliveryState(props.account || {})),
   presentation = computed(() => deliveryStates[state.value]),
   enabledConnections = computed(() => props.connections.filter((c) => c.enabled))
+function forwardAssigned(result: { userId: string; message?: string; proxy_action?: string }) {
+  emit('assigned', result)
+  emit('changed')
+}
 let sequence = 0,
   key = ''
 async function check() {
@@ -452,6 +481,14 @@ watch(
   color: #3c5963;
   font-size: 12px;
   font-weight: 600;
+}
+
+.assign-inline {
+  margin-left: 4px;
+  padding: 0 4px !important;
+  min-height: auto !important;
+  height: auto !important;
+  vertical-align: baseline;
 }
 
 .delivery-linked-platform {

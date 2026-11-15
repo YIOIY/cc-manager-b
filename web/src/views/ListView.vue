@@ -50,6 +50,7 @@
       :loading="page.loading.value"
       @select="selectAccount"
       @edit-platform="editPlatform"
+      @assign="openAssignAccount"
     />
     <div v-else class="table-scroll">
       <el-table v-loading="page.loading.value" :data="page.pagedItems.value" row-key="id">
@@ -91,6 +92,12 @@
             <span v-else>{{ cellText(row, column) }}</span>
           </template>
         </el-table-column>
+        <el-table-column v-if="listKey === 'proxies'" label="所属用户" min-width="120">
+          <template #default="{ row }">
+            <span v-if="ownerLabel(row)">{{ ownerLabel(row) }}</span>
+            <span v-else class="muted">{{ isAdmin ? '未分配' : '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column v-if="listKey === 'proxies'" label="最近本机检测" min-width="220">
           <template #default="{ row }">
             <div v-if="row.latest_check" class="primary-cell">
@@ -119,11 +126,15 @@
         <el-table-column
           v-if="
             (listKey === 'proxies' &&
-              (can('proxies.test') || can('proxies.view') || can('proxies.update') || can('proxies.delete'))) ||
+              (can('proxies.test') ||
+                can('proxies.view') ||
+                can('proxies.update') ||
+                can('proxies.delete') ||
+                isAdmin)) ||
             (listKey === 'connections' && (can('connections.update') || can('connections.delete')))
           "
           label="操作"
-          :width="170"
+          :width="isAdmin ? 220 : 170"
           class-name="actions-column"
           fixed="right"
         >
@@ -139,6 +150,7 @@
                   @click="testProxy(row)"
                   >检测</el-button
                 >
+                <el-button v-if="isAdmin" text @click="openAssignProxy(row)">分配</el-button>
                 <el-button v-if="can('proxies.update') && owns(row.created_by_user_id)" text @click="openEditProxy(row)"
                   >编辑</el-button
                 >
@@ -211,7 +223,8 @@
       v-model="deliveryOpen"
       :account="selectedAccount"
       :connections="connections"
-      @changed="page.load"
+      @changed="onDeliveryChanged"
+      @assigned="onAssigned"
       @configure="router.push({ name: 'connections' })"
       @complete="completeAccount"
       @deleted="onAccountDeleted"
@@ -234,6 +247,15 @@
     />
   </template>
   <ProxyFormDialog v-if="listKey === 'proxies'" v-model="proxyFormOpen" :proxy="editingProxy" @saved="onProxySaved" />
+  <AssignUserDialog
+    v-if="assignOpen"
+    v-model="assignOpen"
+    :endpoint="assignEndpoint"
+    :resource-id="assignResourceId"
+    :resource-label="assignResourceLabel"
+    :current-user-id="assignCurrentUserId"
+    @assigned="onAssigned"
+  />
   <RemoteAccountsDrawer v-if="reconcileConnection" v-model="reconcileOpen" :connection-id="reconcileConnection.id" />
   <ConnectionFormDialog
     v-if="listKey === 'connections'"
@@ -256,6 +278,7 @@ import AccountFormDialog from '../components/AccountFormDialog.vue'
 import ImportDialog from '../components/ImportDialog.vue'
 import PlatformProfileDialog from '../components/PlatformProfileDialog.vue'
 import ProxyFormDialog from '../components/ProxyFormDialog.vue'
+import AssignUserDialog from '../components/AssignUserDialog.vue'
 import ConnectionFormDialog from '../components/ConnectionFormDialog.vue'
 import RemoteAccountsDrawer from '../components/RemoteAccountsDrawer.vue'
 import ProxyNetworkPanel from '../components/ProxyNetworkPanel.vue'
@@ -279,7 +302,8 @@ import type {
 
 const route = useRoute()
 const router = useRouter()
-const { can, owns } = useSession()
+const { can, owns, user } = useSession()
+const isAdmin = computed(() => !!user.value?.is_admin)
 const listKey = computed(() => route.meta.list || 'accounts')
 const canCreate = computed(
   () =>
@@ -409,6 +433,37 @@ function editPlatform(row: Account) {
   platformProfileOpen.value = true
   actionMessage.value = ''
 }
+function ownerLabel(row: { created_by_nickname?: string; created_by_username?: string }) {
+  return (row.created_by_nickname || row.created_by_username || '').trim()
+}
+
+const assignOpen = ref(false)
+const assignEndpoint = ref('/accounts')
+const assignResourceId = ref('')
+const assignResourceLabel = ref('')
+const assignCurrentUserId = ref('')
+function openAssignAccount(row: Account) {
+  assignEndpoint.value = '/accounts'
+  assignResourceId.value = row.id
+  assignResourceLabel.value = row.account || row.id
+  assignCurrentUserId.value = row.created_by_user_id || ''
+  assignOpen.value = true
+}
+function openAssignProxy(row: ListRow) {
+  const p = row as unknown as Proxy
+  assignEndpoint.value = '/proxies'
+  assignResourceId.value = p.id
+  assignResourceLabel.value = p.name || p.host || p.id
+  assignCurrentUserId.value = p.created_by_user_id || ''
+  assignOpen.value = true
+}
+async function onAssigned(result: { userId: string; message?: string }) {
+  feedback(
+    result.message || (result.userId ? '已分配给用户' : '已取消分配（仅管理员可见）'),
+    'success',
+  )
+  await page.load()
+}
 function onPlatformProfileSaved(result: PlatformProfileResult) {
   actionMessage.value = result.verified
     ? '平台资料已修改：' + result.changed.join('、')
@@ -419,6 +474,13 @@ function selectAccount(row: Account) {
   selectedAccount.value = accountsAll.value.find((item) => item.id === row.id) || row
   deliveryOpen.value = true
   actionMessage.value = ''
+}
+async function onDeliveryChanged() {
+  const id = selectedAccount.value?.id
+  await page.load()
+  if (id) {
+    selectedAccount.value = accountsAll.value.find((row) => row.id === id) || selectedAccount.value
+  }
 }
 function completeAccount(row: Account, connectionId?: string) {
   deliveryOpen.value = false

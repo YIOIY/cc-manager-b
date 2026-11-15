@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 // ownershipUsers boots an app with an admin plus two operators.
 func ownershipUsers(t *testing.T) (a *App, admin, opsA, opsB *testClient) {
 	t.Helper()
+	t.Setenv("CC_MANAGER_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	a, admin = rbacApp(t)
 	for _, u := range []struct{ name, pass string }{
 		{"ops-a", "operator-password-a"},
@@ -408,6 +410,155 @@ func TestProxyCreatorMigrationAddsColumn(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('proxies') WHERE name='created_by_user_id'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("created_by_user_id present=%d err=%v", n, err)
 	}
+}
+
+func TestAdminAssignAccountAndProxy(t *testing.T) {
+	a, admin, opsA, opsB := ownershipUsers(t)
+	var meA, meB struct {
+		Data struct {
+			User struct{ ID string }
+		}
+	}
+	_ = jsonDecode(opsA.do(http.MethodGet, "/api/v1/auth/session", ""), &meA)
+	_ = jsonDecode(opsB.do(http.MethodGet, "/api/v1/auth/session", ""), &meB)
+
+	if _, err := a.DB.Exec(`INSERT INTO accounts(id,account,plan,created_at,updated_at,created_by_user_id) VALUES('assign-acc','assign@example.test','claude/cc-pro',?,?,?)`, now(), now(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.Exec(`INSERT INTO proxies(id,name,scheme,host,port,enabled,created_at,updated_at,created_by_user_id) VALUES('assign-proxy','assign-p','http','127.0.0.1',1080,1,?,?,?)`, now(), now(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	assertEnvelope(t, opsA.do(http.MethodPost, "/api/v1/accounts/assign-acc/assign", `{"user_id":"`+meA.Data.User.ID+`"}`), http.StatusForbidden, "PERMISSION_DENIED")
+	assertEnvelope(t, admin.do(http.MethodPost, "/api/v1/accounts/assign-acc/assign", `{"user_id":"missing"}`), http.StatusUnprocessableEntity, "USER_INVALID")
+
+	if res := admin.do(http.MethodPost, "/api/v1/accounts/assign-acc/assign", `{"user_id":"`+meA.Data.User.ID+`"}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("assign account=%d", res.StatusCode)
+	}
+	if res := admin.do(http.MethodPost, "/api/v1/proxies/assign-proxy/assign", `{"user_id":"`+meA.Data.User.ID+`"}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("assign proxy=%d", res.StatusCode)
+	}
+	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=20", ""), []string{"assign-acc"})
+	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/proxies", ""), []string{"assign-proxy"})
+	assertEnvelope(t, opsB.do(http.MethodGet, "/api/v1/accounts/assign-acc", ""), http.StatusNotFound, "NOT_FOUND")
+
+	if res := admin.do(http.MethodPost, "/api/v1/accounts/assign-acc/assign", `{"user_id":"`+meB.Data.User.ID+`"}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("reassign account=%d", res.StatusCode)
+	}
+	assertEnvelope(t, opsA.do(http.MethodGet, "/api/v1/accounts/assign-acc", ""), http.StatusNotFound, "NOT_FOUND")
+	if res := opsB.do(http.MethodGet, "/api/v1/accounts/assign-acc", ""); res.StatusCode != http.StatusOK {
+		t.Fatalf("opsB get assigned=%d", res.StatusCode)
+	}
+
+	if res := admin.do(http.MethodPost, "/api/v1/proxies/assign-proxy/assign", `{"user_id":""}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("unassign proxy=%d", res.StatusCode)
+	}
+	assertEnvelope(t, opsA.do(http.MethodGet, "/api/v1/proxies/assign-proxy/checks", ""), http.StatusNotFound, "NOT_FOUND")
+	if res := admin.do(http.MethodGet, "/api/v1/proxies", ""); res.StatusCode != http.StatusOK {
+		t.Fatalf("admin list proxies=%d", res.StatusCode)
+	}
+
+	// Bound proxy cannot move to another user while the binder still owns it.
+	proxyBound := createOwnedProxy(t, opsA, "bound-p")
+	accBound := createOwnedAccount(t, opsA, "bound@example.test", proxyBound)
+	assertEnvelope(t, admin.do(http.MethodPost, "/api/v1/proxies/"+proxyBound+"/assign", `{"user_id":"`+meB.Data.User.ID+`"}`), http.StatusConflict, "PROXY_IN_USE")
+	if res := opsA.do(http.MethodPatch, "/api/v1/accounts/"+accBound, `{"proxy_id":"","expected_version":1}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("unbind=%d", res.StatusCode)
+	}
+	if res := admin.do(http.MethodPost, "/api/v1/proxies/"+proxyBound+"/assign", `{"user_id":"`+meB.Data.User.ID+`"}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("assign unbound proxy=%d", res.StatusCode)
+	}
+
+	// Exclusive proxy moves with the account; shared proxy is unbound only.
+	proxySolo := createOwnedProxy(t, opsA, "solo-p")
+	accSolo := createOwnedAccount(t, opsA, "solo@example.test", proxySolo)
+	var assignSolo struct {
+		Data struct {
+			ProxyAction string `json:"proxy_action"`
+			ProxyID     string `json:"proxy_id"`
+		}
+	}
+	resSolo := admin.do(http.MethodPost, "/api/v1/accounts/"+accSolo+"/assign", `{"user_id":"`+meB.Data.User.ID+`"}`)
+	_ = jsonDecode(resSolo, &assignSolo)
+	if resSolo.StatusCode != http.StatusOK || assignSolo.Data.ProxyAction != "transferred" || assignSolo.Data.ProxyID != proxySolo {
+		t.Fatalf("exclusive transfer=%d %+v", resSolo.StatusCode, assignSolo.Data)
+	}
+	var proxySoloOwner string
+	if err := a.DB.QueryRow(`SELECT created_by_user_id FROM proxies WHERE id=?`, proxySolo).Scan(&proxySoloOwner); err != nil || proxySoloOwner != meB.Data.User.ID {
+		t.Fatalf("proxy transferred owner=%q err=%v", proxySoloOwner, err)
+	}
+	assertListIDs(t, opsB.do(http.MethodGet, "/api/v1/proxies", ""), []string{proxyBound, proxySolo})
+
+	proxyShare := createOwnedProxy(t, opsA, "share-p")
+	accShare1 := createOwnedAccount(t, opsA, "share1@example.test", proxyShare)
+	accShare2 := createOwnedAccount(t, opsA, "share2@example.test", proxyShare)
+	authJSON, _ := json.Marshal(map[string]any{
+		"access_token": "a", "refresh_token": "r", "last_refresh": "2026-09-20T00:17:44-07:00",
+		"email": "share1@example.test", "account_uuid": "u", "organization_uuid": "o",
+		"organization_name": "n", "claude_device_ids": []any{"d"}, "type": "t",
+		"expired": "2026-10-20T00:17:44-07:00", "proxy_url": "http://10.0.0.1:8080",
+		"verification_status": "v", "id_token": "",
+	})
+	sealedShare, err := a.keys.Seal(authJSON, []byte(accShare1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.Exec(`UPDATE accounts SET credentials_json=? WHERE id=?`, sealedShare, accShare1); err != nil {
+		t.Fatal(err)
+	}
+	var assignShare struct {
+		Data struct {
+			ProxyAction string `json:"proxy_action"`
+		}
+	}
+	resShare := admin.do(http.MethodPost, "/api/v1/accounts/"+accShare1+"/assign", `{"user_id":"`+meB.Data.User.ID+`"}`)
+	_ = jsonDecode(resShare, &assignShare)
+	if resShare.StatusCode != http.StatusOK || assignShare.Data.ProxyAction != "unbound" {
+		t.Fatalf("shared unbind=%d %+v", resShare.StatusCode, assignShare.Data)
+	}
+	var shareProxyOwner, share1Proxy, share2Proxy string
+	_ = a.DB.QueryRow(`SELECT created_by_user_id FROM proxies WHERE id=?`, proxyShare).Scan(&shareProxyOwner)
+	_ = a.DB.QueryRow(`SELECT proxy_id FROM accounts WHERE id=?`, accShare1).Scan(&share1Proxy)
+	_ = a.DB.QueryRow(`SELECT proxy_id FROM accounts WHERE id=?`, accShare2).Scan(&share2Proxy)
+	if shareProxyOwner != meA.Data.User.ID || share1Proxy != "" || share2Proxy != proxyShare {
+		t.Fatalf("shared result owner=%q a1=%q a2=%q", shareProxyOwner, share1Proxy, share2Proxy)
+	}
+	cred, err := a.loadCredential(accShare1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := cred["proxy_url"]; kept {
+		t.Fatalf("proxy_url should be stripped after shared unbind: %#v", cred["proxy_url"])
+	}
+
+	// Archived co-binder still blocks exclusive transfer.
+	proxyArch := createOwnedProxy(t, opsA, "arch-p")
+	accLive := createOwnedAccount(t, opsA, "live@example.test", proxyArch)
+	accArch := createOwnedAccount(t, opsA, "arch@example.test", proxyArch)
+	if _, err := a.DB.Exec(`UPDATE accounts SET archived=1 WHERE id=?`, accArch); err != nil {
+		t.Fatal(err)
+	}
+	var assignArch struct {
+		Data struct {
+			ProxyAction string `json:"proxy_action"`
+		}
+	}
+	resArch := admin.do(http.MethodPost, "/api/v1/accounts/"+accLive+"/assign", `{"user_id":"`+meB.Data.User.ID+`"}`)
+	_ = jsonDecode(resArch, &assignArch)
+	if resArch.StatusCode != http.StatusOK || assignArch.Data.ProxyAction != "unbound" {
+		t.Fatalf("archived co-bind should unbind not transfer=%d %+v", resArch.StatusCode, assignArch.Data)
+	}
+	var archProxyOwner string
+	_ = a.DB.QueryRow(`SELECT created_by_user_id FROM proxies WHERE id=?`, proxyArch).Scan(&archProxyOwner)
+	if archProxyOwner != meA.Data.User.ID {
+		t.Fatalf("archived co-bind must keep proxy with original owner, got %q", archProxyOwner)
+	}
+
+	// Queued onboard blocks account assign so ownership does not change mid-flight.
+	if _, err := a.DB.Exec(`INSERT INTO jobs(id,kind,state,account_id,created_at,updated_at) VALUES('assign-job','account.submit','queued',?,?,?)`, accBound, now(), now()); err != nil {
+		t.Fatal(err)
+	}
+	assertEnvelope(t, admin.do(http.MethodPost, "/api/v1/accounts/"+accBound+"/assign", `{"user_id":"`+meB.Data.User.ID+`"}`), http.StatusConflict, "ACCOUNT_IN_PROGRESS")
 }
 
 func createOwnedProxy(t *testing.T, c *testClient, name string) string {

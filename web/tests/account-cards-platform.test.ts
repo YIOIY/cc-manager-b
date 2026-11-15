@@ -159,15 +159,15 @@ test('the card shows only the dollar cost at the connection rate', () => {
   expect(w.find('[data-rate]').exists()).toBe(false)
 })
 
-test('the card prefers the creator nickname over the login account', () => {
+test('the card prefers the owner nickname over the login account', () => {
   const withNick = render({
     ...account(null),
     created_by_user_id: 'u1',
     created_by_nickname: '小李',
     created_by_username: 'ops',
   })
-  expect(withNick.text()).toContain('创建人 小李')
-  expect(withNick.text()).not.toContain('创建人 ops')
+  expect(withNick.text()).toContain('所属 小李')
+  expect(withNick.text()).not.toContain('所属 ops')
 
   const fallback = render({
     ...account(null),
@@ -175,8 +175,8 @@ test('the card prefers the creator nickname over the login account', () => {
     created_by_nickname: '',
     created_by_username: 'ops',
   })
-  expect(fallback.text()).toContain('创建人 ops')
+  expect(fallback.text()).toContain('所属 ops')
 
   const legacy = render(account(null))
-  expect(legacy.text()).not.toContain('创建人')
+  expect(legacy.text()).not.toContain('所属')
 })

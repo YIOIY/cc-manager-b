@@ -93,6 +93,7 @@ func init() {
 		Def{Code: "REQUEST_MALFORMED", Category: CategoryValidation, Status: 400, Action: ActionFixInput, Message: "请求内容格式不正确", Doc: "请求体无法解析为对象或含有不支持的字段", AllowCustomMessage: true},
 		Def{Code: "QUERY_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "查询参数不正确", Hint: "请检查分页、排序或筛选条件", Doc: "fields 列出每个有问题的查询参数", AllowCustomMessage: true},
 		Def{Code: "USER_DISABLED", Category: CategoryAuth, Status: 401, Action: ActionLogin, Message: "当前账号已停用或不存在", Hint: "请联系管理员或重新登录", Doc: "会话有效但用户行已停用或删除"},
+		Def{Code: "USER_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "目标用户不可用", Hint: "请选择仍启用的用户", Doc: "资源分配：目标用户不存在或已停用", AllowCustomMessage: true},
 		Def{Code: "PROXY_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "代理已存在", Doc: "唯一约束冲突"},
 		Def{Code: "CONNECTION_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "平台连接已存在", Doc: "唯一约束冲突"},
 		Def{Code: "ROLE_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "角色名称已存在", Doc: "唯一约束冲突"},
@@ -240,6 +241,7 @@ const (
 	CodeRequestMalformed            = "REQUEST_MALFORMED"
 	CodeQueryInvalid                = "QUERY_INVALID"
 	CodeUserDisabled                = "USER_DISABLED"
+	CodeUserInvalid                 = "USER_INVALID"
 	CodeProxyExists                 = "PROXY_EXISTS"
 	CodeConnectionExists            = "CONNECTION_EXISTS"
 	CodeRoleExists                  = "ROLE_EXISTS"

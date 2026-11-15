@@ -38,6 +38,7 @@ func (a *App) Handler() http.Handler {
 	need("POST /api/v1/accounts/onboard", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.onboardAccount(w, r) })
 	need("GET /api/v1/accounts/{id}", PermAccountsView, a.accountGet)
 	need("PATCH /api/v1/accounts/{id}", PermAccountsUpdate, a.accountPatch)
+	need("POST /api/v1/accounts/{id}/assign", PermAccountsUpdate, a.accountAssign)
 	need("POST /api/v1/accounts/{id}/platform-profile", PermAccountsPlatformEdit, a.platformProfileUpdate)
 	need("POST /api/v1/accounts/{id}/onboard", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.onboardAccount(w, r, r.PathValue("id")) })
 	need("DELETE /api/v1/accounts/{id}", PermAccountsDelete, a.accountDelete)
@@ -53,6 +54,7 @@ func (a *App) Handler() http.Handler {
 	needFn("/api/v1/proxy-settings", byMethod(PermProxiesView, map[string]Permission{"PUT": PermProxiesSettings}), a.proxyNetworkSettings)
 	needFn("/api/v1/proxies", byMethod(PermProxiesView, map[string]Permission{"POST": PermProxiesCreate}), a.proxies)
 	need("PATCH /api/v1/proxies/{id}", PermProxiesUpdate, a.proxyUpdate)
+	need("POST /api/v1/proxies/{id}/assign", PermProxiesUpdate, a.proxyAssign)
 	need("DELETE /api/v1/proxies/{id}", PermProxiesDelete, a.proxyDelete)
 	need("POST /api/v1/proxies/{id}/archive", PermProxiesArchive, a.proxyArchive)
 	// Lookups expose only names and ids so account and bill screens can offer

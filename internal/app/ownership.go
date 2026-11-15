@@ -8,9 +8,10 @@ import (
 )
 
 // ownershipScope is the row-level view/mutate rule for accounts and proxies:
-// admins see everything; everyone else only sees rows they created; empty
-// created_by is admin-only. Mutations require ownership, except admins may
-// mutate unowned (empty created_by) rows.
+// admins see everything; everyone else only sees rows they own
+// (created_by_user_id); empty created_by is admin-only. Mutations require
+// ownership, except admins may mutate unowned rows. Admins reassign ownership
+// via /assign without needing canMutate.
 type ownershipScope struct {
 	Admin  bool
 	UserID string

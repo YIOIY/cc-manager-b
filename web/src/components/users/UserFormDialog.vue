@@ -13,7 +13,7 @@
           <el-input v-model="form.username" :disabled="!!user" placeholder="字母、数字或 . _ @ -" autocomplete="off" />
         </el-form-item>
         <el-form-item label="昵称">
-          <el-input v-model="form.nickname" maxlength="32" show-word-limit placeholder="用于账号列表显示创建人" autocomplete="off" />
+          <el-input v-model="form.nickname" maxlength="32" show-word-limit placeholder="用于列表显示所属用户" autocomplete="off" />
         </el-form-item>
         <el-form-item v-if="!user" label="初始密码" required>
           <el-input

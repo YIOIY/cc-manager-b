@@ -176,6 +176,11 @@ func (a *App) runOne(ctx context.Context) {
 		// Local reachability and the supplier's network are independent.
 		// Manual pool checks never gate a remote submission.
 		auth["proxy_url"] = proxyURL
+	} else if url, _ := auth["proxy_url"].(string); strings.TrimSpace(url) == "" {
+		// Pool binding was cleared (e.g. shared-proxy unbind on assign) and
+		// credentials no longer carry a proxy_url — block until rebound.
+		failed("PROXY_REQUIRED")
+		return
 	}
 	tokenBytes, err := decode(tokenSecret, spec.ConnectionID)
 	if err != nil {
