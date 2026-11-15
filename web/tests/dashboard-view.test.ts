@@ -215,14 +215,12 @@ test('the top row shows fleet counts and spend', async () => {
 })
 
 test('the attention list renders items and navigates to the account', async () => {
+  const [nearLimit, banned] = attention.items
   const w = await render(dashboard(), {
     ...attention,
     items: [
-      {
-        ...attention.items[0],
-        alias: 'claude-住享科智-20261112003',
-      },
-      attention.items[1],
+      { ...nearLimit!, alias: 'claude-住享科智-20261112003' },
+      banned!,
     ],
   })
   const text = w.text()
