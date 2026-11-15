@@ -59,6 +59,9 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 			fail(w, 422, "PROXY_INVALID", err.Error())
 			return
 		}
+		if !a.requireProxyBindable(w, r, in.ProxyID) {
+			return
+		}
 	}
 	flow, err := claudeoauth.NewPending()
 	if err != nil {

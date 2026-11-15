@@ -72,7 +72,7 @@ func goodBillResult(ids []string, from, to string, cost int64) supplier.BillQuer
 }
 func runFixture(t *testing.T, a *App, input billSyncRequest, key string) string {
 	t.Helper()
-	result, err := a.createBillRun(context.Background(), input, key, "")
+	result, err := a.createBillRun(context.Background(), input, key, "", ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,14 +98,14 @@ func TestBillBatchingRevisionAndPersistence(t *testing.T) {
 	day, _ := time.Parse("2006-01-02", input.To)
 	input.From = day.AddDate(0, 0, -2).Format("2006-01-02")
 	id := runFixture(t, a, input, "batch-1")
-	detail, err := a.billRunDetail(id)
+	detail, err := a.billRunDetail(id, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if calls != 9 || detail["state"] != "succeeded" || detail["completed"] != 750 {
 		t.Fatalf("calls=%d detail=%v", calls, detail)
 	}
-	reused, err := a.createBillRun(context.Background(), input, "batch-1", "")
+	reused, err := a.createBillRun(context.Background(), input, "batch-1", "", ownershipScope{Admin: true})
 	if err != nil || reused["run_id"] != id {
 		t.Fatalf("idempotency=%v %v", reused, err)
 	}
@@ -134,7 +134,7 @@ func TestBillPartialNoDataRetryAndLeaseRecovery(t *testing.T) {
 			return r, nil
 		}), nil
 	}
-	queued, err := a.createBillRun(context.Background(), input, "recover", "")
+	queued, err := a.createBillRun(context.Background(), input, "recover", "", ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestBillPartialNoDataRetryAndLeaseRecovery(t *testing.T) {
 	if err = a.runBillJob(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	detail, err := a.billRunDetail(id)
+	detail, err := a.billRunDetail(id, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestBillPartialNoDataRetryAndLeaseRecovery(t *testing.T) {
 		t.Fatalf("invented rows=%d", rows)
 	}
 	response := httptest.NewRecorder()
-	a.retryBillRun(response, httptest.NewRequest("POST", "/retry-failed", strings.NewReader("{}")), id)
+	a.retryBillRun(response, withAdminSession(httptest.NewRequest("POST", "/retry-failed", strings.NewReader("{}"))), id)
 	if response.Code != 202 {
 		t.Fatalf("retry status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -184,7 +184,7 @@ func TestBillSupersededResponseCannotOverwrite(t *testing.T) {
 			return goodBillResult(ids, from, to, 100), nil
 		}), nil
 	}
-	result, err := a.createBillRun(context.Background(), input, "old-response", "")
+	result, err := a.createBillRun(context.Background(), input, "old-response", "", ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestBillSupersededResponseCannotOverwrite(t *testing.T) {
 	if err = a.DB.QueryRow(`SELECT cost_fen FROM platform_bill_daily`).Scan(&amount); err != nil || amount != 999 {
 		t.Fatalf("old result overwrote newer value: %d %v", amount, err)
 	}
-	detail, err := a.billRunDetail(result["run_id"].(string))
+	detail, err := a.billRunDetail(result["run_id"].(string), ownershipScope{Admin: true})
 	if err != nil || detail["state"] != "interrupted" {
 		t.Fatalf("detail=%v %v", detail, err)
 	}
@@ -229,7 +229,7 @@ func TestBillQueryBeyond1000AndExactTotals(t *testing.T) {
 	}
 	runFixture(t, a, input, "many-rows")
 	query := billQueryRequest{ConnectionID: "conn", From: input.From, To: input.To, Page: 12, PageSize: 100}
-	result, err := a.readBills(context.Background(), query)
+	result, err := a.readBills(context.Background(), query, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestBillQueryBeyond1000AndExactTotals(t *testing.T) {
 	}
 	query.Page = 1
 	query.Q = "account-1200"
-	result, err = a.readBills(context.Background(), query)
+	result, err = a.readBills(context.Background(), query, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,24 +322,24 @@ func TestBillRoutesRequireAuthCSRFAndReturnQueued(t *testing.T) {
 
 func TestBillActiveIdempotencyAliasAndConflict(t *testing.T) {
 	a, input := billFixture(t, 1)
-	first, err := a.createBillRun(context.Background(), input, "key-a", "")
+	first, err := a.createBillRun(context.Background(), input, "key-a", "", ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := a.createBillRun(context.Background(), input, "key-b", "")
+	second, err := a.createBillRun(context.Background(), input, "key-b", "", ownershipScope{Admin: true})
 	if err != nil || first["run_id"] != second["run_id"] {
 		t.Fatalf("dedupe=%v err=%v", second, err)
 	}
 	changed := input
 	changed.Scope = "selected"
 	changed.AccountIDs = []string{"account-0001"}
-	if _, err = a.createBillRun(context.Background(), changed, "key-b", ""); err == nil {
+	if _, err = a.createBillRun(context.Background(), changed, "key-b", "", ownershipScope{Admin: true}); err == nil {
 		t.Fatal("reused alias accepted a different request")
 	}
 	if _, err = a.DB.Exec(`UPDATE platform_connections SET enabled=0,version=version+1 WHERE id='conn'`); err != nil {
 		t.Fatal(err)
 	}
-	again, err := a.createBillRun(context.Background(), input, "key-a", "")
+	again, err := a.createBillRun(context.Background(), input, "key-a", "", ownershipScope{Admin: true})
 	if err != nil || again["run_id"] != first["run_id"] {
 		t.Fatalf("same request lost its original task after config change: %v %v", again, err)
 	}
@@ -355,14 +355,14 @@ func TestBillAuthorizationFailureStopsConnectionAndPreservesValues(t *testing.T)
 		}), nil
 	}
 	id := runFixture(t, a, input, "unauthorized")
-	detail, err := a.billRunDetail(id)
+	detail, err := a.billRunDetail(id, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 || detail["state"] != "failed" || detail["counts"].(map[string]int)["failed"] != 101 {
 		t.Fatalf("calls=%d detail=%v", calls, detail)
 	}
-	result, err := a.readBills(context.Background(), billQueryRequest{ConnectionID: "conn", From: input.From, To: input.To})
+	result, err := a.readBills(context.Background(), billQueryRequest{ConnectionID: "conn", From: input.From, To: input.To}, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func TestBillRetryOnlyIncludesFailedAccountDays(t *testing.T) {
 	}
 	id := runFixture(t, a, input, "two-days")
 	response := httptest.NewRecorder()
-	a.retryBillRun(response, httptest.NewRequest("POST", "/retry-failed", strings.NewReader("{}")), id)
+	a.retryBillRun(response, withAdminSession(httptest.NewRequest("POST", "/retry-failed", strings.NewReader("{}"))), id)
 	if response.Code != 202 {
 		t.Fatalf("status=%d %s", response.Code, response.Body.String())
 	}
@@ -404,7 +404,7 @@ func TestBillEarlyFailuresAppearInCoverage(t *testing.T) {
 	for _, scenario := range []string{"link_changed", "attempts_exhausted", "expired"} {
 		t.Run(scenario, func(t *testing.T) {
 			a, input := billFixture(t, 1)
-			result, err := a.createBillRun(context.Background(), input, "early-failure", "")
+			result, err := a.createBillRun(context.Background(), input, "early-failure", "", ownershipScope{Admin: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -424,7 +424,7 @@ func TestBillEarlyFailuresAppearInCoverage(t *testing.T) {
 			if err = a.runBillJob(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			data, err := a.readBills(context.Background(), billQueryRequest{ConnectionID: "conn", From: input.From, To: input.To})
+			data, err := a.readBills(context.Background(), billQueryRequest{ConnectionID: "conn", From: input.From, To: input.To}, ownershipScope{Admin: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -441,7 +441,7 @@ func TestSyncRunListPreservesMetricsHistory(t *testing.T) {
 	if _, err := a.DB.Exec(`INSERT INTO sync_runs(id,connection_id,kind,state,started_at) VALUES('old-metrics','conn','platform-usage','succeeded',?)`, now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.createBillRun(context.Background(), input, "list-bill", ""); err != nil {
+	if _, err := a.createBillRun(context.Background(), input, "list-bill", "", ownershipScope{Admin: true}); err != nil {
 		t.Fatal(err)
 	}
 	legacy := httptest.NewRecorder()

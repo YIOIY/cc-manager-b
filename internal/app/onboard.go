@@ -51,6 +51,14 @@ func (a *App) onboardAccount(w http.ResponseWriter, r *http.Request, existingIDs
 			return
 		}
 	}
+	if req.existingID != "" {
+		if !a.requireMutable(w, r, "accounts", req.existingID, "账号不存在") {
+			return
+		}
+	}
+	if !a.requireProxyBindable(w, r, req.proxyID) {
+		return
+	}
 	resp, replayed, err := a.persistOnboard(r, req)
 	if err != nil {
 		respondError(w, r, err)

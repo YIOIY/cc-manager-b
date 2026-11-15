@@ -50,7 +50,7 @@ type insightsReply struct {
 
 func insightsOf(t *testing.T, a *App, at time.Time, jobs bool) insightsReply {
 	t.Helper()
-	data, err := a.dashboardInsightsData(context.Background(), at, jobs)
+	data, err := a.dashboardInsightsData(context.Background(), at, jobs, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}

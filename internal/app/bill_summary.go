@@ -26,7 +26,7 @@ func (a *App) queryBillSummary(w http.ResponseWriter, r *http.Request) {
 	if !decodeBillRequest(w, r, &in) {
 		return
 	}
-	result, err := a.readBillSummary(r.Context(), in)
+	result, err := a.readBillSummary(r.Context(), in, ownershipFrom(r))
 	if err != nil {
 		billFail(w, err)
 		return
@@ -34,7 +34,7 @@ func (a *App) queryBillSummary(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusOK, result)
 }
 
-func (a *App) readBillSummary(ctx context.Context, in billSummaryRequest) (map[string]any, error) {
+func (a *App) readBillSummary(ctx context.Context, in billSummaryRequest, scope ownershipScope) (map[string]any, error) {
 	if in.ConnectionID == "" {
 		return nil, billField("connection_id", errs.FieldRequired, "请选择平台连接")
 	}
@@ -72,7 +72,9 @@ func (a *App) readBillSummary(ctx context.Context, in billSummaryRequest) (map[s
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	rows, err := a.DB.QueryContext(ctx, `SELECT a.id,a.account,COALESCE(l.alias,''),l.upstream_id FROM platform_links l JOIN accounts a ON a.id=l.account_id WHERE l.connection_id=? AND l.ingestion_state='accepted' AND l.upstream_id IN (`+marks(len(ids))+`)`, args...)
+	ownerSQL, ownerArgs := scope.sqlAnd("a.created_by_user_id")
+	args = append(args, ownerArgs...)
+	rows, err := a.DB.QueryContext(ctx, `SELECT a.id,a.account,COALESCE(l.alias,''),l.upstream_id FROM platform_links l JOIN accounts a ON a.id=l.account_id WHERE l.connection_id=? AND l.ingestion_state='accepted' AND l.upstream_id IN (`+marks(len(ids))+`)`+ownerSQL, args...)
 	if err != nil {
 		return nil, err
 	}

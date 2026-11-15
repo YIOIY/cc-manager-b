@@ -187,6 +187,9 @@ func deliveryBlocked(tx interface{ QueryRow(string, ...any) *sql.Row }, accountI
 }
 
 func (a *App) submitExistingAccount(w http.ResponseWriter, r *http.Request, accountID string) {
+	if !a.requireMutable(w, r, "accounts", accountID, "账号不存在") {
+		return
+	}
 	var in struct {
 		ConnectionID string `json:"platform_connection_id"`
 		Version      int    `json:"expected_version"`

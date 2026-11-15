@@ -143,14 +143,19 @@ function billUsd(fen: number | undefined, rate: number | undefined) {
 
 const props = defineProps<{ accounts: Account[]; loading: boolean }>()
 const emit = defineEmits<{ select: [account: Account]; 'edit-platform': [account: Account] }>()
-const { can } = useSession()
+const { can, owns } = useSession()
 
-// The platform edit needs the permission, a record the platform still lists,
-// and a console channel that is configured and not suspended.
+// The platform edit needs ownership, the permission, a record the platform
+// still lists, and a console channel that is configured and not suspended.
 function canEditPlatform(card: Account): boolean {
   const p = card.platform
   return (
-    can('accounts.platform_edit') && !!p && !p.missing_since && !!p.web_channel?.configured && !p.web_channel?.suspended
+    owns(card.created_by_user_id) &&
+    can('accounts.platform_edit') &&
+    !!p &&
+    !p.missing_since &&
+    !!p.web_channel?.configured &&
+    !p.web_channel?.suspended
   )
 }
 

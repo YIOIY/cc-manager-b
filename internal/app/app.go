@@ -65,7 +65,7 @@ func newApp(path string, workers bool) (*App, error) {
 // NULL with a default so a NULL can never make a row vanish from a list.
 const baseSchema = `
 CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, account TEXT UNIQUE NOT NULL, plan TEXT NOT NULL DEFAULT '', register_location TEXT NOT NULL DEFAULT '', register_time TEXT NOT NULL DEFAULT '', plan_start_time TEXT NOT NULL DEFAULT '', plan_end_time TEXT NOT NULL DEFAULT '', proxy_id TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', credentials_json TEXT NOT NULL DEFAULT '{}', version INTEGER NOT NULL DEFAULT 1, archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '', created_by_user_id TEXT NOT NULL DEFAULT '');
-CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',scheme TEXT NOT NULL DEFAULT '',host TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,username TEXT NOT NULL DEFAULT '',password_secret TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',scheme TEXT NOT NULL DEFAULT '',host TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,username TEXT NOT NULL DEFAULT '',password_secret TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',created_by_user_id TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',web_username TEXT NOT NULL DEFAULT '',web_password_secret TEXT NOT NULL DEFAULT '',web_suspended_at TEXT NOT NULL DEFAULT '',web_suspended_reason TEXT NOT NULL DEFAULT '',usd_cny_rate REAL NOT NULL DEFAULT 7.2);
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',connection_id TEXT NOT NULL DEFAULT '',payload_json TEXT NOT NULL DEFAULT '{}',result_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL DEFAULT '',password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
@@ -211,32 +211,66 @@ func (a *App) healthz(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	scope := ownershipFrom(r)
+	accountScope, accountArgs := scope.sqlAnd("created_by_user_id")
+	proxyScope, proxyArgs := scope.sqlAnd("created_by_user_id")
+	jobScope, jobArgs := scope.jobsOwnershipSQL("account_id")
+	linkScope, linkArgs := "", []any(nil)
+	snapScope, snapArgs := "", []any(nil)
+	billScope, billArgs := "", []any(nil)
+	if !scope.Admin {
+		linkScope = ` AND account_id IN (SELECT id FROM accounts WHERE created_by_user_id=?)`
+		linkArgs = []any{scope.UserID}
+		snapScope = linkScope
+		snapArgs = linkArgs
+		billScope = ` AND account_id IN (SELECT id FROM accounts WHERE created_by_user_id=?)`
+		billArgs = []any{scope.UserID}
+	}
 	var counts struct {
 		accounts, archived, ready, linked, observed, proxies, disabledProxies, jobsRunning, jobsQueued, jobsSucceeded, jobsFailed int
 		billRequests, billCost                                                                                                    int64
 	}
 	recent := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+	today := time.Now().UTC().Format("2006-01-02")
+	args := []any{}
+	args = append(args, accountArgs...)
+	args = append(args, accountArgs...)
+	args = append(args, accountArgs...)
+	args = append(args, linkArgs...)
+	args = append(args, recent)
+	args = append(args, snapArgs...)
+	args = append(args, proxyArgs...)
+	args = append(args, proxyArgs...)
+	args = append(args, jobArgs...)
+	args = append(args, jobArgs...)
+	args = append(args, jobArgs...)
+	args = append(args, jobArgs...)
+	args = append(args, today)
+	args = append(args, billArgs...)
+	args = append(args, today)
+	args = append(args, billArgs...)
 	err := a.DB.QueryRowContext(ctx, `SELECT
-(SELECT COUNT(*) FROM accounts WHERE archived=0),
-(SELECT COUNT(*) FROM accounts WHERE archived=1),
-(SELECT COUNT(*) FROM accounts a WHERE a.archived=0 AND a.proxy_id<>'' AND EXISTS(SELECT 1 FROM account_secrets s WHERE s.account_id=a.id AND s.password_secret<>'') AND a.credentials_json NOT IN ('','{}')),
-(SELECT COUNT(*) FROM platform_links WHERE ingestion_state='accepted'),
-(SELECT COUNT(DISTINCT account_id) FROM platform_metric_snapshots WHERE fetched_at>=?),
-(SELECT COUNT(*) FROM proxies WHERE enabled=1),
-(SELECT COUNT(*) FROM proxies WHERE enabled=0),
-(SELECT COUNT(*) FROM jobs WHERE state='running'),
-(SELECT COUNT(*) FROM jobs WHERE state='queued'),
-(SELECT COUNT(*) FROM jobs WHERE state='succeeded'),
-(SELECT COUNT(*) FROM jobs WHERE state='failed'),
-(SELECT COALESCE(SUM(request_count),0) FROM platform_bill_daily WHERE bill_date=?),
-(SELECT COALESCE(SUM(cost_fen),0) FROM platform_bill_daily WHERE bill_date=?)`, recent, time.Now().UTC().Format("2006-01-02"), time.Now().UTC().Format("2006-01-02")).Scan(
+(SELECT COUNT(*) FROM accounts WHERE archived=0`+accountScope+`),
+(SELECT COUNT(*) FROM accounts WHERE archived=1`+accountScope+`),
+(SELECT COUNT(*) FROM accounts a WHERE a.archived=0 AND a.proxy_id<>'' AND EXISTS(SELECT 1 FROM account_secrets s WHERE s.account_id=a.id AND s.password_secret<>'') AND a.credentials_json NOT IN ('','{}')`+strings.Replace(accountScope, "created_by_user_id", "a.created_by_user_id", 1)+`),
+(SELECT COUNT(*) FROM platform_links WHERE ingestion_state='accepted'`+linkScope+`),
+(SELECT COUNT(DISTINCT account_id) FROM platform_metric_snapshots WHERE fetched_at>=?`+snapScope+`),
+(SELECT COUNT(*) FROM proxies WHERE enabled=1`+proxyScope+`),
+(SELECT COUNT(*) FROM proxies WHERE enabled=0`+proxyScope+`),
+(SELECT COUNT(*) FROM jobs WHERE state='running'`+jobScope+`),
+(SELECT COUNT(*) FROM jobs WHERE state='queued'`+jobScope+`),
+(SELECT COUNT(*) FROM jobs WHERE state='succeeded'`+jobScope+`),
+(SELECT COUNT(*) FROM jobs WHERE state='failed'`+jobScope+`),
+(SELECT COALESCE(SUM(request_count),0) FROM platform_bill_daily WHERE bill_date=?`+billScope+`),
+(SELECT COALESCE(SUM(cost_fen),0) FROM platform_bill_daily WHERE bill_date=?`+billScope+`)`, args...).Scan(
 		&counts.accounts, &counts.archived, &counts.ready, &counts.linked, &counts.observed, &counts.proxies, &counts.disabledProxies, &counts.jobsRunning, &counts.jobsQueued, &counts.jobsSucceeded, &counts.jobsFailed, &counts.billRequests, &counts.billCost)
 	if err != nil {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
 	}
 	plansByCount := map[string]int{}
-	rows, err := a.DB.QueryContext(ctx, `SELECT CASE WHEN plan='' THEN '未设置' ELSE plan END,COUNT(*) FROM accounts WHERE archived=0 GROUP BY plan ORDER BY COUNT(*) DESC`)
+	planQuery := `SELECT CASE WHEN plan='' THEN '未设置' ELSE plan END,COUNT(*) FROM accounts WHERE archived=0` + accountScope + ` GROUP BY plan ORDER BY COUNT(*) DESC`
+	rows, err := a.DB.QueryContext(ctx, planQuery, accountArgs...)
 	if err != nil {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
@@ -262,7 +296,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
 	}
-	webHealth, err := a.webDashboard(ctx)
+	webHealth, err := a.webDashboard(ctx, scope)
 	if err != nil {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
@@ -384,6 +418,7 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ownershipFrom(r).filterCreatedBy(&f, "t.created_by_user_id")
 	ctx := r.Context()
 	total := 0
 	limit, offset := unpagedAccountLimit, 0
@@ -394,9 +429,13 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		limit, offset = size, (page-1)*size
 	}
-	order := `t.created_at DESC,t.rid DESC`
+	// Default: platform ID high→low (numeric). Empty IDs sink to the end so
+	// paging stays stable across pages for the same sort.
+	order := `(t.platform_account_id='') ASC, CAST(t.platform_account_id AS INTEGER) DESC, t.created_at DESC, t.rid DESC`
 	switch strings.TrimSpace(r.URL.Query().Get("sort")) {
-	case "", "created_desc":
+	case "", "platform_id_desc":
+	case "created_desc":
+		order = `t.created_at DESC,t.rid DESC`
 	case "five_hour_desc":
 		order = `t.five_hour_used DESC NULLS LAST,t.created_at DESC,t.rid DESC`
 	default:
@@ -486,6 +525,9 @@ func (a *App) createAccount(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusUnprocessableEntity, "PROXY_INVALID", err.Error())
 			return
 		}
+		if !a.requireProxyBindable(w, r, proxyID) {
+			return
+		}
 	}
 	id, t := newID(), now()
 	metadataJSON, _ := json.Marshal(pickMetadata(in))
@@ -523,6 +565,9 @@ func (a *App) createAccount(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) accountGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if _, ok := a.requireVisible(w, r, "accounts", id, "账号不存在"); !ok {
+		return
+	}
 	var account, plan, credentials string
 	var version int
 	if err := a.DB.QueryRowContext(r.Context(), `SELECT account,plan,credentials_json,version FROM accounts WHERE id=?`, id).Scan(&account, &plan, &credentials, &version); err != nil {
@@ -543,6 +588,9 @@ func (a *App) accountGet(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) accountPatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !a.requireMutable(w, r, "accounts", id, "账号不存在") {
+		return
+	}
 	var in map[string]any
 	if !decodeJSON(w, r, &in, defaultBodyLimit) {
 		return
@@ -587,6 +635,11 @@ func (a *App) accountPatch(w http.ResponseWriter, r *http.Request) {
 	if err := problems.Err(); err != nil {
 		writeError(w, r, err)
 		return
+	}
+	if raw, ok := in["proxy_id"]; ok {
+		if proxyID, _ := raw.(string); !a.requireProxyBindable(w, r, strings.TrimSpace(proxyID)) {
+			return
+		}
 	}
 	if len(sets) == 0 {
 		fail(w, http.StatusUnprocessableEntity, "VALIDATION_FAILED", "没有可更新字段")
@@ -643,6 +696,9 @@ func (a *App) accountPatch(w http.ResponseWriter, r *http.Request) {
 func (a *App) accountArchive(archived bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		if !a.requireMutable(w, r, "accounts", id, "账号不存在") {
+			return
+		}
 		res, err := a.DB.ExecContext(r.Context(), `UPDATE accounts SET archived=?,version=version+1,updated_at=? WHERE id=?`, boolInt(archived), now(), id)
 		if err != nil {
 			writeError(w, r, storageError(err, "账号状态更新失败"))
@@ -667,6 +723,9 @@ func (a *App) accountArchive(archived bool) http.HandlerFunc {
 // submission) blocks deletion so inventory on the platform is never orphaned.
 func (a *App) accountDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !a.requireMutable(w, r, "accounts", id, "账号不存在") {
+		return
+	}
 	ctx := r.Context()
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -727,6 +786,9 @@ func (a *App) accountDelete(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) accountCredentials(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !a.requireMutable(w, r, "accounts", id, "账号不存在") {
+		return
+	}
 	if a.keys == nil {
 		fail(w, http.StatusServiceUnavailable, "ENCRYPTION_KEY_REQUIRED", "未配置凭证加密密钥")
 		return
@@ -776,17 +838,24 @@ func (a *App) accountCredentials(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) accountPreflight(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := a.requireVisible(w, r, "accounts", id, "账号不存在"); !ok {
+		return
+	}
 	var req struct {
 		PlatformConnectionID string `json:"platform_connection_id"`
 	}
 	if !decodeOptionalJSON(w, r, &req, 16<<10) {
 		return
 	}
-	write(w, http.StatusOK, a.preflight(r.PathValue("id"), req.PlatformConnectionID))
+	write(w, http.StatusOK, a.preflight(id, req.PlatformConnectionID))
 }
 
 func (a *App) accountPlatformUsage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if _, ok := a.requireVisible(w, r, "accounts", id, "账号不存在"); !ok {
+		return
+	}
 	out := map[string]any{"account_id": id, "metrics": []any{}, "bills": []any{}}
 	metrics, err := a.DB.QueryContext(r.Context(), `SELECT upstream_id,COALESCE(alias,''),COALESCE(runtime_status,''),window_start,window_end,requests,prompt_tokens,completion_tokens,success_rate,fetched_at,freshness_state FROM platform_metric_snapshots WHERE account_id=? ORDER BY fetched_at DESC LIMIT 30`, id)
 	if err != nil {
@@ -862,7 +931,15 @@ func (a *App) proxies(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listProxies(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.QueryContext(r.Context(), `SELECT p.id,p.name,p.scheme,p.host,p.port,p.enabled,p.version,p.username,p.password_secret<>'',c.ok,c.latency_ms,COALESCE(c.exit_ip,''),COALESCE(c.error_code,''),COALESCE(c.checked_at,''),COALESCE(d.route_mode,'unknown'),COALESCE(d.message,'') FROM proxies p LEFT JOIN proxy_checks c ON c.id=(SELECT id FROM proxy_checks WHERE proxy_id=p.id ORDER BY checked_at DESC,rowid DESC LIMIT 1) LEFT JOIN proxy_check_details d ON d.check_id=c.id ORDER BY p.created_at DESC,p.rowid DESC`)
+	scope := ownershipFrom(r)
+	query := `SELECT p.id,p.name,p.scheme,p.host,p.port,p.enabled,p.version,p.username,p.password_secret<>'',c.ok,c.latency_ms,COALESCE(c.exit_ip,''),COALESCE(c.error_code,''),COALESCE(c.checked_at,''),COALESCE(d.route_mode,'unknown'),COALESCE(d.message,''),COALESCE(p.created_by_user_id,'') FROM proxies p LEFT JOIN proxy_checks c ON c.id=(SELECT id FROM proxy_checks WHERE proxy_id=p.id ORDER BY checked_at DESC,rowid DESC LIMIT 1) LEFT JOIN proxy_check_details d ON d.check_id=c.id`
+	args := []any{}
+	if !scope.Admin {
+		query += ` WHERE p.created_by_user_id=?`
+		args = append(args, scope.UserID)
+	}
+	query += ` ORDER BY p.created_at DESC,p.rowid DESC`
+	rows, err := a.DB.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, r, storageError(err, "代理读取失败"))
 		return
@@ -870,12 +947,12 @@ func (a *App) listProxies(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []any{}
 	for rows.Next() {
-		var id, name, scheme, host, username string
+		var id, name, scheme, host, username, createdBy string
 		var port, enabled, version int
 		var hasPassword bool
 		var ok, latency sql.NullInt64
 		var exitIP, code, checkedAt, route, message string
-		if err = rows.Scan(&id, &name, &scheme, &host, &port, &enabled, &version, &username, &hasPassword, &ok, &latency, &exitIP, &code, &checkedAt, &route, &message); err != nil {
+		if err = rows.Scan(&id, &name, &scheme, &host, &port, &enabled, &version, &username, &hasPassword, &ok, &latency, &exitIP, &code, &checkedAt, &route, &message, &createdBy); err != nil {
 			writeError(w, r, storageError(err, "代理读取失败"))
 			return
 		}
@@ -888,7 +965,7 @@ func (a *App) listProxies(w http.ResponseWriter, r *http.Request) {
 			}
 			latest = map[string]any{"ok": ok.Int64 == 1, "latency_ms": latency.Int64, "exit_ip": exitIP, "error_code": code, "checked_at": checkedAt, "route_mode": route, "message": message}
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "scheme": scheme, "host": host, "port": port, "enabled": enabled == 1, "version": version, "username": username, "password_configured": hasPassword, "latest_check": latest})
+		out = append(out, map[string]any{"id": id, "name": name, "scheme": scheme, "host": host, "port": port, "enabled": enabled == 1, "version": version, "username": username, "password_configured": hasPassword, "latest_check": latest, "created_by_user_id": createdBy})
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, r, storageError(err, "代理读取失败"))
@@ -923,7 +1000,7 @@ func (a *App) createProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := a.DB.ExecContext(r.Context(), `INSERT INTO proxies(id,name,scheme,host,port,username,password_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), scheme, host, port, username, secret, t, t); err != nil {
+	if _, err := a.DB.ExecContext(r.Context(), `INSERT INTO proxies(id,name,scheme,host,port,username,password_secret,created_at,updated_at,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), scheme, host, port, username, secret, t, t, sessionUser(r).ID); err != nil {
 		dbError(w, r, err, "PROXY_EXISTS", "代理已存在", "代理保存失败")
 		return
 	}
@@ -1212,6 +1289,10 @@ func (a *App) jobs(w http.ResponseWriter, r *http.Request) {
 	f.contains("connection_id", q.Get("connection_id"))
 	f.dateRange("created_at", q.Get("created_from"), q.Get("created_to"))
 	f.keyword(q.Get("q"), "id", "account_id", "kind", "state", "connection_id")
+	if frag, args := ownershipFrom(r).jobsOwnershipSQL("account_id"); frag != "" {
+		f.where = append(f.where, strings.TrimPrefix(frag, " AND "))
+		f.args = append(f.args, args...)
+	}
 	total := 0
 	limit, offset := 2000, 0
 	if paged {

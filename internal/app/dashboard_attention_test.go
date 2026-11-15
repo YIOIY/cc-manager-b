@@ -57,7 +57,7 @@ func TestDashboardAttentionOrdersAndCounts(t *testing.T) {
 	if _, err := a.DB.Exec(`INSERT INTO accounts(id,account,plan,plan_end_time,created_at,updated_at) VALUES('draft','draft@example.test','claude/cc-pro',?,?,?)`, time.Now().AddDate(0, 0, 1).Format("2006-01-02"), now(), now()); err != nil {
 		t.Fatal(err)
 	}
-	items, counts, err := a.attentionItems(context.Background(), time.Now())
+	items, counts, err := a.attentionItems(context.Background(), time.Now(), ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestDashboardAttentionOrdersAndCounts(t *testing.T) {
 	if _, err := a.DB.Exec(`UPDATE platform_remote_accounts SET plan_end_time=? WHERE upstream_id='428802'`, time.Now().In(loc).AddDate(0, 0, -3).Format("2006-01-02")); err != nil {
 		t.Fatal(err)
 	}
-	items, _, _ = a.attentionItems(context.Background(), time.Now())
+	items, _, _ = a.attentionItems(context.Background(), time.Now(), ownershipScope{Admin: true})
 	if items[3].Account != "one@example.test" || items[3].Value != -3 || items[3].Severity != "danger" {
 		t.Fatalf("expired item=%+v", items[3])
 	}
@@ -110,7 +110,7 @@ func TestDashboardAttentionOrdersAndCounts(t *testing.T) {
 func TestDashboardAttentionWithoutWebChannel(t *testing.T) {
 	a, _, _, _ := deliveryFixture(t)
 	linkFixtureAccount(t, a)
-	items, counts, err := a.attentionItems(context.Background(), time.Now())
+	items, counts, err := a.attentionItems(context.Background(), time.Now(), ownershipScope{Admin: true})
 	if err != nil || len(items) != 0 {
 		t.Fatalf("items=%v err=%v", items, err)
 	}
@@ -126,7 +126,7 @@ func TestDashboardAttentionWithoutWebChannel(t *testing.T) {
 	if _, err := a.DB.Exec(`UPDATE accounts SET plan_end_time='2026-11-16' WHERE id='acc-m'`); err != nil {
 		t.Fatal(err)
 	}
-	items, counts, err = a.attentionItems(context.Background(), at)
+	items, counts, err = a.attentionItems(context.Background(), at, ownershipScope{Admin: true})
 	if err != nil || len(items) != 1 || items[0].Kind != "expiring" || items[0].Value != 3 || counts["expiring"] != 1 {
 		t.Fatalf("local fallback items=%+v counts=%v err=%v", items, counts, err)
 	}

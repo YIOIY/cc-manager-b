@@ -134,8 +134,9 @@ type billRunPlan struct {
 
 // createBillRun validates the request, freezes its scope and queues the run.
 // Each step returns a *billAPIError for client faults; anything else is a
-// storage failure.
-func (a *App) createBillRun(ctx context.Context, input billSyncRequest, key, parent string) (map[string]any, error) {
+// storage failure. Non-admin scopes only include accounts the caller created;
+// background schedulers pass Admin so they still cover the full fleet.
+func (a *App) createBillRun(ctx context.Context, input billSyncRequest, key, parent string, scope ownershipScope) (map[string]any, error) {
 	input, keyHash, err := normalizeBillRequest(input, key)
 	if err != nil {
 		return nil, err
@@ -154,7 +155,7 @@ func (a *App) createBillRun(ctx context.Context, input billSyncRequest, key, par
 		return nil, billBad("BILL_WINDOW_INVALID", "同步日期必须在平台时区今天及此前 90 天内，且起止顺序正确")
 	}
 	input.From, input.To = dates.StartDate, dates.EndDate
-	links, err := a.collectBillLinks(ctx, input)
+	links, err := a.collectBillLinks(ctx, input, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -245,11 +246,16 @@ func (a *App) resolveBillConnection(ctx context.Context, connectionID string) (b
 }
 
 // collectBillLinks resolves the accepted platform links in scope.
-func (a *App) collectBillLinks(ctx context.Context, input billSyncRequest) ([]billLink, error) {
+// Non-admins only receive links for accounts they created.
+func (a *App) collectBillLinks(ctx context.Context, input billSyncRequest, scope ownershipScope) ([]billLink, error) {
 	query := `SELECT l.account_id,l.upstream_id FROM platform_links l JOIN accounts a ON a.id=l.account_id WHERE l.connection_id=? AND l.ingestion_state='accepted'`
 	args := []any{input.ConnectionID}
 	if !input.IncludeArchived {
 		query += ` AND a.archived=0`
+	}
+	if frag, ownerArgs := scope.sqlAnd("a.created_by_user_id"); frag != "" {
+		query += frag
+		args = append(args, ownerArgs...)
 	}
 	if input.Scope == "selected" {
 		query += ` AND l.account_id IN (` + marks(len(input.AccountIDs)) + `)`

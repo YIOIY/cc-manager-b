@@ -41,7 +41,7 @@ export function useListPage<T extends ListRow = ListRow>(
   const conditions = ref<Conditions>({})
   const filtersOpen = ref(false)
   const currentPage = ref(1)
-  const pageSize = ref(10)
+  const pageSize = ref(20)
   const serverTotal = ref(0)
   let sequence = 0
   const serverPaged = computed(() => !!config.value?.serverPaged)

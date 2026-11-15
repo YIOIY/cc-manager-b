@@ -105,6 +105,9 @@ func profileConflict(w http.ResponseWriter, msg string) {
 // snapshot plus the local account are brought in line afterwards.
 func (a *App) platformProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !a.requireMutable(w, r, "accounts", id, "账号不存在") {
+		return
+	}
 	var in struct {
 		Changes map[string]string `json:"changes"`
 		Base    map[string]string `json:"base"`

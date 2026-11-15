@@ -371,6 +371,7 @@ export interface Proxy extends ProxyOption {
   username: string
   password_configured: boolean
   latest_check: ProxyCheck | null
+  created_by_user_id?: string
 }
 
 /** Picker option from GET /lookups/platform-connections; never carries the token. */

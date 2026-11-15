@@ -161,14 +161,10 @@ func (a *App) importCommit(w http.ResponseWriter, r *http.Request, id string) {
 	if !decodeOptionalJSON(w, r, &in, 16<<10) {
 		return
 	}
-	tx, err := a.DB.BeginTx(r.Context(), nil)
-	if err != nil {
-		writeError(w, r, storageError(err, "导入失败"))
-		return
-	}
-	defer tx.Rollback()
+	// Load and validate proxies before BeginTx: SQLite uses MaxOpenConns(1), so
+	// requireProxyBindable (a.DB) would deadlock if called while a tx is held.
 	var rows, expires, state string
-	if err = tx.QueryRow(`SELECT rows_json,expires_at,state FROM imports WHERE id=?`, id).Scan(&rows, &expires, &state); err != nil {
+	if err := a.DB.QueryRowContext(r.Context(), `SELECT rows_json,expires_at,state FROM imports WHERE id=?`, id).Scan(&rows, &expires, &state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fail(w, 404, "NOT_FOUND", "导入不存在")
 			return
@@ -181,6 +177,33 @@ func (a *App) importCommit(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	var items []map[string]any
+	if json.Unmarshal([]byte(rows), &items) != nil {
+		writeError(w, r, storageError(errors.New("rows_json is not a JSON array"), "导入数据损坏"))
+		return
+	}
+	seenProxy := map[string]bool{}
+	for _, m := range items {
+		if proxyID := str(m, "proxy_id"); proxyID != "" && !seenProxy[proxyID] {
+			seenProxy[proxyID] = true
+			if !a.requireProxyBindable(w, r, proxyID) {
+				return
+			}
+		}
+	}
+	tx, err := a.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, r, storageError(err, "导入失败"))
+		return
+	}
+	defer tx.Rollback()
+	if err = tx.QueryRow(`SELECT rows_json,expires_at,state FROM imports WHERE id=?`, id).Scan(&rows, &expires, &state); err != nil {
+		writeError(w, r, storageError(err, "导入失败"))
+		return
+	}
+	if state != "preview" || time.Now().After(parseTime(expires)) {
+		fail(w, 409, "IMPORT_EXPIRED", "导入预览已过期")
+		return
+	}
 	if json.Unmarshal([]byte(rows), &items) != nil {
 		writeError(w, r, storageError(errors.New("rows_json is not a JSON array"), "导入数据损坏"))
 		return
@@ -251,6 +274,9 @@ const importPreviewTTL = 30 * time.Minute
 
 func (a *App) proxyArchive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !a.requireMutable(w, r, "proxies", id, "代理不存在") {
+		return
+	}
 	res, err := a.DB.ExecContext(r.Context(), `UPDATE proxies SET enabled=0,version=version+1,updated_at=? WHERE id=?`, now(), id)
 	if err != nil {
 		writeError(w, r, storageError(err, "代理归档失败"))
@@ -266,6 +292,9 @@ func (a *App) proxyArchive(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) proxyTest(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if _, ok := a.requireVisible(w, r, "proxies", id, "代理不存在"); !ok {
+		return
+	}
 	var enabled int
 	if a.DB.QueryRow(`SELECT enabled FROM proxies WHERE id=?`, id).Scan(&enabled) != nil || enabled == 0 {
 		fail(w, 404, "NOT_FOUND", "代理不存在")
@@ -281,6 +310,9 @@ func (a *App) proxyTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) proxyChecks(w http.ResponseWriter, r *http.Request, id string) {
+	if _, ok := a.requireVisible(w, r, "proxies", id, "代理不存在"); !ok {
+		return
+	}
 	rows, err := a.DB.QueryContext(r.Context(), `SELECT c.id,c.ok,c.latency_ms,COALESCE(c.exit_ip,''),COALESCE(c.error_code,''),c.checked_at,COALESCE(d.stage,''),COALESCE(d.message,''),COALESCE(d.route_mode,'unknown'),COALESCE(d.warning,'') FROM proxy_checks c LEFT JOIN proxy_check_details d ON d.check_id=c.id WHERE c.proxy_id=? ORDER BY c.checked_at DESC,c.rowid DESC LIMIT 100`, id)
 	if err != nil {
 		writeError(w, r, storageError(err, "读取检测记录失败"))
@@ -314,6 +346,9 @@ func (a *App) proxyChecks(w http.ResponseWriter, r *http.Request, id string) {
 // clear_password is true. expected_version guards concurrent edits.
 func (a *App) proxyUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !a.requireMutable(w, r, "proxies", id, "代理不存在") {
+		return
+	}
 	var in map[string]any
 	if !decodeJSON(w, r, &in, defaultBodyLimit) {
 		return
@@ -386,6 +421,9 @@ func (a *App) proxyUpdate(w http.ResponseWriter, r *http.Request) {
 // account submits through; archived accounts are unbound.
 func (a *App) proxyDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !a.requireMutable(w, r, "proxies", id, "代理不存在") {
+		return
+	}
 	ctx := r.Context()
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {

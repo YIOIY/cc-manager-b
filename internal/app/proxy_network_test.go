@@ -469,12 +469,12 @@ func TestLocalProxyFailureDoesNotBlockRemoteOnboarding(t *testing.T) {
 		t.Fatal("local detection still blocks supplier submission")
 	}
 	w = httptest.NewRecorder()
-	a.proxyChecks(w, httptest.NewRequest("GET", "/proxies/unreachable/checks", nil), "unreachable")
+	a.proxyChecks(w, withAdminSession(httptest.NewRequest("GET", "/proxies/unreachable/checks", nil)), "unreachable")
 	if !strings.Contains(w.Body.String(), "TARGET_CONNECT_FAILED") || !strings.Contains(w.Body.String(), `"route_mode":"direct"`) {
 		t.Fatal(w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	a.proxies(w, httptest.NewRequest("GET", "/proxies", nil))
+	a.proxies(w, withAdminSession(httptest.NewRequest("GET", "/proxies", nil)))
 	if !strings.Contains(w.Body.String(), `"latest_check"`) || !strings.Contains(w.Body.String(), "TARGET_CONNECT_FAILED") {
 		t.Fatal(w.Body.String())
 	}

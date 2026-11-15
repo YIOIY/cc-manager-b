@@ -23,6 +23,14 @@ export function can(permission: Permission): boolean {
   return !!user.value?.permissions.includes(permission)
 }
 
+/** True when the signed-in user may mutate a row with this created_by_user_id. */
+export function owns(createdByUserId?: string | null): boolean {
+  const me = user.value
+  if (!me?.id) return false
+  if (createdByUserId && createdByUserId === me.id) return true
+  return !createdByUserId && !!me.is_admin
+}
+
 onUnauthorized(() => {
   authenticated.value = false
   user.value = null
@@ -100,6 +108,7 @@ export function useSession() {
     checked: computed(() => checked.value),
     user: computed(() => user.value),
     can,
+    owns,
     check,
     login,
     logout,

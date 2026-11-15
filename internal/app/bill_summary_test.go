@@ -48,7 +48,7 @@ func TestBillSummaryForwardsOneWholeRangeWithDeliveryIDsAndPreservesMissing(t *t
 		fmt.Fprintf(w, `{"list":[{"id":1,"request_count":1234,"prompt_tokens":100000,"completion_tokens":50000,"cache_read_input_tokens":3000,"cache_write_input_tokens":1000,"cost":12.34},{"id":2,"request_count":0,"prompt_tokens":0,"completion_tokens":0,"cache_read_input_tokens":0,"cache_write_input_tokens":0,"cost":0},{"id":4,"cost":null}],"range":{"start_ds":%q,"end_ds":%q}}`, sent.StartDate, sent.EndDate)
 	})
 	a.DB.Exec(`UPDATE platform_links SET upstream_aid='99999'`)
-	result, err := a.readBillSummary(context.Background(), in)
+	result, err := a.readBillSummary(context.Background(), in, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestBillSummaryValidatesContractBeforeCallingPlatform(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			input := valid
 			tc.edit(&input)
-			if _, err := a.readBillSummary(context.Background(), input); err == nil {
+			if _, err := a.readBillSummary(context.Background(), input, ownershipScope{Admin: true}); err == nil {
 				t.Fatal("invalid request accepted")
 			}
 		})
@@ -111,7 +111,7 @@ func TestBillSummaryValidatesContractBeforeCallingPlatform(t *testing.T) {
 	}
 	valid.StartDate = today.AddDate(0, 0, -90).Format("20060102")
 	valid.EndDate = today.AddDate(0, 0, 1).Format("20060102")
-	result, err := a.readBillSummary(context.Background(), valid)
+	result, err := a.readBillSummary(context.Background(), valid, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestBillSummaryValidatesContractBeforeCallingPlatform(t *testing.T) {
 	if _, err = a.DB.Exec(`UPDATE platform_connections SET enabled=0`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.readBillSummary(context.Background(), valid); err == nil || calls != 1 {
+	if _, err = a.readBillSummary(context.Background(), valid, ownershipScope{Admin: true}); err == nil || calls != 1 {
 		t.Fatal("disabled connection queried")
 	}
 }
@@ -132,7 +132,7 @@ func TestBillSummaryShowsEffectiveRangeAndSumsWithoutOverflow(t *testing.T) {
 		json.NewDecoder(r.Body).Decode(&sent)
 		fmt.Fprintf(w, `{"list":[{"id":1,"request_count":9223372036854775807,"prompt_tokens":0,"completion_tokens":0,"cache_read_input_tokens":0,"cache_write_input_tokens":0,"cost":0.01},{"id":2,"request_count":9223372036854775807,"prompt_tokens":0,"completion_tokens":0,"cache_read_input_tokens":0,"cache_write_input_tokens":0,"cost":0.02}],"range":{"start_ds":%q,"end_ds":%q}}`, strings.ReplaceAll(sent.EndDate, "-", ""), sent.EndDate)
 	})
-	result, err := a.readBillSummary(context.Background(), in)
+	result, err := a.readBillSummary(context.Background(), in, ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestBillSummaryErrorsDoNotBecomeZeroBills(t *testing.T) {
 		code   string
 	}{{404, "BILL_ACCOUNT_NOT_FOUND"}, {401, "BILL_ACCESS_DENIED"}, {403, "BILL_ACCESS_DENIED"}, {429, "BILL_RATE_LIMITED"}, {500, "BILL_UPSTREAM_ERROR"}, {200, "BILL_RESPONSE_ERROR"}} {
 		status = tc.status
-		value, err := a.readBillSummary(context.Background(), in)
+		value, err := a.readBillSummary(context.Background(), in, ownershipScope{Admin: true})
 		var problem *errs.Error
 		if value != nil || !errors.As(err, &problem) || problem.Code() != tc.code {
 			t.Fatalf("status=%d value=%v error=%v", status, value, err)

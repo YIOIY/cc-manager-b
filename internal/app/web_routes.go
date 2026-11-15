@@ -235,7 +235,8 @@ func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "平台账号读取失败"))
 		return
 	}
-	counts, err := a.remoteStatusCounts(ctx, connectionID)
+	// Connection drawer inventory stays unscoped (remoteAccounts).
+	counts, err := a.remoteStatusCounts(ctx, connectionID, ownershipScope{Admin: true})
 	if err != nil {
 		writeError(w, r, storageError(err, "平台账号读取失败"))
 		return
@@ -263,15 +264,24 @@ func (n *nullInt) Scan(v any) error {
 }
 
 // remoteStatusCounts counts the currently listed (non-missing) remote
-// accounts per console status.
-func (a *App) remoteStatusCounts(ctx context.Context, connectionID string) (map[string]int, error) {
-	query := `SELECT ext_status,COUNT(*) FROM platform_remote_accounts WHERE missing_since=''`
+// accounts per console status. Non-admins only see remotes linked to
+// accounts they created.
+func (a *App) remoteStatusCounts(ctx context.Context, connectionID string, scope ownershipScope) (map[string]int, error) {
+	query := `SELECT r.ext_status,COUNT(*) FROM platform_remote_accounts r`
 	args := []any{}
+	if !scope.Admin {
+		query += ` JOIN accounts a ON a.id=r.account_id`
+	}
+	query += ` WHERE r.missing_since=''`
 	if connectionID != "" {
-		query += ` AND connection_id=?`
+		query += ` AND r.connection_id=?`
 		args = append(args, connectionID)
 	}
-	rows, err := a.DB.QueryContext(ctx, query+` GROUP BY ext_status`, args...)
+	if frag, ownerArgs := scope.sqlAnd("a.created_by_user_id"); frag != "" {
+		query += frag
+		args = append(args, ownerArgs...)
+	}
+	rows, err := a.DB.QueryContext(ctx, query+` GROUP BY r.ext_status`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +304,7 @@ func (a *App) remoteStatusCounts(ctx context.Context, connectionID string) (map[
 // webDashboard adds the web channel's figures to the dashboard "platform"
 // block: its sync health, status counts, near-limit accounts and today's
 // per-model spend.
-func (a *App) webDashboard(ctx context.Context) (map[string]any, error) {
+func (a *App) webDashboard(ctx context.Context, scope ownershipScope) (map[string]any, error) {
 	accountsHealth, err := a.syncHealth(ctx, "web-accounts")
 	if err != nil {
 		return nil, err
@@ -314,15 +324,21 @@ func (a *App) webDashboard(ctx context.Context) (map[string]any, error) {
 	case accountsHealth["sync_status"] == "never" && billsHealth["sync_status"] == "ok":
 		worse = billsHealth
 	}
-	counts, err := a.remoteStatusCounts(ctx, "")
+	counts, err := a.remoteStatusCounts(ctx, "", scope)
 	if err != nil {
 		return nil, err
 	}
 	var nearLimit int
-	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM platform_remote_accounts WHERE missing_since='' AND five_hour_used>=0.8`).Scan(&nearLimit); err != nil {
+	nearQuery := `SELECT COUNT(*) FROM platform_remote_accounts WHERE missing_since='' AND five_hour_used>=0.8`
+	nearArgs := []any{}
+	if !scope.Admin {
+		nearQuery = `SELECT COUNT(*) FROM platform_remote_accounts r JOIN accounts a ON a.id=r.account_id WHERE r.missing_since='' AND r.five_hour_used>=0.8 AND a.created_by_user_id=?`
+		nearArgs = []any{scope.UserID}
+	}
+	if err = a.DB.QueryRowContext(ctx, nearQuery, nearArgs...).Scan(&nearLimit); err != nil {
 		return nil, err
 	}
-	spend, err := a.spendSummary(ctx, time.Now())
+	spend, err := a.spendSummary(ctx, time.Now(), scope)
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +367,7 @@ const spendWindowDays = 7
 // spendSummary aggregates the per-model bills of every enabled connection
 // over its own local "today" and the 6 days before, merging connections by
 // local date string.
-func (a *App) spendSummary(ctx context.Context, at time.Time) (map[string]any, error) {
+func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipScope) (map[string]any, error) {
 	rows, err := a.DB.QueryContext(ctx, `SELECT id,timezone FROM platform_connections WHERE enabled=1`)
 	if err != nil {
 		return nil, err
@@ -381,11 +397,13 @@ func (a *App) spendSummary(ctx context.Context, at time.Time) (map[string]any, e
 	}{}
 	var today, week int64
 	latestToday, latestStart := "", ""
+	ownerSQL, ownerArgs := scope.sqlAnd("acc.created_by_user_id")
 	for _, c := range conns {
 		if c.today > latestToday {
 			latestToday, latestStart = c.today, c.start
 		}
-		billRows, err := a.DB.QueryContext(ctx, `SELECT b.bill_date,b.model_name,b.account_id,COALESCE(acc.account,''),b.cost_fen FROM platform_bill_models b LEFT JOIN accounts acc ON acc.id=b.account_id WHERE b.connection_id=? AND b.bill_date>=? AND b.bill_date<=?`, c.id, c.start, c.today)
+		args := append([]any{c.id, c.start, c.today}, ownerArgs...)
+		billRows, err := a.DB.QueryContext(ctx, `SELECT b.bill_date,b.model_name,b.account_id,COALESCE(acc.account,''),b.cost_fen FROM platform_bill_models b LEFT JOIN accounts acc ON acc.id=b.account_id WHERE b.connection_id=? AND b.bill_date>=? AND b.bill_date<=?`+ownerSQL, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -502,6 +520,10 @@ func (a *App) billModels(w http.ResponseWriter, r *http.Request) {
 	}
 	where := ` WHERE b.connection_id=? AND b.bill_date>=? AND b.bill_date<=?`
 	args := []any{connectionID, dates.StartDate, dates.EndDate}
+	if frag, ownerArgs := ownershipFrom(r).sqlAnd("a.created_by_user_id"); frag != "" {
+		where += frag
+		args = append(args, ownerArgs...)
+	}
 	if raw := strings.TrimSpace(q.Get("account_ids")); raw != "" {
 		ids := uniqueSorted(strings.Split(raw, ","))
 		where += ` AND b.account_id IN (` + marks(len(ids)) + `)`
@@ -665,6 +687,9 @@ func (a *App) billModelsSync(w http.ResponseWriter, r *http.Request) {
 // accountUsageHistory answers GET /api/v1/accounts/{id}/platform-usage-history.
 func (a *App) accountUsageHistory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if _, ok := a.requireVisible(w, r, "accounts", id, "账号不存在"); !ok {
+		return
+	}
 	days := 7
 	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -673,15 +698,6 @@ func (a *App) accountUsageHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		days = n
-	}
-	var exists int
-	if err := a.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM accounts WHERE id=?`, id).Scan(&exists); err != nil {
-		writeError(w, r, storageError(err, "账号读取失败"))
-		return
-	}
-	if exists == 0 {
-		fail(w, http.StatusNotFound, "NOT_FOUND", "账号不存在")
-		return
 	}
 	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UTC().Format(time.RFC3339)
 	rows, err := a.DB.QueryContext(r.Context(), `SELECT observed_at,usage_cost_micro,usage_input_tokens,usage_output_tokens,five_hour_used,five_hour_reset_at,week_used,week_reset_at FROM platform_usage_snapshots WHERE account_id=? AND observed_at>=? ORDER BY observed_at,rowid`, id, since)

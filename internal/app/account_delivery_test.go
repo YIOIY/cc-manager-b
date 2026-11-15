@@ -67,9 +67,17 @@ func deliveryBody() map[string]any {
 	return map[string]any{"account": "workflow@example.test", "password": "fixture-password", "plan": "claude/cc-max-20x", "register_location": "US", "register_time": "2026-11-04", "plan_start_time": "2026-11-04", "plan_end_time": "2026-12-04", "platform_connection_id": "conn", "auth_json": map[string]any{"id_token": "", "access_token": "fixture-access", "refresh_token": "fixture-refresh", "last_refresh": "2026-11-04T00:00:00Z", "email": "workflow@example.test", "account_uuid": "account-uuid", "organization_uuid": "org-uuid", "organization_name": "Fixture", "claude_device_ids": []any{"device-id"}, "type": "claude", "expired": "2026-12-04T00:00:00Z", "proxy_url": "http://127.0.0.1:9090", "verification_status": "verified"}}
 }
 
+// withAdminSession attaches a synthetic admin identity so handlers that
+// enforce row ownership still work when called outside the HTTP middleware.
+func withAdminSession(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), sessionUserKey, sessionUserInfo{
+		ID: "test-admin", Username: "test-admin", Access: access{Super: true},
+	}))
+}
+
 func onboardRequest(a *App, body map[string]any, key string, existing ...string) *httptest.ResponseRecorder {
 	encoded, _ := json.Marshal(body)
-	r := httptest.NewRequest("POST", "/api/v1/accounts/onboard", bytes.NewReader(encoded))
+	r := withAdminSession(httptest.NewRequest("POST", "/api/v1/accounts/onboard", bytes.NewReader(encoded)))
 	r.Header.Set("Idempotency-Key", key)
 	w := httptest.NewRecorder()
 	a.onboardAccount(w, r, existing...)
@@ -88,7 +96,7 @@ func responseData(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 func deliveryAccount(t *testing.T, a *App) map[string]any {
 	t.Helper()
 	w := httptest.NewRecorder()
-	a.accounts(w, httptest.NewRequest("GET", "/accounts", nil))
+	a.accounts(w, withAdminSession(httptest.NewRequest("GET", "/accounts", nil)))
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
@@ -105,7 +113,7 @@ func deliveryAccount(t *testing.T, a *App) map[string]any {
 }
 func submitRequest(a *App, id, key string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/accounts/"+id+"/submit", strings.NewReader(`{"platform_connection_id":"conn"}`))
+	r := withAdminSession(httptest.NewRequest("POST", "/accounts/"+id+"/submit", strings.NewReader(`{"platform_connection_id":"conn"}`)))
 	r.Header.Set("Idempotency-Key", key)
 	a.submitExistingAccount(w, r, id)
 	return w
@@ -201,7 +209,7 @@ func TestUncertainSubmissionIsNeverAutomaticallyResent(t *testing.T) {
 func TestDraftCanBeCompletedAndSubmittedInOneOperation(t *testing.T) {
 	a, _, _, _ := deliveryFixture(t)
 	w := httptest.NewRecorder()
-	a.accounts(w, httptest.NewRequest("POST", "/accounts", strings.NewReader(`{"account":"workflow@example.test","plan":"claude/cc-max-20x"}`)))
+	a.accounts(w, withAdminSession(httptest.NewRequest("POST", "/accounts", strings.NewReader(`{"account":"workflow@example.test","plan":"claude/cc-max-20x"}`))))
 	if w.Code != 201 {
 		t.Fatal(w.Body.String())
 	}
@@ -299,7 +307,7 @@ func TestCompleteRejectedAccountReusesStoredCredentialsAndKeepsIdentity(t *testi
 
 func deleteRequest(a *App, id string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("DELETE", "/accounts/"+id, nil)
+	r := withAdminSession(httptest.NewRequest("DELETE", "/accounts/"+id, nil))
 	r.SetPathValue("id", id)
 	a.accountDelete(w, r)
 	return w
@@ -390,7 +398,7 @@ func TestOnboardReportsEveryProblemAtOnce(t *testing.T) {
 func TestPreflightChecksCarryMessagesAndFields(t *testing.T) {
 	a, _, _, _ := deliveryFixture(t)
 	w := httptest.NewRecorder()
-	a.accounts(w, httptest.NewRequest("POST", "/accounts", strings.NewReader(`{"account":"draft@example.test","plan":"claude/cc-max-20x"}`)))
+	a.accounts(w, withAdminSession(httptest.NewRequest("POST", "/accounts", strings.NewReader(`{"account":"draft@example.test","plan":"claude/cc-max-20x"}`))))
 	if w.Code != 201 {
 		t.Fatal(w.Body.String())
 	}

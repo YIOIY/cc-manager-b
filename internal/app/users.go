@@ -391,6 +391,16 @@ func (a *App) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	// Drop ownership so leftover accounts/proxies become admin-editable orphans
+	// instead of permanently locked to a deleted user id.
+	if _, err = tx.Exec(`UPDATE accounts SET created_by_user_id='' WHERE created_by_user_id=?`, id); err != nil {
+		writeError(w, r, storageError(err, "用户删除失败"))
+		return
+	}
+	if _, err = tx.Exec(`UPDATE proxies SET created_by_user_id='' WHERE created_by_user_id=?`, id); err != nil {
+		writeError(w, r, storageError(err, "用户删除失败"))
+		return
+	}
 	if _, err = tx.Exec(`DELETE FROM user_roles WHERE user_id=?`, id); err != nil {
 		writeError(w, r, storageError(err, "用户删除失败"))
 		return

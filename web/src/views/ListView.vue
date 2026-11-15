@@ -139,16 +139,22 @@
                   @click="testProxy(row)"
                   >检测</el-button
                 >
-                <el-button v-if="can('proxies.update')" text @click="openEditProxy(row)">编辑</el-button>
+                <el-button v-if="can('proxies.update') && owns(row.created_by_user_id)" text @click="openEditProxy(row)"
+                  >编辑</el-button
+                >
                 <el-dropdown trigger="click" placement="bottom-end" @command="(cmd: string) => proxyCommand(cmd, row)">
                   <el-button text class="row-more" title="更多操作"><MoreHorizontal :size="16" /></el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="details">检测记录</el-dropdown-item>
-                      <el-dropdown-item v-if="can('proxies.update')" command="toggle">{{
+                      <el-dropdown-item v-if="can('proxies.update') && owns(row.created_by_user_id)" command="toggle">{{
                         row.enabled ? '停用' : '启用'
                       }}</el-dropdown-item>
-                      <el-dropdown-item v-if="can('proxies.delete')" command="delete" divided class="row-danger"
+                      <el-dropdown-item
+                        v-if="can('proxies.delete') && owns(row.created_by_user_id)"
+                        command="delete"
+                        divided
+                        class="row-danger"
                         >删除</el-dropdown-item
                       >
                     </el-dropdown-menu>
@@ -273,7 +279,7 @@ import type {
 
 const route = useRoute()
 const router = useRouter()
-const { can } = useSession()
+const { can, owns } = useSession()
 const listKey = computed(() => route.meta.list || 'accounts')
 const canCreate = computed(
   () =>

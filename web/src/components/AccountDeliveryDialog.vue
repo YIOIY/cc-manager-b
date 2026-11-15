@@ -135,7 +135,7 @@
     <template #footer
       ><div class="delivery-dialog-actions">
         <el-button
-          v-if="(state === 'pending' || state === 'failed') && can('accounts.delete')"
+          v-if="(state === 'pending' || state === 'failed') && can('accounts.delete') && canMutateAccount"
           text
           type="danger"
           class="delivery-delete"
@@ -152,7 +152,8 @@
           type="primary"
           @click="emit('configure')"
           >配置平台</el-button
-        ><template v-else-if="(state === 'pending' || state === 'failed') && can('accounts.onboard')"
+        ><template
+          v-else-if="(state === 'pending' || state === 'failed') && can('accounts.onboard') && canMutateAccount"
           ><el-button @click="account && emit('complete', account, connectionId)">完善资料</el-button
           ><el-button type="primary" :loading="busy" :disabled="checking || !preflight?.can_submit" @click="submit">{{
             busy ? '正在提交…' : '提交上号'
@@ -182,7 +183,8 @@ const emit = defineEmits<{
   complete: [account: Account, connectionId?: string]
   deleted: [accountId: string]
 }>()
-const { can } = useSession()
+const { can, owns } = useSession()
+const canMutateAccount = computed(() => owns(props.account?.created_by_user_id))
 const connectionId = ref(''),
   preflight = ref<Preflight | null>(null),
   checking = ref(false),

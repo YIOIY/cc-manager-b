@@ -52,7 +52,7 @@ func (a *App) billRoutes(w http.ResponseWriter, r *http.Request, path string) bo
 		if requireBillMethod(w, r, "POST") {
 			var in billSyncRequest
 			if decodeBillRequest(w, r, &in) {
-				result, err := a.createBillRun(r.Context(), in, r.Header.Get("Idempotency-Key"), "")
+				result, err := a.createBillRun(r.Context(), in, r.Header.Get("Idempotency-Key"), "", ownershipFrom(r))
 				if err != nil {
 					billFail(w, err)
 				} else {
@@ -67,7 +67,7 @@ func (a *App) billRoutes(w http.ResponseWriter, r *http.Request, path string) bo
 		id := parts[0]
 		if len(parts) == 1 {
 			if requireBillMethod(w, r, "GET") {
-				result, err := a.billRunDetail(id)
+				result, err := a.billRunDetail(id, ownershipFrom(r))
 				if err != nil {
 					billFail(w, err)
 				} else {
@@ -94,7 +94,7 @@ func (a *App) billRoutes(w http.ResponseWriter, r *http.Request, path string) bo
 	return false
 }
 
-func (a *App) billRunDetail(id string) (map[string]any, error) {
+func (a *App) billRunDetail(id string, scope ownershipScope) (map[string]any, error) {
 	var conn, state, payload, created, started, finished, parent string
 	var total, requests, retries int
 	err := a.DB.QueryRow(`SELECT connection_id,state,request_json,COALESCE(created_at,''),started_at,COALESCE(finished_at,''),COALESCE(parent_id,''),total_items,http_requests,http_retries FROM sync_runs WHERE id=? AND kind='bill'`, id).Scan(&conn, &state, &payload, &created, &started, &finished, &parent, &total, &requests, &retries)
@@ -105,10 +105,21 @@ func (a *App) billRunDetail(id string) (map[string]any, error) {
 		return nil, err
 	}
 	counts := map[string]int{"queued": 0, "running": 0, "updated": 0, "unchanged": 0, "no_data": 0, "failed": 0, "superseded": 0}
-	rows, err := a.DB.Query(`SELECT state,COUNT(*) FROM bill_sync_items WHERE run_id=? GROUP BY state`, id)
+	countQuery := `SELECT i.state,COUNT(*) FROM bill_sync_items i`
+	countArgs := []any{id}
+	if !scope.Admin {
+		countQuery += ` JOIN accounts a ON a.id=i.account_id`
+	}
+	countQuery += ` WHERE i.run_id=?`
+	if frag, ownerArgs := scope.sqlAnd("a.created_by_user_id"); frag != "" {
+		countQuery += frag
+		countArgs = append(countArgs, ownerArgs...)
+	}
+	rows, err := a.DB.Query(countQuery+` GROUP BY i.state`, countArgs...)
 	if err != nil {
 		return nil, err
 	}
+	scopedTotal := 0
 	for rows.Next() {
 		var s string
 		var n int
@@ -116,6 +127,7 @@ func (a *App) billRunDetail(id string) (map[string]any, error) {
 			break
 		}
 		counts[s] = n
+		scopedTotal += n
 	}
 	if err == nil {
 		err = rows.Err()
@@ -124,12 +136,48 @@ func (a *App) billRunDetail(id string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !scope.Admin {
+		if scopedTotal == 0 {
+			return nil, errs.New(errs.CodeNotFound).WithMessage("账单同步任务不存在").WithDetail("resource", "bill_run")
+		}
+		total = scopedTotal
+		state = scopedBillRunState(counts)
+	}
 	var spec billRunSpec
 	if err = json.Unmarshal([]byte(payload), &spec); err != nil {
 		return nil, err
 	}
+	accountCount := len(spec.AccountIDs)
+	if !scope.Admin {
+		if err = a.DB.QueryRow(`SELECT COUNT(DISTINCT i.account_id) FROM bill_sync_items i JOIN accounts a ON a.id=i.account_id WHERE i.run_id=? AND a.created_by_user_id=?`, id, scope.UserID).Scan(&accountCount); err != nil {
+			return nil, err
+		}
+	}
 	completed := total - counts["queued"] - counts["running"]
-	return map[string]any{"run_id": id, "connection_id": conn, "state": state, "counts": counts, "total_items": total, "completed": completed, "http_requests": requests, "http_retries": retries, "created_at": created, "started_at": started, "finished_at": finished, "parent_id": parent, "from": spec.From, "to": spec.To, "timezone": spec.Timezone, "account_count": len(spec.AccountIDs)}, nil
+	return map[string]any{"run_id": id, "connection_id": conn, "state": state, "counts": counts, "total_items": total, "completed": completed, "http_requests": requests, "http_retries": retries, "created_at": created, "started_at": started, "finished_at": finished, "parent_id": parent, "from": spec.From, "to": spec.To, "timezone": spec.Timezone, "account_count": accountCount}, nil
+}
+
+// scopedBillRunState mirrors finishBillRun using only the caller's visible items.
+func scopedBillRunState(counts map[string]int) string {
+	if counts["queued"] > 0 {
+		return "queued"
+	}
+	if counts["running"] > 0 {
+		return "running"
+	}
+	failed := counts["failed"]
+	superseded := counts["superseded"]
+	good := counts["updated"] + counts["unchanged"] + counts["no_data"]
+	if failed+superseded == 0 {
+		return "succeeded"
+	}
+	if good > 0 {
+		return "partial"
+	}
+	if failed > 0 {
+		return "failed"
+	}
+	return "interrupted"
 }
 
 func (a *App) billRunList(w http.ResponseWriter, r *http.Request) {
@@ -140,11 +188,16 @@ func (a *App) billRunList(w http.ResponseWriter, r *http.Request) {
 		a.legacySyncRunList(w, r)
 		return
 	}
+	scope := ownershipFrom(r)
 	query := `SELECT id FROM sync_runs WHERE kind='bill'`
 	args := []any{}
 	if conn := r.URL.Query().Get("connection_id"); conn != "" {
 		query += ` AND connection_id=?`
 		args = append(args, conn)
+	}
+	if !scope.Admin {
+		query += ` AND EXISTS (SELECT 1 FROM bill_sync_items i JOIN accounts a ON a.id=i.account_id WHERE i.run_id=sync_runs.id AND a.created_by_user_id=?)`
+		args = append(args, scope.UserID)
 	}
 	query += ` ORDER BY created_at DESC,id DESC LIMIT 20`
 	rows, err := a.DB.QueryContext(r.Context(), query, args...)
@@ -170,7 +223,7 @@ func (a *App) billRunList(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []any{}
 	for _, id := range ids {
-		result, e := a.billRunDetail(id)
+		result, e := a.billRunDetail(id, scope)
 		if e != nil {
 			billFail(w, e)
 			return
@@ -240,7 +293,7 @@ func pageArgs(r *http.Request) (int, int, error) {
 	return page, size, nil
 }
 func (a *App) billRunItems(w http.ResponseWriter, r *http.Request, id string) {
-	if _, err := a.billRunDetail(id); err != nil {
+	if _, err := a.billRunDetail(id, ownershipFrom(r)); err != nil {
 		billFail(w, err)
 		return
 	}
@@ -261,8 +314,12 @@ func (a *App) billRunItems(w http.ResponseWriter, r *http.Request, id string) {
 		where += ` AND i.state=?`
 		args = append(args, state)
 	}
+	if frag, ownerArgs := ownershipFrom(r).sqlAnd("a.created_by_user_id"); frag != "" {
+		where += frag
+		args = append(args, ownerArgs...)
+	}
 	var total int
-	if err = a.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM bill_sync_items i`+where, args...).Scan(&total); err != nil {
+	if err = a.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM bill_sync_items i LEFT JOIN accounts a ON a.id=i.account_id`+where, args...).Scan(&total); err != nil {
 		billFail(w, err)
 		return
 	}
@@ -322,7 +379,18 @@ func (a *App) retryBillRun(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	lower := time.Now().In(loc).AddDate(0, 0, -90).Format("2006-01-02")
-	rows, err := a.DB.QueryContext(r.Context(), `SELECT bill_date,account_id FROM bill_sync_items WHERE run_id=? AND state='failed' AND bill_date>=? ORDER BY bill_date,account_id`, id, lower)
+	scope := ownershipFrom(r)
+	retryQuery := `SELECT i.bill_date,i.account_id FROM bill_sync_items i`
+	retryArgs := []any{id, lower}
+	if !scope.Admin {
+		retryQuery += ` JOIN accounts a ON a.id=i.account_id`
+	}
+	retryQuery += ` WHERE i.run_id=? AND i.state='failed' AND i.bill_date>=?`
+	if frag, ownerArgs := scope.sqlAnd("a.created_by_user_id"); frag != "" {
+		retryQuery += frag
+		retryArgs = append(retryArgs, ownerArgs...)
+	}
+	rows, err := a.DB.QueryContext(r.Context(), retryQuery+` ORDER BY i.bill_date,i.account_id`, retryArgs...)
 	if err != nil {
 		billFail(w, err)
 		return
@@ -365,7 +433,7 @@ func (a *App) retryBillRun(w http.ResponseWriter, r *http.Request, id string) {
 		if key != "" {
 			key = fmt.Sprintf("%s:%s", key, day)
 		}
-		result, e := a.createBillRun(r.Context(), input, key, id)
+		result, e := a.createBillRun(r.Context(), input, key, id, ownershipFrom(r))
 		if e != nil {
 			if len(runs) > 0 {
 				write(w, 202, map[string]any{"runs": runs, "partial": true, "message": "部分失败项已排队，其余请检查连接后重试"})
@@ -422,7 +490,7 @@ func (a *App) scheduleBills(ctx context.Context) error {
 			if count == 0 {
 				continue
 			}
-			_, e = a.createBillRun(ctx, billSyncRequest{ConnectionID: c.id, Scope: "all_linked", From: today.AddDate(0, 0, -period.days+1).Format("2006-01-02"), To: today.Format("2006-01-02")}, "", period.kind)
+			_, e = a.createBillRun(ctx, billSyncRequest{ConnectionID: c.id, Scope: "all_linked", From: today.AddDate(0, 0, -period.days+1).Format("2006-01-02"), To: today.Format("2006-01-02")}, "", period.kind, ownershipScope{Admin: true})
 			if e != nil {
 				return e
 			}

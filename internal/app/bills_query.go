@@ -33,7 +33,7 @@ func (a *App) queryBills(w http.ResponseWriter, r *http.Request) {
 	if !decodeBillRequest(w, r, &in) {
 		return
 	}
-	result, err := a.readBills(r.Context(), in)
+	result, err := a.readBills(r.Context(), in, ownershipFrom(r))
 	if err != nil {
 		billFail(w, err)
 		return
@@ -41,7 +41,7 @@ func (a *App) queryBills(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, result)
 }
 
-func (a *App) readBills(ctx context.Context, in billQueryRequest) (map[string]any, error) {
+func (a *App) readBills(ctx context.Context, in billQueryRequest, scope ownershipScope) (map[string]any, error) {
 	if in.ConnectionID == "" {
 		return nil, billField("connection_id", errs.FieldRequired, "请选择平台连接")
 	}
@@ -82,6 +82,10 @@ func (a *App) readBills(ctx context.Context, in billQueryRequest) (map[string]an
 	args := []any{in.ConnectionID, in.From, in.To}
 	if !in.IncludeArchived {
 		where += ` AND a.archived=0`
+	}
+	if frag, ownerArgs := scope.sqlAnd("a.created_by_user_id"); frag != "" {
+		where += frag
+		args = append(args, ownerArgs...)
 	}
 	if len(in.AccountIDs) > 0 {
 		where += ` AND b.account_id IN (` + marks(len(in.AccountIDs)) + `)`
@@ -152,7 +156,7 @@ func (a *App) readBills(ctx context.Context, in billQueryRequest) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	coverage, err := billCoverage(tx, in, zone, coverageWhere, coverageArgs)
+	coverage, err := billCoverage(tx, in, zone, coverageWhere, coverageArgs, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -182,13 +186,17 @@ func billStale(day, fetched, zone string) bool {
 	return time.Since(stamp) > limit
 }
 
-func billCoverage(tx *sql.Tx, in billQueryRequest, zone, where string, args []any) (map[string]any, error) {
+func billCoverage(tx *sql.Tx, in billQueryRequest, zone, where string, args []any, scope ownershipScope) (map[string]any, error) {
 	// Account/date coverage deliberately excludes keyword and revision filters.
 	universe := `SELECT account_id FROM platform_links WHERE connection_id=? AND ingestion_state='accepted' UNION SELECT account_id FROM platform_bill_daily WHERE connection_id=? AND bill_date>=? AND bill_date<=? UNION SELECT account_id FROM bill_sync_buckets WHERE connection_id=? AND bill_date>=? AND bill_date<=?`
 	query := `SELECT COUNT(*) FROM accounts a JOIN (` + universe + `) u ON u.account_id=a.id WHERE 1=1`
 	scopeArgs := []any{in.ConnectionID, in.ConnectionID, in.From, in.To, in.ConnectionID, in.From, in.To}
 	if !in.IncludeArchived {
 		query += ` AND a.archived=0`
+	}
+	if frag, ownerArgs := scope.sqlAnd("a.created_by_user_id"); frag != "" {
+		query += frag
+		scopeArgs = append(scopeArgs, ownerArgs...)
 	}
 	if len(in.AccountIDs) > 0 {
 		query += ` AND a.id IN (` + marks(len(in.AccountIDs)) + `)`
@@ -240,6 +248,10 @@ func billCoverage(tx *sql.Tx, in billQueryRequest, zone, where string, args []an
 	if !in.IncludeArchived {
 		bucketQuery += ` AND a.archived=0`
 	}
+	if frag, ownerArgs := scope.sqlAnd("a.created_by_user_id"); frag != "" {
+		bucketQuery += frag
+		bucketArgs = append(bucketArgs, ownerArgs...)
+	}
 	if len(in.AccountIDs) > 0 {
 		bucketQuery += ` AND k.account_id IN (` + marks(len(in.AccountIDs)) + `)`
 		for _, id := range in.AccountIDs {
@@ -287,11 +299,16 @@ func (a *App) billAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := `SELECT a.id,a.account,a.archived,COALESCE(l.upstream_id,''),COALESCE(l.alias,''),CASE WHEN l.ingestion_state='accepted' THEN 1 ELSE 0 END FROM accounts a LEFT JOIN platform_links l ON l.account_id=a.id AND l.connection_id=? WHERE (l.id IS NOT NULL OR EXISTS(SELECT 1 FROM platform_bill_daily b WHERE b.account_id=a.id AND b.connection_id=?))`
+	args := []any{conn, conn}
 	if r.URL.Query().Get("include_archived") != "true" {
 		query += ` AND a.archived=0`
 	}
+	if frag, ownerArgs := ownershipFrom(r).sqlAnd("a.created_by_user_id"); frag != "" {
+		query += frag
+		args = append(args, ownerArgs...)
+	}
 	query += ` ORDER BY a.account,a.id`
-	rows, err := a.DB.QueryContext(r.Context(), query, conn, conn)
+	rows, err := a.DB.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		billFail(w, err)
 		return

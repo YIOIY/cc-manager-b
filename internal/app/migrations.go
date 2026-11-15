@@ -33,6 +33,7 @@ var migrations = []migration{
 	{12, "platform-rate", migratePlatformRateV12},
 	{13, "feedback", migrateFeedbackV13},
 	{14, "user-nickname-account-creator", migrateUserNicknameAccountCreatorV14},
+	{15, "proxy-creator", migrateProxyCreatorV15},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -396,4 +397,10 @@ func migrateUserNicknameAccountCreatorV14(tx *sql.Tx) error {
 		return err
 	}
 	return addColumns(tx, "accounts", []string{"created_by_user_id TEXT NOT NULL DEFAULT ''"})
+}
+
+// migrateProxyCreatorV15 records which login user created each proxy so the
+// pool can be private per operator.
+func migrateProxyCreatorV15(tx *sql.Tx) error {
+	return addColumns(tx, "proxies", []string{"created_by_user_id TEXT NOT NULL DEFAULT ''"})
 }

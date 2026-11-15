@@ -292,7 +292,6 @@ func TestLookupsDoNotRequireProxyOrConnectionModules(t *testing.T) {
 	if res := admin.do(http.MethodPost, "/api/v1/users", `{"username":"acct","password":"accounts-password-1","role_ids":["`+role.Data.ID+`"]}`); res.StatusCode != http.StatusCreated {
 		t.Fatalf("create user status=%d", res.StatusCode)
 	}
-	admin.do(http.MethodPost, "/api/v1/proxies", `{"name":"exit-1","scheme":"http","host":"127.0.0.1","port":1080}`).Body.Close()
 	if res := admin.do(http.MethodPost, "/api/v1/platform-connections", `{"name":"supplier","base_url":"https://x.example","timezone":"Asia/Shanghai","token":"t"}`); res.StatusCode != http.StatusCreated {
 		t.Fatalf("create connection status=%d", res.StatusCode)
 	}
@@ -304,7 +303,21 @@ func TestLookupsDoNotRequireProxyOrConnectionModules(t *testing.T) {
 			t.Fatalf("GET %s=%d, want 403", path, res.StatusCode)
 		}
 	}
+	// Private proxy pools: admin-created proxies are invisible to other users.
 	var proxies struct{ Data []map[string]any }
+	_ = jsonDecode(user.do(http.MethodGet, "/api/v1/lookups/proxies", ""), &proxies)
+	if len(proxies.Data) != 0 {
+		t.Fatalf("proxy lookup should be empty for non-owner, got %v", proxies.Data)
+	}
+	var me struct {
+		Data struct {
+			User struct{ ID string }
+		}
+	}
+	_ = jsonDecode(user.do(http.MethodGet, "/api/v1/auth/session", ""), &me)
+	if _, err := a.DB.Exec(`INSERT INTO proxies(id,name,scheme,host,port,enabled,created_at,updated_at,created_by_user_id) VALUES('own-proxy','exit-1','http','127.0.0.1',1080,1,?,?,?)`, now(), now(), me.Data.User.ID); err != nil {
+		t.Fatal(err)
+	}
 	_ = jsonDecode(user.do(http.MethodGet, "/api/v1/lookups/proxies", ""), &proxies)
 	if len(proxies.Data) != 1 || proxies.Data[0]["name"] != "exit-1" || proxies.Data[0]["latest_check"] != nil {
 		t.Fatalf("proxy lookup=%v", proxies.Data)
@@ -398,7 +411,9 @@ func TestOperatorCanDeleteDraftAccountsViewerCannot(t *testing.T) {
 	if res := admin.do(http.MethodPost, "/api/v1/users", `{"username":"ro","password":"operator-password","role_ids":["`+roleViewerID+`"]}`); res.StatusCode != http.StatusCreated {
 		t.Fatalf("create viewer=%d", res.StatusCode)
 	}
-	res := admin.do(http.MethodPost, "/api/v1/accounts", `{"account":"draft@example.test","plan":"claude/cc-pro"}`)
+	operator := newTestClient(t, a)
+	operator.loginAs("ops2", "operator-password")
+	res := operator.do(http.MethodPost, "/api/v1/accounts", `{"account":"draft@example.test","plan":"claude/cc-pro"}`)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("create draft=%d", res.StatusCode)
 	}
@@ -411,8 +426,6 @@ func TestOperatorCanDeleteDraftAccountsViewerCannot(t *testing.T) {
 	if res := viewer.do(http.MethodDelete, "/api/v1/accounts/"+created.Data.ID, ""); res.StatusCode != http.StatusForbidden {
 		t.Fatalf("viewer delete=%d", res.StatusCode)
 	}
-	operator := newTestClient(t, a)
-	operator.loginAs("ops2", "operator-password")
 	if res := operator.do(http.MethodDelete, "/api/v1/accounts/"+created.Data.ID, ""); res.StatusCode != http.StatusOK {
 		t.Fatalf("operator delete=%d", res.StatusCode)
 	}

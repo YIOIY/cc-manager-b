@@ -6,7 +6,15 @@ import "net/http"
 // credentials. Disabled entries are included so existing bindings still
 // resolve to a name.
 func (a *App) lookupProxies(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.QueryContext(r.Context(), `SELECT id,name,scheme,host,port,enabled FROM proxies ORDER BY enabled DESC,name,host,rowid`)
+	scope := ownershipFrom(r)
+	query := `SELECT id,name,scheme,host,port,enabled FROM proxies`
+	args := []any{}
+	if !scope.Admin {
+		query += ` WHERE created_by_user_id=?`
+		args = append(args, scope.UserID)
+	}
+	query += ` ORDER BY enabled DESC,name,host,rowid`
+	rows, err := a.DB.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, r, storageError(err, "代理读取失败"))
 		return

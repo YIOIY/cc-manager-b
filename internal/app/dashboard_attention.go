@@ -40,14 +40,15 @@ var attentionKindOrder = map[string]int{"near_limit": 0, "banned": 1, "expiring"
 
 // attentionItems builds the list and the per-kind totals (counted before
 // the list is capped).
-func (a *App) attentionItems(ctx context.Context, at time.Time) ([]attentionItem, map[string]int, error) {
+func (a *App) attentionItems(ctx context.Context, at time.Time, scope ownershipScope) ([]attentionItem, map[string]int, error) {
+	ownerSQL, ownerArgs := scope.sqlAnd("a.created_by_user_id")
 	rows, err := a.DB.QueryContext(ctx, `SELECT a.id,a.account,COALESCE(a.plan,''),COALESCE(a.plan_start_time,''),COALESCE(a.plan_end_time,''),COALESCE(a.register_time,''),COALESCE(a.register_location,''),
 l.upstream_id,COALESCE(c.timezone,''),
 r.upstream_id IS NOT NULL,COALESCE(r.alias,''),COALESCE(r.ext_status,''),COALESCE(r.reason_text,''),COALESCE(r.missing_since,''),COALESCE(r.superseded_by,''),r.five_hour_used,COALESCE(r.five_hour_reset_at,''),
 COALESCE(r.plan,''),COALESCE(r.plan_start_time,''),COALESCE(r.plan_end_time,''),COALESCE(r.register_time,''),COALESCE(r.register_location,'')
 FROM platform_links l JOIN accounts a ON a.id=l.account_id LEFT JOIN platform_connections c ON c.id=l.connection_id
 LEFT JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id
-WHERE l.ingestion_state='accepted' AND a.archived=0 ORDER BY a.account`)
+WHERE l.ingestion_state='accepted' AND a.archived=0`+ownerSQL+` ORDER BY a.account`, ownerArgs...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -163,7 +164,7 @@ WHERE l.ingestion_state='accepted' AND a.archived=0 ORDER BY a.account`)
 
 // dashboardAttention answers GET /api/v1/dashboard/attention.
 func (a *App) dashboardAttention(w http.ResponseWriter, r *http.Request) {
-	items, counts, err := a.attentionItems(r.Context(), time.Now())
+	items, counts, err := a.attentionItems(r.Context(), time.Now(), ownershipFrom(r))
 	if err != nil {
 		writeError(w, r, storageError(err, "读取待处理账号失败"))
 		return

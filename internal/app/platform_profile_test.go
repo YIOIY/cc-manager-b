@@ -96,7 +96,7 @@ func TestPlatformProfileUpdatesPlatformAndLocal(t *testing.T) {
 		t.Fatalf("web_channel=%v", web)
 	}
 	// Local and platform agree again, so nothing is flagged as a difference.
-	items, counts, err := a.attentionItems(context.Background(), time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC))
+	items, counts, err := a.attentionItems(context.Background(), time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC), ownershipScope{Admin: true})
 	if err != nil || counts["profile_diff"] != 0 {
 		t.Fatalf("attention items=%v counts=%v err=%v", items, counts, err)
 	}

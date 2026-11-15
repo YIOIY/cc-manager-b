@@ -34,7 +34,7 @@ type quotaRow struct {
 
 // dashboardInsights answers GET /api/v1/dashboard/insights.
 func (a *App) dashboardInsights(w http.ResponseWriter, r *http.Request) {
-	data, err := a.dashboardInsightsData(r.Context(), time.Now(), sessionUser(r).Access.allows(PermJobsView))
+	data, err := a.dashboardInsightsData(r.Context(), time.Now(), sessionUser(r).Access.allows(PermJobsView), ownershipFrom(r))
 	if err != nil {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
@@ -44,16 +44,16 @@ func (a *App) dashboardInsights(w http.ResponseWriter, r *http.Request) {
 
 // dashboardInsightsData builds the response. recent_jobs is nil unless the
 // caller may see the task centre.
-func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJobs bool) (map[string]any, error) {
-	fleet, quota, expiry, err := a.fleetQuota(ctx, at)
+func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJobs bool, scope ownershipScope) (map[string]any, error) {
+	fleet, quota, expiry, err := a.fleetQuota(ctx, at, scope)
 	if err != nil {
 		return nil, err
 	}
-	hourly, err := a.hourlyBurn(ctx, at)
+	hourly, err := a.hourlyBurn(ctx, at, scope)
 	if err != nil {
 		return nil, err
 	}
-	byDelivery, err := a.deliveryCounts(ctx)
+	byDelivery, err := a.deliveryCounts(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJo
 	}
 	var jobs any
 	if includeJobs {
-		if jobs, err = a.recentSubmitJobs(ctx); err != nil {
+		if jobs, err = a.recentSubmitJobs(ctx, scope); err != nil {
 			return nil, err
 		}
 	}
@@ -80,14 +80,15 @@ func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJo
 // fleetQuota walks every onboarded account once: totals and the quota board
 // come from accounts the platform still lists; the expiry buckets cover all
 // onboarded accounts (platform end date first, the local one otherwise).
-func (a *App) fleetQuota(ctx context.Context, at time.Time) (map[string]any, []quotaRow, map[string]int, error) {
+func (a *App) fleetQuota(ctx context.Context, at time.Time, scope ownershipScope) (map[string]any, []quotaRow, map[string]int, error) {
+	ownerSQL, ownerArgs := scope.sqlAnd("a.created_by_user_id")
 	rows, err := a.DB.QueryContext(ctx, `SELECT a.id,a.account,COALESCE(a.plan_end_time,''),COALESCE(c.timezone,''),
 r.upstream_id IS NOT NULL,COALESCE(r.missing_since,''),COALESCE(r.superseded_by,''),COALESCE(r.alias,''),COALESCE(NULLIF(r.ext_status,''),r.a1_status,''),COALESCE(r.plan_end_time,''),
 r.five_hour_used,COALESCE(r.five_hour_reset_at,''),r.week_used,COALESCE(r.week_reset_at,''),r.usage_cost_micro,r.usage_input_tokens,r.usage_output_tokens
 FROM platform_links l JOIN accounts a ON a.id=l.account_id LEFT JOIN platform_connections c ON c.id=l.connection_id
 LEFT JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id
-WHERE l.ingestion_state='accepted' AND a.archived=0
-ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',l.updated_at DESC`)
+WHERE l.ingestion_state='accepted' AND a.archived=0`+ownerSQL+`
+ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',l.updated_at DESC`, ownerArgs...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -196,15 +197,21 @@ func expiryBucket(end string, at time.Time, zone string) string {
 // hour is the sum of the increases observed in it. The first snapshot of an
 // account has nothing to compare with and a decrease (the counter was
 // reset) is skipped.
-func (a *App) hourlyBurn(ctx context.Context, at time.Time) ([]map[string]any, error) {
+func (a *App) hourlyBurn(ctx context.Context, at time.Time, scope ownershipScope) ([]map[string]any, error) {
 	last := at.UTC().Truncate(time.Hour)
 	first := last.Add(-(insightsHours - 1) * time.Hour)
 	from := first.Format(time.RFC3339)
+	ownerSQL := ""
+	args := []any{at.UTC().Format(time.RFC3339), from, from}
+	if !scope.Admin {
+		ownerSQL = ` AND EXISTS(SELECT 1 FROM platform_links l JOIN accounts a ON a.id=l.account_id WHERE l.connection_id=s.connection_id AND l.upstream_id=s.upstream_id AND l.ingestion_state='accepted' AND a.created_by_user_id=?)`
+		args = append(args, scope.UserID)
+	}
 	rows, err := a.DB.QueryContext(ctx, `SELECT s.connection_id,s.upstream_id,s.observed_at,s.usage_cost_micro FROM platform_usage_snapshots s
 WHERE s.usage_cost_micro IS NOT NULL AND s.observed_at<=? AND (s.observed_at>=? OR s.observed_at=(
 	SELECT MAX(x.observed_at) FROM platform_usage_snapshots x
-	WHERE x.connection_id=s.connection_id AND x.upstream_id=s.upstream_id AND x.observed_at<? AND x.usage_cost_micro IS NOT NULL))
-ORDER BY s.connection_id,s.upstream_id,s.observed_at,s.rowid`, at.UTC().Format(time.RFC3339), from, from)
+	WHERE x.connection_id=s.connection_id AND x.upstream_id=s.upstream_id AND x.observed_at<? AND x.usage_cost_micro IS NOT NULL))`+ownerSQL+`
+ORDER BY s.connection_id,s.upstream_id,s.observed_at,s.rowid`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -240,9 +247,10 @@ ORDER BY s.connection_id,s.upstream_id,s.observed_at,s.rowid`, at.UTC().Format(t
 
 // deliveryCounts groups the non-archived accounts by onboarding state with
 // the same rules as the account list.
-func (a *App) deliveryCounts(ctx context.Context) (map[string]int, error) {
+func (a *App) deliveryCounts(ctx context.Context, scope ownershipScope) (map[string]int, error) {
 	out := map[string]int{"pending": 0, "submitting": 0, "linked": 0, "failed": 0, "unknown": 0}
-	rows, err := a.DB.QueryContext(ctx, `SELECT onboarding_state,COUNT(*) FROM (`+accountListBase+`) t WHERE archived=0 GROUP BY onboarding_state`)
+	ownerSQL, ownerArgs := scope.sqlAnd("t.created_by_user_id")
+	rows, err := a.DB.QueryContext(ctx, `SELECT onboarding_state,COUNT(*) FROM (`+accountListBase+`) t WHERE archived=0`+ownerSQL+` GROUP BY onboarding_state`, ownerArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -283,10 +291,12 @@ func (a *App) sharedUSDRate(ctx context.Context) (any, error) {
 
 // recentSubmitJobs lists the latest onboarding submissions. Only the
 // outcome code is returned; platform messages stay in the task centre.
-func (a *App) recentSubmitJobs(ctx context.Context) ([]map[string]any, error) {
+func (a *App) recentSubmitJobs(ctx context.Context, scope ownershipScope) ([]map[string]any, error) {
+	ownerSQL, ownerArgs := scope.sqlAnd("a.created_by_user_id")
+	args := append(append([]any{}, ownerArgs...), insightsJobLimit)
 	rows, err := a.DB.QueryContext(ctx, `SELECT j.id,COALESCE(j.account_id,''),COALESCE(a.account,''),COALESCE(c.name,''),j.state,COALESCE(j.result_json,'{}'),COALESCE(j.updated_at,'')
 FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id LEFT JOIN platform_connections c ON c.id=j.connection_id
-WHERE j.kind='account.submit' ORDER BY j.created_at DESC,j.rowid DESC LIMIT ?`, insightsJobLimit)
+WHERE j.kind='account.submit'`+ownerSQL+` ORDER BY j.created_at DESC,j.rowid DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

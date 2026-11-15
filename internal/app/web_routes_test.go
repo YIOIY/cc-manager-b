@@ -91,6 +91,11 @@ func TestAccountListExposesPlatformBlock(t *testing.T) {
 	if len(list.Data.Items) != 3 || list.Data.Items[0].Account != "hot@example.test" || list.Data.Items[1].Account != "one@example.test" {
 		t.Fatalf("sort order=%v", []string{list.Data.Items[0].Account, list.Data.Items[1].Account, list.Data.Items[2].Account})
 	}
+	// Default sort is platform ID high→low (aid prefers over upstream id).
+	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=20", ""), &list)
+	if len(list.Data.Items) != 3 || list.Data.Items[0].Account != "one@example.test" || list.Data.Items[1].Account != "hot@example.test" || list.Data.Items[2].Account != "banned@example.test" {
+		t.Fatalf("platform_id_desc order=%v", []string{list.Data.Items[0].Account, list.Data.Items[1].Account, list.Data.Items[2].Account})
+	}
 	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=20&five_hour_min=abc", ""), http.StatusUnprocessableEntity, "QUERY_INVALID")
 	// Detail carries the same block.
 	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
@@ -359,7 +364,7 @@ func TestDashboardSpendFields(t *testing.T) {
 	if _, err := a.DB.Exec(`INSERT INTO platform_bill_models(id,connection_id,upstream_id,account_id,bill_date,model_name,bill_model_name,cost_fen,fetched_at,generation,final) VALUES(?,'conn','428802','',?,'claude-opus-5','claude-opus-5',99999,?,1,1)`, newID(), old, now()); err != nil {
 		t.Fatal(err)
 	}
-	spend, err := a.webDashboard(context.Background())
+	spend, err := a.webDashboard(context.Background(), ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
