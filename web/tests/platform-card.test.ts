@@ -4,6 +4,7 @@ import {
   formatTokens,
   locationLabel,
   paymentLabel,
+  shortPlatformAlias,
   usageStale,
   usageTone,
 } from '../src/model/platform-card'
@@ -46,4 +47,11 @@ test('token counts use thousands separators', () => {
   expect(formatTokens(411638)).toBe('411,638')
   expect(formatTokens(0)).toBe('0')
   expect(formatTokens(null)).toBe('—')
+})
+
+test('shortPlatformAlias keeps provider and trailing id', () => {
+  expect(shortPlatformAlias('claude-住享科智-20261113006')).toBe('claude-20261113006')
+  expect(shortPlatformAlias('claude-abc-def-20261113006')).toBe('claude-20261113006')
+  expect(shortPlatformAlias('claude-only')).toBe('claude-only')
+  expect(shortPlatformAlias('')).toBe('')
 })

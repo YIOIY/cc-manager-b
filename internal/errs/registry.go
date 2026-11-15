@@ -16,7 +16,7 @@ func register(defs ...Def) {
 func init() {
 	register(
 		Def{Code: "AUTH_REQUIRED", Category: CategoryAuth, Status: 401, Action: ActionLogin, Message: "尚未登录或登录已失效", Hint: "请重新登录", Doc: "无会话、会话被清理或服务重启；USER_DISABLED 情形阶段 2 拆出"},
-		Def{Code: "AUTH_INVALID", Category: CategoryAuth, Status: 401, Action: ActionFixInput, Message: "用户名或密码不正确", Doc: "登录失败；不区分用户不存在与密码错误"},
+		Def{Code: "AUTH_INVALID", Category: CategoryAuth, Status: 401, Action: ActionFixInput, Message: "账号或密码不正确", Doc: "登录失败；不区分用户不存在与密码错误"},
 		Def{Code: "AUTH_RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Action: ActionWait, Message: "登录尝试过于频繁", Hint: "请稍后再试", Doc: "登录节流"},
 		Def{Code: "CSRF_FAILED", Category: CategoryAuth, Status: 403, Action: ActionRetry, Message: "页面会话已过期", Hint: "请刷新页面后重试", Doc: "缺少或不匹配的 X-CSRF-Token"},
 		Def{Code: "ORIGIN_FAILED", Category: CategoryAuth, Status: 403, Action: ActionNone, Message: "请求来源与当前站点不一致", Doc: "Origin 头与 Host 不匹配"},
@@ -96,7 +96,7 @@ func init() {
 		Def{Code: "PROXY_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "代理已存在", Doc: "唯一约束冲突"},
 		Def{Code: "CONNECTION_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "平台连接已存在", Doc: "唯一约束冲突"},
 		Def{Code: "ROLE_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "角色名称已存在", Doc: "唯一约束冲突"},
-		Def{Code: "USER_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "用户名已存在", Doc: "唯一约束冲突"},
+		Def{Code: "USER_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "账号已存在", Doc: "唯一约束冲突"},
 		Def{Code: "ACCOUNT_DATES_REQUIRED", Category: CategoryValidation, Action: ActionFixInput, Message: "缺少注册日期或套餐日期", Doc: "预检"},
 		Def{Code: "REGISTER_LOCATION_INVALID", Category: CategoryValidation, Action: ActionFixInput, Message: "注册地区需为美国（US）", Doc: "预检"},
 		Def{Code: "REGISTER_TIME_INVALID", Category: CategoryValidation, Action: ActionFixInput, Message: "注册日期格式不正确", Doc: "预检"},

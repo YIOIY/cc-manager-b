@@ -84,3 +84,12 @@ export function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
   return `${Number(value).toFixed(2)}%`
 }
+
+/** Shorten platform aliases like `claude-住享科智-20261113006` to `claude-20261113006`. */
+export function shortPlatformAlias(alias: string | null | undefined): string {
+  const value = (alias || '').trim()
+  if (!value) return ''
+  const parts = value.split('-').filter(Boolean)
+  if (parts.length < 3) return value
+  return `${parts[0]}-${parts[parts.length - 1]}`
+}

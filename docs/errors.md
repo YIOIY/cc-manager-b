@@ -16,7 +16,7 @@
 | `ACCOUNT_WHITESPACE` | validation | 422 | 否 | fix_input | 账号不能包含空格 | 导入预览行问题 |
 | `ALREADY_LINKED` | conflict | 409 | 否 | none | 账号已在该平台上号 |  |
 | `ARCHIVED` | conflict | 409 | 否 | none | 账号已归档 |  |
-| `AUTH_INVALID` | auth | 401 | 否 | fix_input | 用户名或密码不正确 | 登录失败；不区分用户不存在与密码错误 |
+| `AUTH_INVALID` | auth | 401 | 否 | fix_input | 账号或密码不正确 | 登录失败；不区分用户不存在与密码错误 |
 | `AUTH_JSON_INVALID` | validation | 422 | 否 | fix_input | Claude 凭证格式不正确 | 导入预览行问题 |
 | `AUTH_RATE_LIMITED` | rate_limit | 429 | 否 | wait | 登录尝试过于频繁 | 登录节流 |
 | `AUTH_REQUIRED` | auth | 401 | 否 | login | 尚未登录或登录已失效 | 无会话、会话被清理或服务重启；USER_DISABLED 情形阶段 2 拆出 |
@@ -137,7 +137,7 @@
 | `UPSTREAM_TUNNEL_FAILED` | upstream | — | 是 | fix_input | 前置代理无法建立到目标代理的隧道 | 代理检测阶段码 |
 | `UPSTREAM_UNAVAILABLE` | upstream | — | 是 | retry | 平台暂时无法访问 | 账单同步项 |
 | `USER_DISABLED` | auth | 401 | 否 | login | 当前账号已停用或不存在 | 会话有效但用户行已停用或删除 |
-| `USER_EXISTS` | conflict | 409 | 否 | none | 用户名已存在 | 唯一约束冲突 |
+| `USER_EXISTS` | conflict | 409 | 否 | none | 账号已存在 | 唯一约束冲突 |
 | `VALIDATION_FAILED` | validation | 422 | 否 | fix_input | 提交的资料不符合要求 | 字段级问题在 fields 中逐项列出；允许调用方自定义文案 |
 | `VERSION_CONFLICT` | conflict | 409 | 否 | retry | 资料已被其他操作更新 | 乐观锁冲突；HTTP 与任务共用 |
 | `WEB_BILL_RANGE_MISMATCH` | upstream | 502 | 是 | retry | 平台返回的账单范围与请求不符 | /bill/query 的 range 与请求不一致，该批次丢弃 |

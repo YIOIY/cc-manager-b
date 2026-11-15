@@ -48,7 +48,7 @@ var FieldLabels = map[string]string{
 	"auth_json.organization_name": "组织名称", "auth_json.last_refresh": "最近刷新时间", "auth_json.expired": "到期时间",
 	"auth_json.proxy_url": "代理地址", "auth_json.type": "凭证类型", "auth_json.verification_status": "验证状态",
 	"auth_json.claude_device_ids": "设备标识",
-	"name":                        "名称", "scheme": "协议", "host": "主机地址", "port": "端口", "username": "用户名",
+	"name":                        "名称", "scheme": "协议", "host": "主机地址", "port": "端口", "username": "用户名", "nickname": "昵称",
 	"base_url": "平台地址", "token": "平台令牌", "timezone": "时区", "role_ids": "角色", "permissions": "权限",
 	"page": "页码", "page_size": "每页数量",
 	"remark": "备注", "payment_method": "支付方式", "register_device": "注册设备", "recharge_time": "充值时间",

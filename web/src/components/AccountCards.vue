@@ -5,7 +5,7 @@
         <div class="usage-identity">
           <span class="health-dot" :class="card.statusTone"></span>
           <strong :title="card.platform_alias || card.account">{{
-            card.platform_alias || card.account || '未命名账号'
+            shortPlatformAlias(card.platform_alias) || card.account || '未命名账号'
           }}</strong>
         </div>
         <span class="delivery-status" :class="card.delivery.tone">{{ card.delivery.label }}</span>
@@ -24,6 +24,12 @@
         >
           {{ card.statusLabel }}<Lock v-if="card.platform?.locked" :size="10" class="locked-icon" />
         </span>
+        <span
+          v-if="creatorLabel(card)"
+          class="mini-badge creator"
+          :title="'由 ' + creatorLabel(card) + ' 创建'"
+          >创建人 {{ creatorLabel(card) }}</span
+        >
         <span v-if="card.platform?.auto_created" class="mini-badge" title="由平台同步自动创建的本地账号">来自平台</span>
         <span v-if="card.platform?.missing_since" class="mini-badge attention" :title="card.platform.missing_since"
           >平台已移除</span
@@ -85,9 +91,11 @@
         </div>
       </div>
       <div class="usage-card-foot">
-        <span :title="card.deliveryState === 'linked' ? card.connectionNames : card.delivery.description">{{
-          card.footer
-        }}</span>
+        <span
+          v-if="card.footer"
+          :title="card.deliveryState === 'linked' ? card.connectionNames : card.delivery.description"
+          >{{ card.footer }}</span
+        >
         <el-button
           v-if="canEditPlatform(card)"
           class="card-action"
@@ -123,7 +131,7 @@ import { deliveryState, deliveryStates, runtimeLabel, type DeliveryState } from 
 import { formatCount, formatDateTime, formatMoneyFen, hasValue, planLabel } from '../utils/format'
 import { useSession } from '../composables/useSession'
 import PlatformUsageBlock from './PlatformUsageBlock.vue'
-import { locationLabel, paymentLabel } from '../model/platform-card'
+import { locationLabel, paymentLabel, shortPlatformAlias } from '../model/platform-card'
 
 const props = defineProps<{ accounts: Account[]; loading: boolean }>()
 const emit = defineEmits<{ select: [account: Account]; 'edit-platform': [account: Account] }>()
@@ -136,6 +144,10 @@ function canEditPlatform(card: Account): boolean {
   return (
     can('accounts.platform_edit') && !!p && !p.missing_since && !!p.web_channel?.configured && !p.web_channel?.suspended
   )
+}
+
+function creatorLabel(row: Account): string {
+  return (row.created_by_nickname || row.created_by_username || '').trim()
 }
 
 type ProfileField = { key: string; label: string; value: string; local: string; diff: boolean }
@@ -182,7 +194,7 @@ function profileFields(row: Account, p: PlatformInfo): ProfileField[] {
     diff: !!value && !!local && value !== local,
   })
   const list: ProfileField[] = [
-    field('alias', '账号别名', p.alias),
+    field('alias', '账号别名', shortPlatformAlias(p.alias) || p.alias),
     field('aid', '平台账号 ID', p.aid || p.upstream_id),
     field('plan', '套餐', f.plan, row.plan),
     field('register_time', '注册时间', f.register_time, row.register_time),
@@ -224,12 +236,7 @@ const cards = computed<Card[]>(() =>
       statusFailing: failing,
       connectionNames: names,
       profileFields: row.platform ? profileFields(row, row.platform) : [],
-      footer:
-        state === 'linked'
-          ? '已关联 · ' + (names || '平台')
-          : state === 'submitting'
-            ? '上号结果自动更新'
-            : '尚未完成平台上号',
+      footer: state === 'linked' ? '' : state === 'submitting' ? '上号结果自动更新' : '尚未完成平台上号',
     }
   }),
 )
@@ -355,6 +362,12 @@ const cards = computed<Card[]>(() =>
 .mini-badge.provider {
   background: #1d2140;
   color: #9fb4ff;
+  text-transform: none;
+}
+
+.mini-badge.creator {
+  background: #1a2a3a;
+  color: #8ec8e8;
   text-transform: none;
 }
 
@@ -632,6 +645,12 @@ const cards = computed<Card[]>(() =>
   color: #a97900;
 }
 
+.platform-monitor .mini-badge.creator {
+  background: #eef5fa;
+  color: #3a6f8f;
+  border-color: #c5d8e6;
+}
+
 .platform-monitor .platform-empty {
   color: #9aabb0;
 }
@@ -657,6 +676,10 @@ const cards = computed<Card[]>(() =>
   flex: none;
   min-height: 31px;
   margin: 0;
+}
+
+.platform-monitor .usage-card-foot .card-action:first-of-type {
+  margin-left: auto;
 }
 
 :global(.platform-monitor .usage-card-foot .card-action svg) {

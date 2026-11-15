@@ -24,27 +24,25 @@ function render(usdRate?: number) {
   return w
 }
 
-test('the cost shows RMB and dollars at the platform fixed rate, like the platform console', () => {
+test('the cost shows only dollars converted at the platform fixed rate', () => {
   const w = render(7.2)
-  expect(w.text()).toContain('¥751.04')
   expect(w.get('[data-usd]').text()).toBe('$104.31')
-  const line = w.get('[data-rate]')
-  expect(line.text()).toContain('汇率 7.2')
-  expect(line.text()).toContain('平台固定汇率')
-  expect(line.attributes('title')).toContain('1 美元 = 7.2 人民币')
+  expect(w.text()).not.toContain('¥751.04')
+  expect(w.text()).not.toContain('汇率')
+  expect(w.find('[data-rate]').exists()).toBe(false)
 })
 
 test('a connection with another rate converts at that rate', () => {
   const w = render(7.3)
   expect(w.get('[data-usd]').text()).toBe('$102.88')
-  expect(w.get('[data-rate]').text()).toContain('汇率 7.3')
+  expect(w.text()).not.toContain('汇率')
 })
 
-test('without a rate only RMB is shown', () => {
+test('without a rate the cost shows a placeholder', () => {
   for (const rate of [undefined, 0]) {
     const w = render(rate)
-    expect(w.text()).toContain('¥751.04')
+    expect(w.text()).toContain('—')
     expect(w.find('[data-usd]').exists()).toBe(false)
-    expect(w.find('[data-rate]').exists()).toBe(false)
+    expect(w.text()).not.toContain('¥751.04')
   }
 })

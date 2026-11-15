@@ -217,7 +217,7 @@ func (a *App) importCommit(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 		stamp := now()
-		if _, err = tx.Exec(`INSERT INTO accounts(id,account,plan,register_location,register_time,plan_start_time,plan_end_time,proxy_id,metadata_json,credentials_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, accountID, account, str(m, "plan"), str(m, "register_location"), str(m, "register_time"), str(m, "plan_start_time"), str(m, "plan_end_time"), str(m, "proxy_id"), string(metadataJSON), credentials, stamp, stamp); err != nil {
+		if _, err = tx.Exec(`INSERT INTO accounts(id,account,plan,register_location,register_time,plan_start_time,plan_end_time,proxy_id,metadata_json,credentials_json,created_at,updated_at,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, accountID, account, str(m, "plan"), str(m, "register_location"), str(m, "register_time"), str(m, "plan_start_time"), str(m, "plan_end_time"), str(m, "proxy_id"), string(metadataJSON), credentials, stamp, stamp, sessionUser(r).ID); err != nil {
 			dbError(w, r, err, "ACCOUNT_EXISTS", "账号已存在", "导入失败")
 			return
 		}

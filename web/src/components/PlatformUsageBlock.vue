@@ -32,14 +32,9 @@
       <div class="span-2 cost-row">
         <small>累计花费</small>
         <div class="cost-amounts">
-          <b class="purple-number">¥{{ usage.cost_yuan }}</b>
-          <template v-if="usd"
-            ><i>/</i><b class="usd-number" data-usd>{{ usd }}</b></template
-          >
+          <b v-if="usd" class="usd-number" data-usd>{{ usd }}</b>
+          <b v-else class="muted-number">—</b>
         </div>
-        <small v-if="usd && usdRate" class="cost-rate" data-rate :title="rateTitle">
-          汇率 {{ formatRate(usdRate) }} · 平台固定汇率
-        </small>
       </div>
     </div>
     <p v-else class="platform-usage-empty">平台未返回用量</p>
@@ -50,25 +45,21 @@
 import { computed } from 'vue'
 import type { PlatformUsage } from '../types/api'
 import { formatPercent, formatResetAt, formatTokens, usageStale, usageTone } from '../model/platform-card'
-import { fenToUsdCents, formatRate, formatUsdCents } from '../model/money'
+import { fenToUsdCents, formatUsdCents } from '../model/money'
 
 const props = defineProps<{
   usage: PlatformUsage | null
   observedAt?: string
-  /** The connection's fixed RMB-per-dollar rate; without it only RMB is shown. */
+  /** Connection fixed RMB-per-dollar rate; used only to convert cost to USD for display. */
   usdRate?: number
 }>()
 const stale = computed(() => usageStale(props.usage?.observed_at || props.observedAt))
 
-// The platform reports the cost in RMB, computed from dollar prices at its
-// fixed rate; dividing by the same rate shows the dollar figure.
+// Platform cost is RMB at its fixed rate; divide by the same rate to show dollars.
 const usd = computed(() => {
   const cents = props.usage ? fenToUsdCents(props.usage.cost_fen, props.usdRate) : null
   return cents === null ? '' : formatUsdCents(cents)
 })
-const rateTitle = computed(() =>
-  props.usdRate ? `美元金额按平台固定汇率 1 美元 = ${formatRate(props.usdRate)} 人民币换算` : '',
-)
 </script>
 
 <style scoped>
@@ -135,16 +126,11 @@ const rateTitle = computed(() =>
   flex-wrap: wrap;
   gap: 4px 8px;
 }
-.cost-amounts i {
-  font-style: normal;
-  color: var(--text-tertiary, #909399);
-}
 .cost-amounts .usd-number {
   color: #2f6f5e;
 }
-.cost-rate {
-  margin-top: 2px;
-  font-size: 11px;
+.cost-amounts .muted-number {
   color: var(--text-tertiary, #909399);
+  font-weight: 500;
 }
 </style>

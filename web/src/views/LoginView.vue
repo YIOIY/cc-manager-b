@@ -10,8 +10,8 @@
       <h1>欢迎回来</h1>
       <p class="login-subtitle">登录管理工作台，查看账号库存与平台运行状态。</p>
       <el-form class="login-form" label-position="top" @submit.prevent="submit">
-        <el-form-item label="用户名">
-          <el-input v-model="form.username" autocomplete="username" placeholder="输入管理员用户名">
+        <el-form-item label="账号">
+          <el-input v-model="form.username" autocomplete="username" placeholder="输入管理员账号">
             <template #prefix><UsersRound :size="16" /></template>
           </el-input>
         </el-form-item>

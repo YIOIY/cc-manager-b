@@ -32,6 +32,7 @@ var migrations = []migration{
 	{11, "exchange-rates", migrateExchangeRatesV11},
 	{12, "platform-rate", migratePlatformRateV12},
 	{13, "feedback", migrateFeedbackV13},
+	{14, "user-nickname-account-creator", migrateUserNicknameAccountCreatorV14},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -386,4 +387,13 @@ func migrateFeedbackV13(tx *sql.Tx) error {
 CREATE INDEX IF NOT EXISTS ix_feedback_status_created ON feedback(status,created_at);
 CREATE INDEX IF NOT EXISTS ix_feedback_user ON feedback(user_id,created_at);`)
 	return err
+}
+
+// migrateUserNicknameAccountCreatorV14 adds display nicknames for system
+// users and records which login user created each Claude account.
+func migrateUserNicknameAccountCreatorV14(tx *sql.Tx) error {
+	if err := addColumns(tx, "users", []string{"nickname TEXT NOT NULL DEFAULT ''"}); err != nil {
+		return err
+	}
+	return addColumns(tx, "accounts", []string{"created_by_user_id TEXT NOT NULL DEFAULT ''"})
 }

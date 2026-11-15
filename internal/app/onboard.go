@@ -222,7 +222,7 @@ func (a *App) persistOnboard(r *http.Request, req *onboardInput) (resp map[strin
 			return resp, true, e
 		}
 	}
-	version, err := a.writeOnboardAccount(tx, req, accountID, stamp, sealedAuth)
+	version, err := a.writeOnboardAccount(tx, req, accountID, stamp, sealedAuth, sessionUser(r).ID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -262,7 +262,7 @@ func replayOnboard(tx *sql.Tx, key, payloadHash string) (map[string]any, bool, e
 
 // writeOnboardAccount inserts a new account or bumps an existing one after
 // the delivery, archive and version guards; it returns the new version.
-func (a *App) writeOnboardAccount(tx *sql.Tx, req *onboardInput, accountID, stamp, sealedAuth string) (int, error) {
+func (a *App) writeOnboardAccount(tx *sql.Tx, req *onboardInput, accountID, stamp, sealedAuth, createdByUserID string) (int, error) {
 	in := req.in
 	metadataJSON, _ := json.Marshal(pickMetadata(in))
 	if req.existingID == "" {
@@ -271,7 +271,7 @@ func (a *App) writeOnboardAccount(tx *sql.Tx, req *onboardInput, accountID, stam
 		if exists == 1 {
 			return 0, apiFail(409, "ACCOUNT_EXISTS", "账号已存在，请在账号详情查看上号状态")
 		}
-		if _, err := tx.Exec(`INSERT INTO accounts(id,account,plan,register_location,register_time,plan_start_time,plan_end_time,proxy_id,metadata_json,credentials_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, accountID, req.account, req.plan, str(in, "register_location"), str(in, "register_time"), str(in, "plan_start_time"), str(in, "plan_end_time"), req.proxyID, string(metadataJSON), sealedAuth, stamp, stamp); err != nil {
+		if _, err := tx.Exec(`INSERT INTO accounts(id,account,plan,register_location,register_time,plan_start_time,plan_end_time,proxy_id,metadata_json,credentials_json,created_at,updated_at,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, accountID, req.account, req.plan, str(in, "register_location"), str(in, "register_time"), str(in, "plan_start_time"), str(in, "plan_end_time"), req.proxyID, string(metadataJSON), sealedAuth, stamp, stamp, createdByUserID); err != nil {
 			return 0, dbStepConflict(err, "ACCOUNT_EXISTS", "账号已存在，请在账号详情查看上号状态", "账号保存失败")
 		}
 		return 1, nil

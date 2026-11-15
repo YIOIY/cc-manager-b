@@ -64,11 +64,11 @@ func newApp(path string, workers bool) (*App, error) {
 // baseSchema is the authoritative fresh-database layout. Every column is NOT
 // NULL with a default so a NULL can never make a row vanish from a list.
 const baseSchema = `
-CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, account TEXT UNIQUE NOT NULL, plan TEXT NOT NULL DEFAULT '', register_location TEXT NOT NULL DEFAULT '', register_time TEXT NOT NULL DEFAULT '', plan_start_time TEXT NOT NULL DEFAULT '', plan_end_time TEXT NOT NULL DEFAULT '', proxy_id TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', credentials_json TEXT NOT NULL DEFAULT '{}', version INTEGER NOT NULL DEFAULT 1, archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, account TEXT UNIQUE NOT NULL, plan TEXT NOT NULL DEFAULT '', register_location TEXT NOT NULL DEFAULT '', register_time TEXT NOT NULL DEFAULT '', plan_start_time TEXT NOT NULL DEFAULT '', plan_end_time TEXT NOT NULL DEFAULT '', proxy_id TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', credentials_json TEXT NOT NULL DEFAULT '{}', version INTEGER NOT NULL DEFAULT 1, archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '', created_by_user_id TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',scheme TEXT NOT NULL DEFAULT '',host TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,username TEXT NOT NULL DEFAULT '',password_secret TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',web_username TEXT NOT NULL DEFAULT '',web_password_secret TEXT NOT NULL DEFAULT '',web_suspended_at TEXT NOT NULL DEFAULT '',web_suspended_reason TEXT NOT NULL DEFAULT '',usd_cny_rate REAL NOT NULL DEFAULT 7.2);
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',connection_id TEXT NOT NULL DEFAULT '',payload_json TEXT NOT NULL DEFAULT '{}',result_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
-CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
+CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL DEFAULT '',password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
 CREATE TABLE IF NOT EXISTS roles(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,description TEXT NOT NULL DEFAULT '',builtin INTEGER NOT NULL DEFAULT 0,permissions_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS user_roles(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id),PRIMARY KEY(user_id,role_id));
 CREATE TABLE IF NOT EXISTS audit_events(id INTEGER PRIMARY KEY AUTOINCREMENT,action TEXT NOT NULL DEFAULT '',resource_type TEXT NOT NULL DEFAULT '',resource_id TEXT NOT NULL DEFAULT '',actor TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT '');
@@ -316,8 +316,11 @@ CASE
 		FROM jobs j WHERE j.kind='account.submit' AND j.account_id=a.id ORDER BY j.created_at DESC,j.rowid DESC LIMIT 1),'pending')
 END AS onboarding_state,
 rem.five_hour_used AS five_hour_used,
-CASE WHEN rem.upstream_id IS NULL THEN '' WHEN COALESCE(rem.last_seen_at,'')>=COALESCE(m.fetched_at,'') THEN 'web' ELSE 'openapi' END AS platform_channel
-FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id LEFT JOIN remote rem ON rem.connection_id=l.connection_id AND rem.upstream_id=l.upstream_id`
+CASE WHEN rem.upstream_id IS NULL THEN '' WHEN COALESCE(rem.last_seen_at,'')>=COALESCE(m.fetched_at,'') THEN 'web' ELSE 'openapi' END AS platform_channel,
+COALESCE(a.created_by_user_id,'') AS created_by_user_id,
+COALESCE(u.nickname,'') AS created_by_nickname,
+COALESCE(u.username,'') AS created_by_username
+FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id LEFT JOIN remote rem ON rem.connection_id=l.connection_id AND rem.upstream_id=l.upstream_id LEFT JOIN users u ON u.id=a.created_by_user_id`
 
 // unpagedAccountLimit caps the legacy array response; the UI always pages.
 const unpagedAccountLimit = 2000
@@ -414,12 +417,12 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		var rid int64
 		var requests, prompt, completion, cost sql.NullInt64
 		var success, fiveHour sql.NullFloat64
-		var channel string
-		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding, &fiveHour, &channel); err != nil {
+		var channel, createdByID, createdByNickname, createdByUsername string
+		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding, &fiveHour, &channel, &createdByID, &createdByNickname, &createdByUsername); err != nil {
 			writeError(w, r, storageError(err, "账号读取失败"))
 			return
 		}
-		m := map[string]any{"id": id, "account": account, "plan": plan, "register_location": loc, "register_time": rt, "plan_start_time": ps, "plan_end_time": pe, "proxy_id": proxy, "version": version, "archived": archived == 1, "created_at": created, "updated_at": updated, "platform_account_id": upstreamID, "platform_alias": alias, "platform_status": platformStatus, "platform_observed_at": observed, "onboarding_state": onboarding}
+		m := map[string]any{"id": id, "account": account, "plan": plan, "register_location": loc, "register_time": rt, "plan_start_time": ps, "plan_end_time": pe, "proxy_id": proxy, "version": version, "archived": archived == 1, "created_at": created, "updated_at": updated, "platform_account_id": upstreamID, "platform_alias": alias, "platform_status": platformStatus, "platform_observed_at": observed, "onboarding_state": onboarding, "created_by_user_id": createdByID, "created_by_nickname": createdByNickname, "created_by_username": createdByUsername}
 		if requests.Valid {
 			m["platform_requests"] = requests.Int64
 		}
@@ -500,7 +503,7 @@ func (a *App) createAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`INSERT INTO accounts(id,account,plan,register_location,register_time,plan_start_time,plan_end_time,proxy_id,metadata_json,credentials_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, account, plan, str(in, "register_location"), str(in, "register_time"), str(in, "plan_start_time"), str(in, "plan_end_time"), str(in, "proxy_id"), string(metadataJSON), `{}`, t, t); err != nil {
+	if _, err = tx.Exec(`INSERT INTO accounts(id,account,plan,register_location,register_time,plan_start_time,plan_end_time,proxy_id,metadata_json,credentials_json,created_at,updated_at,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, account, plan, str(in, "register_location"), str(in, "register_time"), str(in, "plan_start_time"), str(in, "plan_end_time"), str(in, "proxy_id"), string(metadataJSON), `{}`, t, t, sessionUser(r).ID); err != nil {
 		dbError(w, r, err, "ACCOUNT_EXISTS", "账号已存在", "账号保存失败")
 		return
 	}

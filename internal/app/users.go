@@ -13,6 +13,7 @@ import (
 type userRecord struct {
 	ID        string
 	Username  string
+	Nickname  string
 	Enabled   bool
 	Version   int
 	CreatedAt string
@@ -22,13 +23,26 @@ type userRecord struct {
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9._@-]{2,64}$`)
 
+const nicknameMaxRunes = 32
+
+func normalizeNickname(raw string) (string, string) {
+	nickname := strings.TrimSpace(raw)
+	if nickname == "" {
+		return "", ""
+	}
+	if len([]rune(nickname)) > nicknameMaxRunes {
+		return "", "昵称最多 32 个字"
+	}
+	return nickname, ""
+}
+
 func (a *App) userPublic(u userRecord) map[string]any {
 	ac, _ := a.userAccess(u.ID)
-	return map[string]any{"id": u.ID, "username": u.Username, "enabled": u.Enabled, "version": u.Version, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt, "last_login_at": u.LastLogin, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
+	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "enabled": u.Enabled, "version": u.Version, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt, "last_login_at": u.LastLogin, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
 }
 
 func sessionUserPayload(u userRecord, ac access) map[string]any {
-	return map[string]any{"id": u.ID, "username": u.Username, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
+	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
 }
 
 // ensureBootstrapAdmin creates the first administrator from the environment
@@ -64,12 +78,12 @@ func scanUser(row interface{ Scan(...any) error }) (userRecord, string, error) {
 	var u userRecord
 	var hash string
 	var enabled int
-	err := row.Scan(&u.ID, &u.Username, &hash, &enabled, &u.Version, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
+	err := row.Scan(&u.ID, &u.Username, &u.Nickname, &hash, &enabled, &u.Version, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
 	u.Enabled = enabled == 1
 	return u, hash, err
 }
 
-const userColumns = `id,username,password_hash,enabled,version,created_at,updated_at,COALESCE(last_login_at,'')`
+const userColumns = `id,username,COALESCE(nickname,''),password_hash,enabled,version,created_at,updated_at,COALESCE(last_login_at,'')`
 
 func (a *App) userByName(username string) (userRecord, string, error) {
 	return scanUser(a.DB.QueryRow(`SELECT `+userColumns+` FROM users WHERE username=?`, username))
@@ -173,6 +187,7 @@ func (a *App) listUsers(w http.ResponseWriter, r *http.Request) {
 func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Username string   `json:"username"`
+		Nickname string   `json:"nickname"`
 		Password string   `json:"password"`
 		RoleIDs  []string `json:"role_ids"`
 	}
@@ -182,7 +197,11 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 	in.Username = strings.TrimSpace(in.Username)
 	var problems errs.Fields
 	if !usernamePattern.MatchString(in.Username) {
-		problems.Invalid("username", "用户名需为 2–64 位字母、数字或 . _ @ -")
+		problems.Invalid("username", "账号需为 2–64 位字母、数字或 . _ @ -")
+	}
+	nickname, nickProblem := normalizeNickname(in.Nickname)
+	if nickProblem != "" {
+		problems.Add("nickname", errs.FieldOutOfRange, nickProblem)
 	}
 	roleIDs, problem := a.validateRoleIDs(in.RoleIDs, sessionUser(r).Access)
 	if problem != "" {
@@ -203,8 +222,8 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	id, stamp := newID(), now()
-	if _, err = tx.Exec(`INSERT INTO users(id,username,password_hash,enabled,version,created_at,updated_at) VALUES(?,?,?,1,1,?,?)`, id, in.Username, hash, stamp, stamp); err != nil {
-		dbError(w, r, err, "USER_EXISTS", "用户名已存在", "用户保存失败")
+	if _, err = tx.Exec(`INSERT INTO users(id,username,nickname,password_hash,enabled,version,created_at,updated_at) VALUES(?,?,?,?,1,1,?,?)`, id, in.Username, nickname, hash, stamp, stamp); err != nil {
+		dbError(w, r, err, "USER_EXISTS", "账号已存在", "用户保存失败")
 		return
 	}
 	if err = replaceUserRoles(tx, id, roleIDs); err != nil {
@@ -226,6 +245,7 @@ func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 		RoleIDs         []string `json:"role_ids"`
 		Enabled         *bool    `json:"enabled"`
 		Password        string   `json:"password"`
+		Nickname        *string  `json:"nickname"`
 		ExpectedVersion int      `json:"expected_version"`
 	}
 	if !decodeJSON(w, r, &in, 16<<10) {
@@ -295,6 +315,15 @@ func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		sets, args = append(sets, "password_hash=?"), append(args, hash)
 		detail = append(detail, "password")
+	}
+	if in.Nickname != nil {
+		nickname, nickProblem := normalizeNickname(*in.Nickname)
+		if nickProblem != "" {
+			writeError(w, r, fieldErr("nickname", errs.FieldOutOfRange, nickProblem))
+			return
+		}
+		sets, args = append(sets, "nickname=?"), append(args, nickname)
+		detail = append(detail, "nickname")
 	}
 	if len(sets) == 0 && in.RoleIDs == nil {
 		fail(w, http.StatusUnprocessableEntity, "VALIDATION_FAILED", "没有可更新字段")

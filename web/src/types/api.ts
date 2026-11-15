@@ -47,6 +47,7 @@ export interface RoleRef {
 export interface SessionUser {
   id: string
   username: string
+  nickname: string
   roles: RoleRef[]
   permissions: Permission[]
   is_admin: boolean
@@ -61,6 +62,7 @@ export interface Session {
 export interface User {
   id: string
   username: string
+  nickname: string
   enabled: boolean
   version: number
   created_at: string
@@ -162,6 +164,10 @@ export interface Account {
   credentials_configured?: boolean
   password_configured?: boolean
   submission_job?: SubmissionJob
+  /** System login user who created this Claude account; empty for legacy / platform-synced rows. */
+  created_by_user_id?: string
+  created_by_nickname?: string
+  created_by_username?: string
   balance?: number | string
   tags?: string[]
   remark?: string

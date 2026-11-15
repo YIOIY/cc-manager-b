@@ -39,17 +39,23 @@
   <!-- ===== users ===== -->
   <section v-if="tab === 'users'" class="list-workspace panel access-table">
     <el-table v-loading="loading" :data="users" row-key="id">
-      <el-table-column label="用户" min-width="230">
+      <el-table-column label="账号" min-width="200">
         <template #default="{ row }">
           <div class="primary-cell">
             <span class="access-avatar" :class="{ 'is-disabled': !row.enabled, 'is-admin': row.is_admin }">{{
-              row.username.slice(0, 1).toUpperCase()
+              (row.nickname || row.username).slice(0, 1).toUpperCase()
             }}</span>
             <div>
               <strong>{{ row.username }}<em v-if="row.id === me?.id" class="access-me">当前</em></strong>
               <small>{{ row.last_login_at ? '最近登录 ' + formatDateTime(row.last_login_at) : '尚未登录' }}</small>
             </div>
           </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="昵称" min-width="120">
+        <template #default="{ row }">
+          <span v-if="row.nickname">{{ row.nickname }}</span>
+          <span v-else class="muted">—</span>
         </template>
       </el-table-column>
       <el-table-column label="角色" min-width="220">

@@ -23,9 +23,9 @@
         </button>
       </nav>
       <div class="shell-user">
-        <span class="shell-user-avatar">{{ (user?.username || '?').slice(0, 1).toUpperCase() }}</span>
+        <span class="shell-user-avatar">{{ (user?.nickname || user?.username || '?').slice(0, 1).toUpperCase() }}</span>
         <div>
-          <strong :title="user?.username">{{ user?.username }}</strong>
+          <strong :title="user?.username">{{ user?.nickname || user?.username }}</strong>
           <small>{{ roleLabel }}</small>
         </div>
         <el-button text size="small" title="修改密码" @click="passwordOpen = true"><KeyRound :size="14" /></el-button>

@@ -9,8 +9,11 @@
   >
     <el-form label-position="top" :disabled="saving" @submit.prevent="save">
       <div class="form-grid two">
-        <el-form-item label="用户名" required>
+        <el-form-item label="账号" required>
           <el-input v-model="form.username" :disabled="!!user" placeholder="字母、数字或 . _ @ -" autocomplete="off" />
+        </el-form-item>
+        <el-form-item label="昵称">
+          <el-input v-model="form.nickname" maxlength="32" show-word-limit placeholder="用于账号列表显示创建人" autocomplete="off" />
         </el-form-item>
         <el-form-item v-if="!user" label="初始密码" required>
           <el-input
@@ -75,8 +78,9 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>()
 const { user: me } = useSession()
 
-const form = reactive<{ username: string; password: string; role_ids: string[] }>({
+const form = reactive<{ username: string; nickname: string; password: string; role_ids: string[] }>({
   username: '',
+  nickname: '',
   password: '',
   role_ids: [],
 })
@@ -86,6 +90,7 @@ const ready = computed(
   () =>
     /^[a-zA-Z0-9._@-]{2,64}$/.test(form.username) &&
     form.role_ids.length > 0 &&
+    [...form.nickname].length <= 32 &&
     (props.user ? true : form.password.length >= 12),
 )
 const passwordHint = computed(() => {
@@ -101,6 +106,7 @@ watch(
     if (!open) return
     Object.assign(form, {
       username: props.user?.username || '',
+      nickname: props.user?.nickname || '',
       password: '',
       role_ids: props.user ? props.user.roles.map((r) => r.id) : [],
     })
@@ -123,12 +129,21 @@ async function save() {
     if (props.user) {
       await api('/users/' + props.user.id, {
         method: 'PATCH',
-        body: JSON.stringify({ role_ids: form.role_ids, expected_version: props.user.version }),
+        body: JSON.stringify({
+          role_ids: form.role_ids,
+          nickname: form.nickname.trim(),
+          expected_version: props.user.version,
+        }),
       })
     } else {
       await api('/users', {
         method: 'POST',
-        body: JSON.stringify({ username: form.username.trim(), password: form.password, role_ids: form.role_ids }),
+        body: JSON.stringify({
+          username: form.username.trim(),
+          nickname: form.nickname.trim(),
+          password: form.password,
+          role_ids: form.role_ids,
+        }),
       })
     }
     form.password = ''

@@ -101,16 +101,21 @@ test('a linked account mirrors the platform card and its usage block', () => {
     '7.00%',
     '411,638',
     '82,648',
-    '¥35.21',
+    '$4.89',
     '美国',
     'GooglePay',
     '20204',
     '使用中',
     '来自平台',
     '2026-12-10',
+    'claude-20261111002',
   ]) {
     expect(text).toContain(expected)
   }
+  expect(text).not.toContain('住享科智')
+  expect(text).not.toContain('已关联')
+  expect(text).not.toContain('汇率')
+  expect(text).not.toContain('¥35.21')
   expect(text).toContain('≠本地') // plan_end_time differs from the local 2026-12-31
 })
 
@@ -148,8 +153,30 @@ test('the card no longer carries the request / input / output bars', () => {
   expect(w.find('.bar-row').exists()).toBe(false)
 })
 
-test('the card shows the cost in RMB and in dollars at the connection rate', () => {
+test('the card shows only the dollar cost at the connection rate', () => {
   const w = render(account(platform()))
   expect(w.get('[data-usd]').text()).toMatch(/^\$[\d,]+\.\d{2}$/)
-  expect(w.get('[data-rate]').text()).toContain('汇率 7.2')
+  expect(w.find('[data-rate]').exists()).toBe(false)
+})
+
+test('the card prefers the creator nickname over the login account', () => {
+  const withNick = render({
+    ...account(null),
+    created_by_user_id: 'u1',
+    created_by_nickname: '小李',
+    created_by_username: 'ops',
+  })
+  expect(withNick.text()).toContain('创建人 小李')
+  expect(withNick.text()).not.toContain('创建人 ops')
+
+  const fallback = render({
+    ...account(null),
+    created_by_user_id: 'u1',
+    created_by_nickname: '',
+    created_by_username: 'ops',
+  })
+  expect(fallback.text()).toContain('创建人 ops')
+
+  const legacy = render(account(null))
+  expect(legacy.text()).not.toContain('创建人')
 })
