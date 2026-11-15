@@ -27,9 +27,9 @@
           @keyup.enter="emit('open', row)"
         >
           <div class="quota-account">
-            <strong :title="row.account">{{ row.account || row.alias }}</strong>
+            <strong :title="row.account">{{ row.account || shortPlatformAlias(row.alias) || row.alias }}</strong>
             <small v-if="isFailing(row.status)" class="bad">{{ runtimeLabel(row.status) }}</small>
-            <small v-else :title="row.alias">{{ row.alias }}</small>
+            <small v-else :title="row.alias">{{ shortPlatformAlias(row.alias) || row.alias }}</small>
           </div>
           <div v-for="w in windows(row)" :key="w.key" class="quota-gauge" :title="w.title">
             <template v-if="w.percent !== null">
@@ -41,7 +41,7 @@
             </template>
             <span v-else class="quota-none">无用量</span>
           </div>
-          <div class="quota-cost">{{ row.cost_fen === null ? '—' : formatMoneyFen(row.cost_fen) }}</div>
+          <div class="quota-cost">{{ costUsd(row.cost_fen) }}</div>
         </li>
       </ul>
       <button v-if="rows.length > limit" type="button" class="quota-more" @click="expanded = !expanded">
@@ -55,14 +55,23 @@
 import { computed, ref } from 'vue'
 import type { QuotaRow } from '../types/api'
 import { runtimeLabel } from '../account-workflow'
-import { formatResetAt, usageTone } from '../model/platform-card'
-import { formatMoneyFen } from '../utils/format'
+import { formatResetAt, shortPlatformAlias, usageTone } from '../model/platform-card'
+import { fenToUsdCents, formatUsdCents } from '../model/money'
 
-const props = withDefaults(defineProps<{ rows: QuotaRow[]; loading: boolean; failed?: boolean; limit?: number }>(), {
-  failed: false,
-  limit: 8,
-})
+const props = withDefaults(
+  defineProps<{ rows: QuotaRow[]; loading: boolean; failed?: boolean; limit?: number; usdRate?: number }>(),
+  {
+    failed: false,
+    limit: 8,
+  },
+)
 const emit = defineEmits<{ open: [row: QuotaRow]; all: [] }>()
+
+function costUsd(fen: number | null) {
+  if (fen === null) return '—'
+  const cents = fenToUsdCents(fen, props.usdRate)
+  return cents === null ? '—' : formatUsdCents(cents)
+}
 
 const expanded = ref(false)
 const shown = computed(() => (expanded.value ? props.rows : props.rows.slice(0, props.limit)))

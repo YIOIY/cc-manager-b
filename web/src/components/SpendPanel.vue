@@ -15,7 +15,7 @@
           :key="day.date"
           class="spend-day"
           :class="{ pending: !day.final }"
-          :title="day.date + ' ' + formatMoneyFen(day.cost_fen) + (day.final ? '' : '（未出齐）')"
+          :title="day.date + ' ' + money(day.cost_fen) + (day.final ? '' : '（未出齐）')"
         >
           <i><em :style="{ height: Math.max(bars[i] || 0, day.cost_fen ? 4 : 0) + '%' }"></em></i>
           <small>{{ day.date.slice(5) }}</small>
@@ -30,8 +30,8 @@
       <div class="subsection-title hourly-title">
         <span>近 24 小时</span>
         <small v-if="summary.total"
-          >共 {{ formatMoneyFen(summary.total) }}，最高的一小时在 {{ hourLabel(summary.peakHour) }}（{{
-            formatMoneyFen(summary.peak)
+          >共 {{ money(summary.total) }}，最高的一小时在 {{ hourLabel(summary.peakHour) }}（{{
+            money(summary.peak)
           }}）</small
         >
       </div>
@@ -40,7 +40,7 @@
           <i
             v-for="h in hourBars"
             :key="h.hour"
-            :title="hourLabel(h.hour) + ' ' + formatMoneyFen(h.cost_fen)"
+            :title="hourLabel(h.hour) + ' ' + money(h.cost_fen)"
             :class="{ peak: h.hour === summary.peakHour }"
             ><em :style="{ height: h.height + '%' }"></em
           ></i>
@@ -64,7 +64,7 @@
         <div class="subsection-title">按账号</div>
         <div v-for="a in accounts" :key="a.account_id" class="plan-row">
           <span :title="a.account">{{ a.account || '未归属' }}</span
-          ><i><em :style="{ width: a.width + '%' }"></em></i><strong>{{ formatMoneyFen(a.cost_fen) }}</strong>
+          ><i><em :style="{ width: a.width + '%' }"></em></i><strong>{{ money(a.cost_fen) }}</strong>
         </div>
       </div>
     </div>
@@ -75,12 +75,13 @@
 import { computed } from 'vue'
 import type { DashboardPlatform, HourlyCost } from '../types/api'
 import { hourlyBars, hourlySummary, spendBars } from '../model/dashboard'
-import { formatMoneyFen } from '../utils/format'
+import { fenToUsdCents, formatUsdCents } from '../model/money'
 
 const props = defineProps<{
   platform: DashboardPlatform | undefined
   /** Spend per hour for the last 24 hours; undefined when it could not be loaded. */
   hourly?: HourlyCost[]
+  usdRate?: number
 }>()
 const emit = defineEmits<{ bills: [] }>()
 
@@ -114,11 +115,17 @@ function hourLabel(iso: string | null) {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '' : String(d.getHours()).padStart(2, '0') + ':00'
 }
+function money(fen: number) {
+  const cents = fenToUsdCents(fen, props.usdRate)
+  return cents === null ? '—' : formatUsdCents(cents)
+}
 function shortMoney(fen: number) {
-  const yuan = fen / 100
-  if (yuan >= 10000) return (yuan / 10000).toFixed(1) + '万'
-  if (yuan >= 1000) return (yuan / 1000).toFixed(1) + 'k'
-  return yuan.toFixed(0)
+  const cents = fenToUsdCents(fen, props.usdRate)
+  if (cents === null) return '—'
+  const dollars = cents / 100
+  if (dollars >= 1000) return '$' + (dollars / 1000).toFixed(1) + 'k'
+  if (dollars >= 100) return '$' + dollars.toFixed(0)
+  return formatUsdCents(cents)
 }
 </script>
 

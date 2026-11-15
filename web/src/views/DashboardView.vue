@@ -28,17 +28,15 @@
     </div>
     <div class="stat" data-stat="today_cost">
       <span>今日消费</span>
-      <b class="money">{{ formatMoneyFen(todayFen) }}</b>
-      <em v-if="usd(todayFen)" class="stat-usd">{{ usd(todayFen) }}</em>
+      <b class="money">{{ usd(todayFen) || '—' }}</b>
       <small>未出齐，约 2 小时延迟</small>
     </div>
     <div class="stat" data-stat="week_cost">
       <span>7 天消费</span>
-      <b class="money">{{ formatMoneyFen(weekFen) }}</b>
-      <em v-if="usd(weekFen)" class="stat-usd">{{ usd(weekFen) }}</em>
+      <b class="money">{{ usd(weekFen) || '—' }}</b>
       <small
-        >日均 {{ formatMoneyFen(dailyAverage) }}
-        <template v-if="change"
+        >日均 {{ usd(dailyAverage) || '—'
+        }}<template v-if="change"
           >，昨天比前一天<i :class="change.up ? 'up' : 'down'"
             >{{ change.up ? '多' : '少' }} {{ change.percent }}%</i
           ></template
@@ -50,9 +48,8 @@
   <section v-if="insights" class="ledger" aria-label="累计数据">
     <div>
       <span>累计花费</span>
-      <b>{{ formatMoneyFen(insights.fleet.cost_fen_total) }}</b>
-      <small v-if="usd(insights.fleet.cost_fen_total)">{{ usd(insights.fleet.cost_fen_total) }}</small>
-      <small v-else>{{ insights.fleet.accounts }} 个账号合计</small>
+      <b>{{ usd(insights.fleet.cost_fen_total) || '—' }}</b>
+      <small>{{ insights.fleet.accounts }} 个账号合计</small>
     </div>
     <div>
       <span>累计 Token</span>
@@ -83,7 +80,12 @@
       @open="openAttention"
       @all="go({})"
     />
-    <SpendPanel :platform="dash?.platform" :hourly="insights?.hourly" @bills="router.push({ name: 'platformBills' })" />
+    <SpendPanel
+      :platform="dash?.platform"
+      :hourly="insights?.hourly"
+      :usd-rate="insights?.usd_cny_rate ?? undefined"
+      @bills="router.push({ name: 'platformBills' })"
+    />
   </div>
 
   <div class="dashboard-grid wide-left">
@@ -91,6 +93,7 @@
       :rows="insights?.quota || []"
       :loading="insightsLoading"
       :failed="insightsFailed"
+      :usd-rate="insights?.usd_cny_rate ?? undefined"
       @open="(row) => go({ q: row.account || row.alias })"
       @all="go({})"
     />
@@ -137,11 +140,6 @@
             {{ dash?.jobs.failed ?? '—' }}
           </dd>
         </div>
-        <div v-if="insights">
-          <dt>汇率</dt>
-          <dd v-if="insights.usd_cny_rate">1 美元 = {{ formatRate(insights.usd_cny_rate) }} 人民币（平台固定汇率）</dd>
-          <dd v-else>各平台连接的汇率不一致，合计只显示人民币</dd>
-        </div>
       </dl>
       <p v-if="webHealth.detail" class="system-note" role="status">
         网页同步：{{ webHealth.detail }}{{ webHealth.hint ? '，' + webHealth.hint : '' }}
@@ -166,9 +164,9 @@ import FleetComposition from '../components/FleetComposition.vue'
 import RecentJobs from '../components/RecentJobs.vue'
 import { api, errorMessage } from '../api'
 import type { AttentionItem, AttentionResponse, Dashboard, DashboardInsights } from '../types/api'
-import { formatDateTime, formatMoneyFen } from '../utils/format'
+import { formatDateTime } from '../utils/format'
 import { accountQuery, dailyAverageFen, dayChange } from '../model/dashboard'
-import { fenToUsdCents, formatRate, formatUsdCents } from '../model/money'
+import { fenToUsdCents, formatUsdCents } from '../model/money'
 
 const router = useRouter()
 const dash = ref<Dashboard>()
@@ -221,8 +219,7 @@ const webHealth = computed<SyncHealthView>(() =>
   webHealthSource.value ? describeSyncHealth(webHealthSource.value) : { tone: 'info', label: '未配置' },
 )
 
-// Dollars are shown only when the platform rate is known (it arrives with
-// the insights); otherwise amounts stay in RMB.
+// Dollars when the platform rate is known (from insights); otherwise blank.
 function usd(fen: number): string {
   const cents = fenToUsdCents(fen, insights.value?.usd_cny_rate)
   return cents === null ? '' : formatUsdCents(cents)

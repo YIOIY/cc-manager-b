@@ -14,7 +14,7 @@
       <div class="delivery-account">
         <span class="heading-icon"><UsersRound :size="22" /></span>
         <div>
-          <strong>{{ account.platform_alias || account.account }}</strong
+          <strong>{{ shortPlatformAlias(account.platform_alias) || account.platform_alias || account.account }}</strong
           ><span>{{ account.account }}</span>
         </div>
         <span class="delivery-status" :class="presentation.tone">{{ presentation.label }}</span>
@@ -171,6 +171,7 @@ import { randomId } from '../utils/id'
 import { useSession } from '../composables/useSession'
 import type { Account, ConnectionOption, Preflight } from '../types/api'
 import { planLabel } from '../utils/format'
+import { shortPlatformAlias } from '../model/platform-card'
 import { ElMessageBox } from 'element-plus'
 import { deliveryState, deliveryStates, runtimeLabel, deliveryIssue, outcomeText } from '../account-workflow'
 const props = defineProps<{ modelValue: boolean; account: Account | null; connections: ConnectionOption[] }>()

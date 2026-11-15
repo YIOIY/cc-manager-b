@@ -207,18 +207,31 @@ test('the top row shows fleet counts and spend', async () => {
   expect(text).toContain('8')
   expect(text).toContain('使用中 6')
   expect(text).toContain('已封禁 2')
-  expect(text).toContain('¥14,882.78')
-  expect(text).toContain('¥49,506.82')
+  expect(text).toContain('$2,067.05')
+  expect(text).toContain('$6,875.95')
+  expect(text).not.toContain('¥14,882.78')
+  expect(text).not.toContain('汇率')
   expect(text).toContain('未出齐')
 })
 
 test('the attention list renders items and navigates to the account', async () => {
-  const w = await render(dashboard())
+  const w = await render(dashboard(), {
+    ...attention,
+    items: [
+      {
+        ...attention.items[0],
+        alias: 'claude-住享科智-20261112003',
+      },
+      attention.items[1],
+    ],
+  })
   const text = w.text()
   expect(text).toContain('5 小时窗口 88%')
   expect(text).toContain('重置 00:50')
   expect(text).toContain('已封禁')
   expect(text).toContain('账号被暂停（封号）')
+  expect(text).toContain('claude-20261112003')
+  expect(text).not.toContain('住享科智')
   const row = w.find('[data-attention="428242"]')
   expect(row.exists()).toBe(true)
   await row.trigger('click')
@@ -257,14 +270,14 @@ test('without the web channel the top row falls back to local counts with a hint
   expect(text).toContain('暂无账单数据')
 })
 
-test('amounts are shown in RMB and dollars, with the daily average and the totals strip', async () => {
+test('amounts are shown only in dollars, with the daily average and the totals strip', async () => {
   const text = (await render(dashboard())).text()
   expect(text).toContain('$2,067.05') // ¥14,882.78 ÷ 7.2
   expect(text).toContain('$6,875.95') // ¥49,506.82 ÷ 7.2
   expect(text).toContain('日均')
   expect(text).toContain('累计花费')
-  expect(text).toContain('¥7,200.00')
   expect(text).toContain('$1,000.00')
+  expect(text).not.toContain('¥')
   expect(text).toContain('累计 Token')
   expect(text).toContain('平均占用')
 })
@@ -295,17 +308,17 @@ test('composition, hourly spend and recent onboarding are shown', async () => {
     '平台拒绝了本次请求的身份验证',
     '平台已接收',
     '系统状态',
-    '汇率',
   ])
     expect(text, expected).toContain(expected)
+  expect(text).not.toContain('汇率')
 })
 
-test('a failing insights request leaves the headline numbers and says what is missing', async () => {
+test('a failing insights request leaves headline placeholders and says what is missing', async () => {
   const text = (await render(dashboard(), attention, new Error('boom'))).text()
-  expect(text).toContain('¥14,882.78')
+  expect(text).toContain('今日消费—')
   expect(text).toContain('5 小时窗口 88%')
   expect(text).toContain('配额数据暂时读取失败')
-  expect(text).not.toContain('$')
+  expect(text).not.toContain('¥')
 })
 
 test('recent onboarding is hidden from users who cannot see the task centre', async () => {

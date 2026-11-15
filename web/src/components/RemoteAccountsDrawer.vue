@@ -54,7 +54,7 @@
         <template #default="{ row }">
           <div class="remote-account">
             <span :title="row.email">{{ row.email || '（平台未返回邮箱）' }}</span>
-            <small :title="row.alias">{{ row.alias }}</small>
+            <small :title="row.alias">{{ shortPlatformAlias(row.alias) || row.alias }}</small>
           </div>
         </template>
       </el-table-column>
@@ -113,6 +113,7 @@ import { api } from '../api'
 import ErrorNotice from './ErrorNotice.vue'
 import type { RemoteAccountsResponse } from '../types/api'
 import { runtimeLabel } from '../account-workflow'
+import { shortPlatformAlias } from '../model/platform-card'
 
 const props = defineProps<{ modelValue: boolean; connectionId: string }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()

@@ -92,7 +92,7 @@
               :label="accountLabel(a)"
               :value="a.supplier_account_id"
               ><div class="bill-account-option">
-                <span>{{ a.alias || a.account }}</span
+                <span>{{ shortPlatformAlias(a.alias) || a.alias || a.account }}</span
                 ><small>{{ a.alias ? a.account + ' · ' : '' }}交付 ID {{ a.supplier_account_id }}</small>
               </div></el-option
             ></el-select
@@ -216,7 +216,7 @@
       <el-table :data="pagedRows" v-loading="loading" row-key="account_id" class="bill-summary-table">
         <el-table-column label="账号" min-width="245"
           ><template #default="{ row }"
-            ><strong class="bill-account-name">{{ row.alias || row.account }}</strong>
+            ><strong class="bill-account-name">{{ shortPlatformAlias(row.alias) || row.alias || row.account }}</strong>
             <div v-if="row.alias" class="bill-secondary">{{ row.account }}</div></template
           ></el-table-column
         >
@@ -295,6 +295,7 @@ import {
   type SummaryAccount,
   type SummaryResult,
 } from '../bill-summary'
+import { shortPlatformAlias } from '../model/platform-card'
 import {
   Search,
   ReceiptText,
@@ -366,7 +367,8 @@ const tokenColumns = [
   { key: 'cache_write_input_tokens', label: '缓存写入 Token', width: 150 },
 ]
 function accountLabel(a: SummaryAccount) {
-  return (a.alias ? a.alias + ' · ' : '') + a.account + ' · ' + a.supplier_account_id
+  const alias = shortPlatformAlias(a.alias) || a.alias
+  return (alias ? alias + ' · ' : '') + a.account + ' · ' + a.supplier_account_id
 }
 function displayTime(value: string) {
   return new Date(value).toLocaleString('zh-CN', { timeZone: result.value?.timezone || 'Asia/Shanghai', hour12: false })

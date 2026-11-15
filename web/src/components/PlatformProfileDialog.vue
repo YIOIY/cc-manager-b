@@ -1,7 +1,10 @@
 <template>
   <el-dialog
     :model-value="modelValue"
-    :title="'修改平台资料 · ' + (account?.platform?.alias || account?.account || '')"
+    :title="
+      '修改平台资料 · ' +
+      (shortPlatformAlias(account?.platform?.alias) || account?.platform?.alias || account?.account || '')
+    "
     width="640px"
     destroy-on-close
     @update:model-value="emit('update:modelValue', $event)"
@@ -85,6 +88,7 @@ import { api, ApiError } from '../api'
 import ErrorNotice from './ErrorNotice.vue'
 import { plans } from '../list-model'
 import type { Account, PlatformProfileResult } from '../types/api'
+import { shortPlatformAlias } from '../model/platform-card'
 
 const props = defineProps<{ modelValue: boolean; account: Account | null }>()
 const emit = defineEmits<{

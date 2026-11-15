@@ -27,8 +27,8 @@
       >
         <i class="attention-dot"></i>
         <div class="attention-account">
-          <strong :title="item.account">{{ item.account || item.alias || item.upstream_id }}</strong>
-          <small v-if="item.alias && item.alias !== item.account" :title="item.alias">{{ item.alias }}</small>
+          <strong :title="item.account">{{ item.account || aliasOf(item) || item.upstream_id }}</strong>
+          <small v-if="aliasOf(item) && aliasOf(item) !== item.account" :title="item.alias">{{ aliasOf(item) }}</small>
         </div>
         <div class="attention-what">
           <span class="attention-label">{{ attentionLabel(item) }}</span>
@@ -48,6 +48,11 @@ import { computed } from 'vue'
 import { ArrowUpRight } from 'lucide-vue-next'
 import type { AttentionItem, AttentionKind } from '../types/api'
 import { attentionLabel } from '../model/dashboard'
+import { shortPlatformAlias } from '../model/platform-card'
+
+function aliasOf(item: AttentionItem) {
+  return shortPlatformAlias(item.alias)
+}
 
 const props = defineProps<{
   items: AttentionItem[]

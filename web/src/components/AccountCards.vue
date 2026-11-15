@@ -73,7 +73,8 @@
             <small>输出 Token</small><b class="date-number">{{ formatCount(card.platform_completion_tokens) }}</b>
           </div>
           <div>
-            <small>最近账单</small><b class="purple-number">{{ formatMoneyFen(card.platform_cost_fen, '未同步') }}</b>
+            <small>最近账单</small
+            ><b class="purple-number">{{ billUsd(card.platform_cost_fen, card.platform?.usd_cny_rate) }}</b>
           </div>
         </div>
       </template>
@@ -128,10 +129,17 @@ import { computed } from 'vue'
 import { RefreshCw, AlertCircle, Info, ArrowUpRight, ChartNoAxesCombined, Lock, PencilLine } from 'lucide-vue-next'
 import type { Account, PlatformInfo } from '../types/api'
 import { deliveryState, deliveryStates, runtimeLabel, type DeliveryState } from '../account-workflow'
-import { formatCount, formatDateTime, formatMoneyFen, hasValue, planLabel } from '../utils/format'
+import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/format'
+import { fenToUsdCents, formatUsdCents } from '../model/money'
 import { useSession } from '../composables/useSession'
 import PlatformUsageBlock from './PlatformUsageBlock.vue'
 import { locationLabel, paymentLabel, shortPlatformAlias } from '../model/platform-card'
+
+function billUsd(fen: number | undefined, rate: number | undefined) {
+  if (!hasValue(fen)) return '未同步'
+  const cents = fenToUsdCents(Number(fen), rate)
+  return cents === null ? '—' : formatUsdCents(cents)
+}
 
 const props = defineProps<{ accounts: Account[]; loading: boolean }>()
 const emit = defineEmits<{ select: [account: Account]; 'edit-platform': [account: Account] }>()
