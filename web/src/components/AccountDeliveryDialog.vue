@@ -257,9 +257,7 @@ async function remove() {
   if (!props.account || busy.value) return
   const name = props.account.account
   const unknownWarn =
-    state.value === 'unknown'
-      ? '请先确认平台没有该账号。删除只清除本地记录，平台上若已有账号不会自动删除。'
-      : ''
+    state.value === 'unknown' ? '请先确认平台没有该账号。删除只清除本地记录，平台上若已有账号不会自动删除。' : ''
   try {
     // Typing the account name back is what stands between a slip and an
     // unrecoverable delete of the local password and credentials.
