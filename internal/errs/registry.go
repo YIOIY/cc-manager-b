@@ -63,7 +63,7 @@ func init() {
 		Def{Code: "ACCOUNT_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "账号已存在", Hint: "同一账号不能重复创建", Doc: "—"},
 		Def{Code: "IDEMPOTENCY_CONFLICT", Category: CategoryConflict, Status: 409, Action: ActionRetry, Message: "该重复提交保护键已用于其他内容", Hint: "请刷新页面后重新提交", Doc: "同 key 不同载荷", AllowCustomMessage: true},
 		Def{Code: "ARCHIVED", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "账号已归档", Hint: "请先恢复账号", Doc: "—"},
-		Def{Code: "ACCOUNT_DELIVERED", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "平台已接收或可能已接收该账号", Hint: "如需下架请改用归档", Doc: "删除保护", AllowCustomMessage: true},
+		Def{Code: "ACCOUNT_DELIVERED", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "平台已接收该账号", Hint: "如需下架请改用归档", Doc: "删除保护：已上号不可删；结果待确认可删本地", AllowCustomMessage: true},
 		Def{Code: "ACCOUNT_IN_PROGRESS", Category: CategoryConflict, Status: 409, Action: ActionWait, Message: "账号正在上号中", Hint: "请等待结果后再操作", Doc: "删除保护", AllowCustomMessage: true},
 		Def{Code: "PROXY_IN_USE", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "仍有账号绑定该代理", Hint: "请先在账号中解绑或归档账号", Doc: "—", AllowCustomMessage: true},
 		Def{Code: "CONNECTION_IN_USE", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "平台连接仍有关联账号、任务或历史账单", Hint: "请保留连接并停用", Doc: "—"},

@@ -104,7 +104,7 @@
 | `GET /accounts/{id}` | 基础资料、凭证元信息、代理摘要、交付关系、状态和最新用量 |
 | `PATCH /accounts/{id}` | 更新本地基本资料/密码/绑定代理，不同步远端 |
 | `POST /accounts/{id}/archive` | 本地归档；未结束上传任务存在时拒绝 |
-| `DELETE /accounts/{id}` | 删除从未被平台接收的账号，连同本地密码、凭证、任务与交付记录；需 `accounts.delete`。平台已接收或结果未确认返回 409 `ACCOUNT_DELIVERED`，上号排队/进行中返回 409 `ACCOUNT_IN_PROGRESS` |
+| `DELETE /accounts/{id}` | 删除本地账号，连同密码、凭证、任务与交付记录；需 `accounts.delete`。平台已明确接收（含 `accepted`，以及 `unknown` 但已写入 `upstream_id` 的本地关联失败）返回 409 `ACCOUNT_DELIVERED`；上号排队/进行中返回 409 `ACCOUNT_IN_PROGRESS`。无平台 ID 的结果待确认允许删除本地记录（操作前须先核实平台） |
 | `POST /accounts/{id}/restore` | 恢复本地归档记录 |
 | `GET /accounts/{id}/credentials/metadata` | 凭证字段存在性、缺项、格式状态、有效期、版本；不返回Token |
 | `PUT /accounts/{id}/credentials` | 明确完整替换凭证对象，返回脱敏元信息 |

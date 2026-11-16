@@ -717,10 +717,12 @@ func (a *App) accountArchive(archived bool) http.HandlerFunc {
 	}
 }
 
-// accountDelete removes an account the platform never accepted, together
-// with its local secrets, jobs and delivery records. Anything the platform may
-// hold (an accepted link, an unresolved delivery, a queued or running
-// submission) blocks deletion so inventory on the platform is never orphaned.
+// accountDelete removes a local account together with its secrets, jobs and
+// delivery records. Accepted platform links/deliveries block deletion, as do
+// unknown deliveries that already carry a platform upstream_id (platform
+// accepted, local link save failed). Pure outcome-unknown rows without an
+// upstream id may be cleared after an operator checks the platform.
+// Queued/running submissions must finish first.
 func (a *App) accountDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !a.requireMutable(w, r, "accounts", id, "账号不存在") {
@@ -745,14 +747,15 @@ func (a *App) accountDelete(w http.ResponseWriter, r *http.Request) {
 	var delivered, inProgress int
 	if err = tx.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM platform_links WHERE account_id=? AND ingestion_state='accepted')
-		+(SELECT COUNT(*) FROM deliveries WHERE account_id=? AND ingestion_state IN ('accepted','unknown')),
+		+(SELECT COUNT(*) FROM deliveries WHERE account_id=? AND ingestion_state='accepted')
+		+(SELECT COUNT(*) FROM deliveries WHERE account_id=? AND ingestion_state='unknown' AND COALESCE(upstream_id,'')<>''),
 		(SELECT COUNT(*) FROM jobs WHERE account_id=? AND kind='account.submit' AND state IN ('queued','running'))`,
-		id, id, id).Scan(&delivered, &inProgress); err != nil {
+		id, id, id, id).Scan(&delivered, &inProgress); err != nil {
 		writeError(w, r, storageError(err, "账号删除失败"))
 		return
 	}
 	if delivered > 0 {
-		fail(w, http.StatusConflict, "ACCOUNT_DELIVERED", "平台已接收或可能已接收该账号，请改用归档")
+		fail(w, http.StatusConflict, "ACCOUNT_DELIVERED", "平台已接收该账号，请改用归档")
 		return
 	}
 	if inProgress > 0 {

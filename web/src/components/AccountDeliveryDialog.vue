@@ -144,7 +144,7 @@
     <template #footer
       ><div class="delivery-dialog-actions">
         <el-button
-          v-if="(state === 'pending' || state === 'failed') && can('accounts.delete') && canMutateAccount"
+          v-if="canDeleteAccount && can('accounts.delete') && canMutateAccount"
           text
           type="danger"
           class="delivery-delete"
@@ -218,6 +218,14 @@ const connectionId = ref(''),
 const state = computed(() => deliveryState(props.account || {})),
   presentation = computed(() => deliveryStates[state.value]),
   enabledConnections = computed(() => props.connections.filter((c) => c.enabled))
+// Unknown with LOCAL_LINK_SAVE_FAILED means the platform already accepted; keep
+// the local row so an operator can recover the link instead of hard-deleting.
+const canDeleteAccount = computed(
+  () =>
+    state.value === 'pending' ||
+    state.value === 'failed' ||
+    (state.value === 'unknown' && props.account?.submission_job?.code !== 'LOCAL_LINK_SAVE_FAILED'),
+)
 function forwardAssigned(result: { userId: string; message?: string; proxy_action?: string }) {
   emit('assigned', result)
   emit('changed')
@@ -243,15 +251,20 @@ async function check() {
     if (request === sequence) checking.value = false
   }
 }
-/** Removes an account the platform never accepted, with its local secrets. */
+/** Removes a local account and its secrets. Unknown outcomes require the
+ * operator to have checked the platform first; accepted links stay blocked. */
 async function remove() {
   if (!props.account || busy.value) return
   const name = props.account.account
+  const unknownWarn =
+    state.value === 'unknown'
+      ? '请先确认平台没有该账号。删除只清除本地记录，平台上若已有账号不会自动删除。'
+      : ''
   try {
     // Typing the account name back is what stands between a slip and an
     // unrecoverable delete of the local password and credentials.
     await ElMessageBox.prompt(
-      `本地保存的密码、Claude 凭证和上号记录会一并删除，无法恢复。请输入账号 ${name} 以确认。`,
+      `${unknownWarn}本地保存的密码、Claude 凭证和上号记录会一并删除，无法恢复。请输入账号 ${name} 以确认。`,
       '删除账号',
       {
         type: 'warning',

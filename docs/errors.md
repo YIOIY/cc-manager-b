@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `ACCEPTED_PENDING_VERIFICATION` | upstream | — | 否 | check_platform | 平台已接收，等待平台核验 | 非错误，统一文案 |
 | `ACCOUNT_DATES_REQUIRED` | validation | — | 否 | fix_input | 缺少注册日期或套餐日期 | 预检 |
-| `ACCOUNT_DELIVERED` | conflict | 409 | 否 | none | 平台已接收或可能已接收该账号 | 删除保护；允许调用方自定义文案 |
+| `ACCOUNT_DELIVERED` | conflict | 409 | 否 | none | 平台已接收该账号 | 删除保护：已上号不可删；结果待确认可删本地；允许调用方自定义文案 |
 | `ACCOUNT_EMAIL_INVALID` | validation | — | 否 | fix_input | 账号邮箱格式不正确 | 预检 / 导入 |
 | `ACCOUNT_EXISTS` | conflict | 409 | 否 | none | 账号已存在 |  |
 | `ACCOUNT_IN_PROGRESS` | conflict | 409 | 否 | wait | 账号正在上号中 | 删除保护；允许调用方自定义文案 |

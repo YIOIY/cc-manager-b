@@ -159,7 +159,7 @@ export const ErrorActions = ['none', 'retry', 'wait', 'login', 'fix_input', 'con
 export const ErrorMessages: Record<ErrorCode, string> = {
   ACCEPTED_PENDING_VERIFICATION: '平台已接收，等待平台核验',
   ACCOUNT_DATES_REQUIRED: '缺少注册日期或套餐日期',
-  ACCOUNT_DELIVERED: '平台已接收或可能已接收该账号',
+  ACCOUNT_DELIVERED: '平台已接收该账号',
   ACCOUNT_EMAIL_INVALID: '账号邮箱格式不正确',
   ACCOUNT_EXISTS: '账号已存在',
   ACCOUNT_IN_PROGRESS: '账号正在上号中',

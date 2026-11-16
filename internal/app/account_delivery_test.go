@@ -206,6 +206,59 @@ func TestUncertainSubmissionIsNeverAutomaticallyResent(t *testing.T) {
 	}
 }
 
+func TestUnknownOutcomeAccountCanBeDeleted(t *testing.T) {
+	a, _, _, mode := deliveryFixture(t)
+	mode.Store(2)
+	w := onboardRequest(a, deliveryBody(), "uncertain-delete")
+	if w.Code != 202 {
+		t.Fatal(w.Body.String())
+	}
+	id := responseData(t, w)["account_id"].(string)
+	a.runOne(context.Background())
+	if deliveryAccount(t, a)["onboarding_state"] != "unknown" {
+		t.Fatal("uncertain outcome not visible")
+	}
+	if res := deleteRequest(a, id); res.Code != 200 {
+		t.Fatalf("unknown-account delete=%d %s", res.Code, res.Body.String())
+	}
+	for _, table := range []string{"accounts", "account_secrets", "jobs", "deliveries"} {
+		var n int
+		col := "account_id"
+		if table == "accounts" {
+			col = "id"
+		}
+		if e := a.DB.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE `+col+`=?`, id).Scan(&n); e != nil || n != 0 {
+			t.Fatalf("%s still has %d rows (err %v)", table, n, e)
+		}
+	}
+}
+
+func TestUnknownDeliveryWithUpstreamIDCannotBeDeleted(t *testing.T) {
+	a, _, _, mode := deliveryFixture(t)
+	mode.Store(2)
+	w := onboardRequest(a, deliveryBody(), "link-save-failed-delete")
+	if w.Code != 202 {
+		t.Fatal(w.Body.String())
+	}
+	id := responseData(t, w)["account_id"].(string)
+	a.runOne(context.Background())
+	if deliveryAccount(t, a)["onboarding_state"] != "unknown" {
+		t.Fatal("uncertain outcome not visible")
+	}
+	// LOCAL_LINK_SAVE_FAILED leaves ingestion_state=unknown but keeps the
+	// platform id; that must still block hard delete.
+	if _, err := a.DB.Exec(`UPDATE deliveries SET upstream_id='12345',ingestion_state='unknown',updated_at=? WHERE account_id=?`, now(), id); err != nil {
+		t.Fatal(err)
+	}
+	if res := deleteRequest(a, id); res.Code != 409 || !strings.Contains(res.Body.String(), "ACCOUNT_DELIVERED") {
+		t.Fatalf("unknown-with-upstream delete=%d %s", res.Code, res.Body.String())
+	}
+	var n int
+	if e := a.DB.QueryRow(`SELECT COUNT(*) FROM accounts WHERE id=?`, id).Scan(&n); e != nil || n != 1 {
+		t.Fatal("account with known upstream id was removed")
+	}
+}
+
 func TestDraftCanBeCompletedAndSubmittedInOneOperation(t *testing.T) {
 	a, _, _, _ := deliveryFixture(t)
 	w := httptest.NewRecorder()

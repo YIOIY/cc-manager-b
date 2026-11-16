@@ -162,3 +162,43 @@ test('a declined confirmation deletes nothing, and delivered accounts offer no d
   await flushPromises()
   expect(linkedWrapper.findAll('button').some((b) => b.text().includes('删除账号'))).toBe(false)
 })
+
+test('an uncertain outcome offers delete with a platform-check warning', async () => {
+  fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+    if (init?.method === 'DELETE') return json(200, { data: { id: 'acc-1', deleted: true } })
+    return json(200, { data: {} })
+  })
+  vi.mocked(ElMessageBox.prompt).mockResolvedValueOnce({ value: 'user@example.test', action: 'confirm' } as never)
+  const unknown = { ...account, onboarding_state: 'unknown' } as unknown as Account
+  const wrapper = mount(AccountDeliveryDialog, {
+    props: { modelValue: true, account: unknown, connections },
+    global: { stubs },
+  })
+  await flushPromises()
+  const remove = wrapper.findAll('button').find((b) => b.text().includes('删除账号'))!
+  expect(remove).toBeTruthy()
+  await remove.trigger('click')
+  await flushPromises()
+  expect(String(vi.mocked(ElMessageBox.prompt).mock.calls[0]![0])).toContain('请先确认平台没有该账号')
+  expect(wrapper.emitted('deleted')).toEqual([['acc-1']])
+})
+
+test('unknown outcome with LOCAL_LINK_SAVE_FAILED offers no delete button', async () => {
+  const unknown = {
+    ...account,
+    onboarding_state: 'unknown',
+    submission_job: {
+      id: 'job-1',
+      connection_id: 'conn',
+      state: 'unknown',
+      code: 'LOCAL_LINK_SAVE_FAILED',
+      updated_at: '2026-11-16T00:00:00Z',
+    },
+  } as unknown as Account
+  const wrapper = mount(AccountDeliveryDialog, {
+    props: { modelValue: true, account: unknown, connections },
+    global: { stubs },
+  })
+  await flushPromises()
+  expect(wrapper.findAll('button').some((b) => b.text().includes('删除账号'))).toBe(false)
+})
