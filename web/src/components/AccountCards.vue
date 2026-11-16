@@ -24,10 +24,7 @@
         >
           {{ card.statusLabel }}<Lock v-if="card.platform?.locked" :size="10" class="locked-icon" />
         </span>
-        <span
-          v-if="ownerLabel(card)"
-          class="mini-badge creator"
-          :title="'所属用户 ' + ownerLabel(card)"
+        <span v-if="ownerLabel(card)" class="mini-badge creator" :title="'所属用户 ' + ownerLabel(card)"
           >所属 {{ ownerLabel(card) }}</span
         >
         <span v-else-if="isAdmin" class="mini-badge creator muted-owner" title="尚未分配给用户，仅管理员可见"
@@ -138,7 +135,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RefreshCw, AlertCircle, Info, ArrowUpRight, ChartNoAxesCombined, Lock, PencilLine, UserRoundPlus } from 'lucide-vue-next'
+import {
+  RefreshCw,
+  AlertCircle,
+  Info,
+  ArrowUpRight,
+  ChartNoAxesCombined,
+  Lock,
+  PencilLine,
+  UserRoundPlus,
+} from 'lucide-vue-next'
 import type { Account, PlatformInfo } from '../types/api'
 import { deliveryState, deliveryStates, runtimeLabel, type DeliveryState } from '../account-workflow'
 import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/format'

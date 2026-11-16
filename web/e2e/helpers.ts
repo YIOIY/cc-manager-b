@@ -9,7 +9,7 @@ export const loginCard = (page: Page) => page.locator('.login-card')
 export async function login(page: Page, username: string, password: string) {
   await page.goto('/')
   await expect(loginCard(page)).toBeVisible()
-  await page.getByPlaceholder('输入管理员用户名').fill(username)
+  await page.getByPlaceholder('输入管理员账号').fill(username)
   await page.getByPlaceholder('输入登录密码').fill(password)
   await page.getByRole('button', { name: '进入工作台' }).click()
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()

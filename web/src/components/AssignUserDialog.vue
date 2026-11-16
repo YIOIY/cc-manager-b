@@ -9,9 +9,7 @@
   >
     <p v-if="resourceLabel" class="assign-target">
       将 <strong>{{ resourceLabel }}</strong> 分配给用户后，对方即可查看与管理。
-      <template v-if="endpoint === '/accounts'"
-        >独占代理会一并转移；若代理仍被其他账号使用，则只解绑本账号。</template
-      >
+      <template v-if="endpoint === '/accounts'">独占代理会一并转移；若代理仍被其他账号使用，则只解绑本账号。</template>
     </p>
     <el-form label-position="top" :disabled="busy" @submit.prevent="submit">
       <el-form-item label="所属用户">
@@ -23,21 +21,14 @@
           style="width: 100%"
           :loading="loading"
         >
-          <el-option
-            v-for="u in enabledUsers"
-            :key="u.id"
-            :label="optionLabel(u)"
-            :value="u.id"
-          />
+          <el-option v-for="u in enabledUsers" :key="u.id" :label="optionLabel(u)" :value="u.id" />
         </el-select>
       </el-form-item>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     </el-form>
     <template #footer>
       <el-button :disabled="busy" @click="emit('update:modelValue', false)">取消</el-button>
-      <el-button type="primary" :loading="busy" :disabled="loading || !listReady" @click="submit"
-        >保存分配</el-button
-      >
+      <el-button type="primary" :loading="busy" :disabled="loading || !listReady" @click="submit">保存分配</el-button>
     </template>
   </el-dialog>
 </template>

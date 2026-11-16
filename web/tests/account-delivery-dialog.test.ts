@@ -12,7 +12,7 @@ const fetchMock = vi.fn()
 beforeEach(async () => {
   vi.stubGlobal('fetch', fetchMock)
   session.value = { authenticated: true, csrf_token: 'csrf' }
-  // establish an admin user so permission-gated buttons render
+  // establish the user who owns the account so permission-gated buttons render
   fetchMock.mockImplementationOnce(() =>
     json(200, {
       data: {
@@ -57,6 +57,7 @@ const account = {
   archived: false,
   platform_links: [],
   onboarding_state: 'pending',
+  created_by_user_id: 'u',
 } as unknown as Account
 
 // Element Plus renders dialogs through a teleport; stub them so the slot

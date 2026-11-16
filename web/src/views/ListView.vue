@@ -458,10 +458,7 @@ function openAssignProxy(row: ListRow) {
   assignOpen.value = true
 }
 async function onAssigned(result: { userId: string; message?: string }) {
-  feedback(
-    result.message || (result.userId ? '已分配给用户' : '已取消分配（仅管理员可见）'),
-    'success',
-  )
+  feedback(result.message || (result.userId ? '已分配给用户' : '已取消分配（仅管理员可见）'), 'success')
   await page.load()
 }
 function onPlatformProfileSaved(result: PlatformProfileResult) {

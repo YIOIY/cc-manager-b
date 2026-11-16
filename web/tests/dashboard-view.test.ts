@@ -218,10 +218,7 @@ test('the attention list renders items and navigates to the account', async () =
   const [nearLimit, banned] = attention.items
   const w = await render(dashboard(), {
     ...attention,
-    items: [
-      { ...nearLimit!, alias: 'claude-住享科智-20261112003' },
-      banned!,
-    ],
+    items: [{ ...nearLimit!, alias: 'claude-住享科智-20261112003' }, banned!],
   })
   const text = w.text()
   expect(text).toContain('5 小时窗口 88%')

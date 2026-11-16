@@ -4,7 +4,7 @@ import { ADMIN_PASSWORD, login, loginCard, logout } from './helpers'
 test.describe('登录', () => {
   test('错误密码停留在登录卡片并提示', async ({ page }) => {
     await page.goto('/')
-    await page.getByPlaceholder('输入管理员用户名').fill('admin')
+    await page.getByPlaceholder('输入管理员账号').fill('admin')
     await page.getByPlaceholder('输入登录密码').fill('definitely-wrong-password')
     await page.getByRole('button', { name: '进入工作台' }).click()
     await expect(loginCard(page).locator('.el-alert')).toBeVisible()

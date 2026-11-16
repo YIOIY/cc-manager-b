@@ -2,8 +2,13 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import type { Account, PlatformInfo } from '../src/types/api'
 
+// The signed-in user is "me", not an admin: only accounts they own are editable.
 vi.mock('../src/composables/useSession', () => ({
-  useSession: () => ({ can: (p: string) => p === 'accounts.platform_edit' || p === 'accounts.view' }),
+  useSession: () => ({
+    can: (p: string) => p === 'accounts.platform_edit' || p === 'accounts.view',
+    owns: (createdBy?: string | null) => createdBy === 'me',
+    user: { value: { id: 'me', username: 'me', is_admin: false } },
+  }),
 }))
 
 import AccountCards from '../src/components/AccountCards.vue'
@@ -56,7 +61,7 @@ function platform(overrides: Partial<PlatformInfo> = {}): PlatformInfo {
   }
 }
 
-function account(info: PlatformInfo | null): Account {
+function account(info: PlatformInfo | null, owner = 'me'): Account {
   return {
     id: 'acc-1',
     account: 'jo@example.test',
@@ -77,6 +82,7 @@ function account(info: PlatformInfo | null): Account {
     platform_links: [{ connection_id: 'conn', connection_name: 'tx', upstream_id: '428802' } as never],
     platform: info,
     onboarding_state: 'linked',
+    created_by_user_id: owner,
   } as Account
 }
 
@@ -102,4 +108,9 @@ test('the edit is hidden when the platform removed the account or the channel is
   expect(editButton(render(account(platform({ web_channel: { configured: false, suspended: false } }))))).toBeFalsy()
   expect(editButton(render(account(platform({ web_channel: { configured: true, suspended: true } }))))).toBeFalsy()
   expect(editButton(render(account(null)))).toBeFalsy()
+})
+
+test('the edit is hidden on an account that belongs to someone else', () => {
+  expect(editButton(render(account(platform(), 'someone-else')))).toBeFalsy()
+  expect(editButton(render(account(platform(), '')))).toBeFalsy()
 })
