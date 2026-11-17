@@ -8,7 +8,7 @@ const stubs = {
 }
 const items = [
   { key: 'password', label: '交付密码', hint: 'Claude 授权不返回密码', done: false, anchor: 'field-password' },
-  { key: 'device_ids', label: '设备标识', hint: '选填', done: false, anchor: 'field-device-ids' },
+  { key: 'device_ids', label: '设备资料', hint: '授权不返回，从有效凭证中获取', done: false, anchor: 'field-device-ids' },
   { key: 'connection', label: '平台连接', hint: '已选 平台 A', done: true, anchor: 'field-connection' },
 ]
 

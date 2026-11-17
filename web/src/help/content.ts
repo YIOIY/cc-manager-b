@@ -48,7 +48,7 @@ export const helpAreas: { key: HelpAreaKey; label: string }[] = [
 export const helpPath: { title: string; text: string; topic: string }[] = [
   { title: '准备', text: '平台连接、代理、账号资料', topic: 'prepare' },
   { title: '连接账号', text: '选平台和代理，登录 Claude 授权', topic: 'onboard' },
-  { title: '补充资料', text: '密码、套餐日期；设备标识选填', topic: 'faq-missing-fields' },
+  { title: '补充资料', text: '密码、套餐日期、设备标识', topic: 'faq-missing-fields' },
   { title: '确认上号', text: '核对后提交到平台', topic: 'onboard' },
   { title: '查看结果', text: '状态含义、失败原因与重试', topic: 'after-submit' },
 ]
@@ -95,7 +95,7 @@ export const helpTopics: HelpTopic[] = [
         type: 'flow',
         steps: [
           { title: '连接账号', text: '选平台和代理，登录 Claude 完成授权' },
-          { title: '补充资料', text: '密码、套餐日期，设备资料选填' },
+          { title: '补充资料', text: '密码、套餐日期、设备资料' },
           { title: '确认上号', text: '核对后提交到平台' },
         ],
       },
@@ -104,7 +104,7 @@ export const helpTopics: HelpTopic[] = [
         items: [
           '连接账号：在「上号到」选择平台连接，在「授权与上号代理」选择代理，然后点「登录 Claude」生成授权链接。',
           '打开授权链接（点「打开授权页」，或复制链接到已登录该 Claude 账号的浏览器），登录并允许授权。把授权页给出的授权码、code#state 或完整地址粘贴到「授权结果」，点「确认授权结果」。成功后面板会收起为「账号已连接」。',
-          '补充资料：授权会自动带回账号邮箱、套餐和注册日期（带「已自动获取」标记）。其余项目需要手动填写：交付密码、套餐开始和结束日期；设备资料为选填。页面上的「还差 N 项」清单会列出没填的必填项目，点「去填写」可直接跳到对应位置。',
+          '补充资料：授权会自动带回账号邮箱、套餐和注册日期（带「已自动获取」标记）。其余项目需要手动填写：交付密码、套餐开始和结束日期、设备资料。页面上的「还差 N 项」清单会列出没填的必填项目，点「去填写」可直接跳到对应位置。',
           '确认上号：核对信息无误后点「确认并上号」。提交后账号卡片显示「上号中」，结果会自动更新为「已上号」或「上号失败」。',
         ],
       },
@@ -126,13 +126,13 @@ export const helpTopics: HelpTopic[] = [
     id: 'device-id',
     group: 'manual',
     title: '获取设备标识',
-    summary: '设备标识为选填；需要时按这里说明获取并填写。',
+    summary: '设备标识为必填；按这里说明获取并填写。',
     icon: 'device',
     keywords: ['设备 ID', '设备资料', 'claude_device_ids', 'userID', 'device'],
     blocks: [
       {
         type: 'p',
-        text: '设备标识为选填，授权不返回此项。如需填写，它来自该账号实际登录 Claude Code 的那台电脑：Claude Code 首次运行时会在用户目录的 .claude.json 文件里保存一个 64 位的标识，字段名是 userID。',
+        text: '设备标识为必填，授权不返回此项。它来自该账号实际登录 Claude Code 的那台电脑：Claude Code 首次运行时会在用户目录的 .claude.json 文件里保存一个 64 位的标识，字段名是 userID。',
       },
       { type: 'p', text: '在那台电脑上执行下面的命令，把输出的一整行填到「设备资料」里。' },
       {
@@ -403,18 +403,23 @@ export const helpTopics: HelpTopic[] = [
     id: 'faq-missing-fields',
     group: 'faq',
     title: '授权成功了，为什么还显示「还差 N 项」',
-    summary: '密码、套餐日期这些授权不提供，需要手动补；设备标识为选填。',
+    summary: '密码、套餐日期、设备标识这些授权不提供，需要手动补。',
     area: 'onboard',
     keywords: ['还差', '待补充', '清单', '缺项'],
     blocks: [
       { type: 'p', text: '授权只能带回账号邮箱、套餐、注册日期和凭证。下面这些授权不提供，必须手动填写：' },
       {
         type: 'list',
-        items: ['交付密码', '套餐开始日期和结束日期（按订阅账单填写）', '平台连接和交付代理（如果第一步没有选）'],
+        items: [
+          '交付密码',
+          '套餐开始日期和结束日期（按订阅账单填写）',
+          '设备资料（设备标识）',
+          '平台连接和交付代理（如果第一步没有选）',
+        ],
       },
       {
         type: 'p',
-        text: '设备资料（设备标识）为选填，不填也可以继续提交。清单里每一项都可以点「去填写」跳到对应位置，填好后自动打勾。必填项全部完成后才能提交。',
+        text: '清单里每一项都可以点「去填写」跳到对应位置，填好后自动打勾。必填项全部完成后才能提交。',
       },
       { type: 'link', text: '获取设备标识', topic: 'device-id' },
     ],

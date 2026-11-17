@@ -4,7 +4,7 @@
       <span class="oauth-mark"><KeyRound :size="20" /></span>
       <div>
         <strong>连接你的 Claude 账号</strong>
-        <p>授权后填入账号与凭证；交付密码、订阅日期将在下一步补充，设备资料选填。</p>
+        <p>授权后填入账号与凭证；交付密码、订阅日期与设备资料将在下一步补充。</p>
       </div>
     </div>
     <ol v-if="pending" class="oauth-steps">

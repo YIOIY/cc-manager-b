@@ -13,7 +13,7 @@ func reauthAuth(email string) map[string]any {
 		"id_token": "", "access_token": "new-access", "refresh_token": "new-refresh",
 		"last_refresh": "2026-11-17T00:00:00Z", "email": email,
 		"account_uuid": "u", "organization_uuid": "o", "organization_name": "Org",
-		"claude_device_ids": []any{}, "type": "claude", "expired": "2026-12-17T00:00:00Z",
+		"claude_device_ids": []any{"device-id"}, "type": "claude", "expired": "2026-12-17T00:00:00Z",
 		"proxy_url": "", "verification_status": "not_required",
 	}
 }

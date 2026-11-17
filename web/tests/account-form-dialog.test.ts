@@ -445,7 +445,8 @@ test('saved credential errors return to reauthorization while retaining business
   authorization = { ...fixture, auth_json: { ...fixture.auth_json, email: 'old@example.com' } }
   await w.get('.fake-oauth').trigger('click')
   await next(w)
-  // device ids are optional, so a complete form advances straight to review
+  await w.get('#field-device-ids input, #field-device-ids textarea').setValue('dev-1')
+  await next(w)
   expect(w.get('[data-review]').text()).toContain('2026-01-01')
 })
 

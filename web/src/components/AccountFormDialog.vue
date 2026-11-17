@@ -234,16 +234,17 @@
           v-if="!savedCredentials"
           :id="fieldAnchors.deviceIds"
           label="设备资料"
+          required
           :class="fieldClass(fieldAnchors.deviceIds)"
           :error="fieldErrors.claude_device_ids_text"
           ><el-input
             v-model="edit.claude_device_ids_text"
             type="textarea"
             :rows="2"
-            placeholder="选填；填写设备 ID，多个 ID 用逗号或换行分隔"
+            placeholder="填写设备 ID，多个 ID 用逗号或换行分隔"
           />
           <div class="field-hint">
-            选填。有则从已有有效凭证获取真实设备 ID，授权不返回此项。
+            必填。从已有有效凭证获取真实设备 ID，授权不返回此项。
             <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
               >如何获取？</a
             >
@@ -339,7 +340,7 @@
           <dt>设备资料</dt>
           <dd>
             {{
-              savedCredentials ? '沿用已保存资料' : edit.claude_device_ids_text?.trim() ? '已填写' : '未填写（选填）'
+              savedCredentials ? '沿用已保存资料' : edit.claude_device_ids_text?.trim() ? '已填写' : '未填写'
             }}
           </dd>
         </dl>

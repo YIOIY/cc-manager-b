@@ -152,6 +152,7 @@ export function missingAccountFields(edit: AccountForm): string[] {
     missing.push('套餐开始日期早于结束日期')
   if (!keepsSavedCredential(edit)) {
     for (const [key] of credentialFields) if (credentialMissing(edit, key)) missing.push(credentialLabels[key]!)
+    if (!parseDeviceIds(edit.claude_device_ids_text).length) missing.push(credentialLabels.claude_device_ids_text!)
   }
   return missing
 }
@@ -180,6 +181,8 @@ export function buildCredential(edit: AccountForm): CredentialPayload | null {
   const proxy = edit.proxy_id ? '' : String(edit.credential_proxy_url ?? '').trim()
   if (!edit.proxy_id && !PROXY_URL_PATTERN.test(proxy))
     throw new Error('proxy_url 必须以 http://、https://、socks5:// 或 socks5h:// 开头')
+  const deviceIds = parseDeviceIds(edit.claude_device_ids_text)
+  if (!deviceIds.length) throw new Error('设备资料不能为空，请填写至少一个设备标识')
   return {
     id_token: String(edit.id_token ?? ''),
     access_token: String(edit.access_token),
@@ -189,7 +192,7 @@ export function buildCredential(edit: AccountForm): CredentialPayload | null {
     account_uuid: String(edit.account_uuid),
     organization_uuid: String(edit.organization_uuid),
     organization_name: String(edit.organization_name),
-    claude_device_ids: parseDeviceIds(edit.claude_device_ids_text),
+    claude_device_ids: deviceIds,
     type: String(edit.credential_type),
     expired: String(edit.expired),
     proxy_url: proxy,
@@ -306,6 +309,7 @@ export function applyCredentialJson(edit: AccountForm, text: string, now = new D
   const missing = credentialFields
     .filter(([key]) => credentialMissing(edit, key))
     .map(([key]) => credentialLabels[key]!)
+  if (!parseDeviceIds(edit.claude_device_ids_text).length) missing.push(credentialLabels.claude_device_ids_text!)
   return { filled, missing, accountFilled }
 }
 
@@ -404,6 +408,7 @@ export function completionChecklist(
       done: false,
       anchor: fieldAnchors.registerTime,
     })
+  const deviceCount = parseDeviceIds(edit.claude_device_ids_text).length
   items.push(
     {
       key: 'password',
@@ -418,6 +423,13 @@ export function completionChecklist(
       hint: '按账单或供应商约定确认',
       done: hasValue(edit.plan_start_time) && hasValue(edit.plan_end_time),
       anchor: fieldAnchors.planStart,
+    },
+    {
+      key: 'device_ids',
+      label: '设备资料',
+      hint: saved ? '沿用已保存资料' : deviceCount ? `已填写 ${deviceCount} 个` : '授权不返回，从有效凭证中获取',
+      done: saved || deviceCount > 0,
+      anchor: fieldAnchors.deviceIds,
     },
     {
       key: 'connection',

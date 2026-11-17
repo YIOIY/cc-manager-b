@@ -62,14 +62,14 @@ func validOptionalMetadataFields(in map[string]any) []errs.FieldError {
 			seen := map[string]bool{}
 			for _, item := range tags {
 				tag, ok := item.(string)
-				if !ok || (tag != "速刷" && tag != "慢蒸") || seen[tag] {
-					f.Add("tags", errs.FieldUnsupportedValue, "标签只能是“速刷”或“慢蒸”，且不能重复")
+				if !ok || (tag != "速刷coding" && tag != "coding") || seen[tag] {
+					f.Add("tags", errs.FieldUnsupportedValue, "标签只能是“速刷coding”或“coding”，且不能重复")
 					break
 				}
 				seen[tag] = true
 			}
-			if seen["速刷"] && seen["慢蒸"] {
-				f.Add("tags", errs.FieldMismatch, "速刷与慢蒸不能同时使用")
+			if seen["速刷coding"] && seen["coding"] {
+				f.Add("tags", errs.FieldMismatch, "速刷coding与coding不能同时使用")
 			}
 		}
 	}
@@ -99,6 +99,9 @@ func validateAuthFields(auth map[string]any) []errs.FieldError {
 		f.Add("auth_json.id_token", errs.FieldRequired, "缺少身份令牌字段（允许为空）")
 	}
 	if ids, ok := auth["claude_device_ids"].([]any); ok {
+		if len(ids) == 0 {
+			f.Required("auth_json.claude_device_ids")
+		}
 		for _, id := range ids {
 			value, ok := id.(string)
 			if !ok || strings.TrimSpace(value) == "" {
@@ -106,8 +109,8 @@ func validateAuthFields(auth map[string]any) []errs.FieldError {
 				break
 			}
 		}
-	} else if _, present := auth["claude_device_ids"]; present {
-		f.Invalid("auth_json.claude_device_ids", "设备标识必须是字符串数组")
+	} else {
+		f.Required("auth_json.claude_device_ids")
 	}
 	for _, key := range []string{"last_refresh", "expired"} {
 		if value, ok := auth[key].(string); ok && value != "" {

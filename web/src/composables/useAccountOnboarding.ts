@@ -151,7 +151,9 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       proxy: selectedProxyName.value,
     })
     if (!linkedReauth.value) return items
-    return items.filter((i) => i.key === 'connection' || i.key === 'proxy' || i.key === 'credentials')
+    return items.filter(
+      (i) => i.key === 'connection' || i.key === 'proxy' || i.key === 'device_ids' || i.key === 'credentials',
+    )
   })
   const pendingAnchors = computed(() => new Set(checklist.value.filter((i) => !i.done).map((i) => i.anchor)))
   const gapCount = computed(() => pendingAnchors.value.size)
@@ -383,7 +385,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   async function jumpTo(anchor: string) {
     if (
       [fieldAnchors.proxy, fieldAnchors.connection].includes(anchor as typeof fieldAnchors.proxy) ||
-      linkedReauth.value
+      (linkedReauth.value && anchor !== fieldAnchors.deviceIds)
     )
       step.value = 1
     else {
@@ -410,8 +412,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   }
   function goBack() {
     if (busy.value) return
-    // Reauth never uses the profile step; back from review returns to auth.
-    if (linkedReauth.value && step.value === 3) step.value = 1
+    // Reauth only uses step 2 for device ids; back from review goes there when
+    // devices are still empty, otherwise back to auth.
+    if (linkedReauth.value && step.value === 3)
+      step.value = parseDeviceIds(edit.value.claude_device_ids_text).length ? 1 : 2
     else step.value = Math.max(1, step.value - 1)
     notice.value = null
     scrollTop()
@@ -439,8 +443,14 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       return true
     } catch (e) {
       notice.value = e
-      credentialDetailsOpen.value = true
-      await jumpTo(fieldAnchors.credentials)
+      const message = errorMessage(e)
+      if (message.includes('设备')) {
+        fieldErrors.value.claude_device_ids_text = message
+        await jumpTo(fieldAnchors.deviceIds)
+      } else {
+        credentialDetailsOpen.value = true
+        await jumpTo(fieldAnchors.credentials)
+      }
       return false
     }
   }
@@ -450,6 +460,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       for (const [key, label] of accountRequiredFields)
         if (!hasValue(edit.value[key]) && !(key === 'password' && edit.value.password_configured))
           fieldErrors.value[key] = `请填写${label}`
+      if (!parseDeviceIds(edit.value.claude_device_ids_text).length && !keepsSavedCredential(edit.value))
+        fieldErrors.value.claude_device_ids_text = '请填写设备资料'
       notice.value = new Error(`还有 ${gapCount.value} 组资料待补充，已定位到第一项`)
       await jumpTo(firstMissingAnchor(edit.value) || fieldAnchors.credentials)
       return false
@@ -464,6 +476,9 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         const key = message.includes('注册') ? 'register_time' : 'plan_end_time'
         fieldErrors.value[key] = message
         await jumpTo(key === 'register_time' ? fieldAnchors.registerTime : fieldAnchors.planEnd)
+      } else if (message.includes('设备')) {
+        fieldErrors.value.claude_device_ids_text = message
+        await jumpTo(fieldAnchors.deviceIds)
       } else {
         credentialDetailsOpen.value = true
         await jumpTo(fieldAnchors.credentials)
@@ -481,8 +496,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         return
       }
       if (linkedReauth.value) {
-        // Profile fields are not part of reauth; stay on step 1 until credential is ready.
+        // Profile fields are not part of reauth; credentials live on step 1,
+        // device ids on step 2. Skip straight to review only when both are ready.
         if (await validateReauth()) step.value = 3
+        else if (connected.value && !parseDeviceIds(edit.value.claude_device_ids_text).length) step.value = 2
       } else {
         step.value = 2
         if (!missingFields.value.length && (await validateDetails())) step.value = 3

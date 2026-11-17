@@ -202,7 +202,7 @@
 | `register_device` | 选择框 | 可选，Mac / Windows / Linux |
 | `recharge_time` | 日期选择 | 可选，`YYYY-MM-DD` |
 | `warranty_period` | 天数选择 | 可选，已知 1 / 7 / 30；不把页面 `<1天` 标签自行改成新的接口值 |
-| `tags` | 多选 | 可选，已知“速刷”“慢蒸”互斥；上号后不支持远端修改 |
+| `tags` | 多选 | 可选，已知“速刷coding”“coding”互斥；上号后不支持远端修改 |
 | `remark` | 多行文本 | 可选；展示后端长度限制，按纯文本渲染 |
 
 ## 6. JSON 与批量导入

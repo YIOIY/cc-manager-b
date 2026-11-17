@@ -6,13 +6,13 @@ import (
 )
 
 func TestOptionalFieldsValidation(t *testing.T) {
-	valid := map[string]any{"payment_method": "paypal", "register_device": "Mac", "balance": "100", "recharge_time": "2026-11-04", "warranty_period": "30", "tags": []any{"速刷"}, "remark": "test"}
+	valid := map[string]any{"payment_method": "paypal", "register_device": "Mac", "balance": "100", "recharge_time": "2026-11-04", "warranty_period": "30", "tags": []any{"速刷coding"}, "remark": "test"}
 	if err := validOptionalMetadata(valid); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []map[string]any{
 		{"payment_method": "unknown"}, {"register_device": "iPad"}, {"balance": 101}, {"balance": "-1"},
-		{"recharge_time": "2026-02-30"}, {"warranty_period": 14}, {"tags": []any{"速刷", "慢蒸"}},
+		{"recharge_time": "2026-02-30"}, {"warranty_period": 14}, {"tags": []any{"速刷coding", "coding"}},
 	} {
 		if err := validOptionalMetadata(tc); err == nil {
 			t.Fatalf("accepted invalid optional data: %#v", tc)
@@ -26,12 +26,12 @@ func TestClaudeAuthValidation(t *testing.T) {
 		t.Fatalf("valid auth rejected: %v", problems)
 	}
 	auth["claude_device_ids"] = []any{}
-	if problems := validateAuth(auth); len(problems) != 0 {
-		t.Fatalf("empty device ids should be optional: %v", problems)
+	if problems := validateAuth(auth); len(problems) == 0 {
+		t.Fatal("empty device ids should be required")
 	}
 	delete(auth, "claude_device_ids")
-	if problems := validateAuth(auth); len(problems) != 0 {
-		t.Fatalf("missing device ids should be optional: %v", problems)
+	if problems := validateAuth(auth); len(problems) == 0 {
+		t.Fatal("missing device ids should be required")
 	}
 	auth["claude_device_ids"] = []any{"device"}
 	auth["proxy_url"] = "ftp://1.2.3.4"

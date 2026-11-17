@@ -142,7 +142,7 @@ const importExample = JSON.stringify(
       balance: 86,
       recharge_time: '2026-11-04',
       warranty_period: 30,
-      tags: ['速刷'],
+      tags: ['速刷coding'],
       remark: '示例备注',
     },
   ],

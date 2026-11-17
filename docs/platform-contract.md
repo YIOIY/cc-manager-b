@@ -57,7 +57,7 @@ POST /supplier-account/api/openapi/claude/accounts
 | `balance` | number 或 string | 否 | 剩余套餐百分比 0–100，不带 `%` |
 | `recharge_time` | string | 否 | `YYYY-MM-DD` |
 | `warranty_period` | number 或 string | 否 | 文档可选 `1`、`7`、`30` 天 |
-| `tags` | string[] | 否 | 文档可选“速刷”“慢蒸”，两者互斥；仅上号时可设置，上号后不支持修改 |
+| `tags` | string[] | 否 | 文档可选“速刷coding”“coding”，两者互斥；仅上号时可设置，上号后不支持修改 |
 | `remark` | string | 否 | 备注 |
 
 支付方式文档列出 `physical_credit_card`、`virtual_credit_card`、`paypal`、`apple_pay`、`google_pay`；`third_party_payment` 的说明文本带有多余引号，实际值需联调确认。确认前不预选该值，允许不填该可选项。

@@ -45,7 +45,7 @@ func TestImportKeepsOptionalMetadataAndRejectsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.DB.Close()
-	content := `[{"account":"draft@example.com","plan":"claude/cc-max-20x","payment_method":"paypal","register_device":"Mac","balance":72,"recharge_time":"2026-11-04","warranty_period":7,"tags":["速刷"],"remark":"local draft"},{"account":"secret@example.com","password":"must-not-store"}]`
+	content := `[{"account":"draft@example.com","plan":"claude/cc-max-20x","payment_method":"paypal","register_device":"Mac","balance":72,"recharge_time":"2026-11-04","warranty_period":7,"tags":["速刷coding"],"remark":"local draft"},{"account":"secret@example.com","password":"must-not-store"}]`
 	requestBody, _ := json.Marshal(map[string]any{"format": "accounts", "content": content})
 	preview := httptest.NewRecorder()
 	a.importPreview(preview, httptest.NewRequest(http.MethodPost, "/imports/preview", bytes.NewReader(requestBody)))
