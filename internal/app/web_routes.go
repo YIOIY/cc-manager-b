@@ -75,6 +75,7 @@ func platformBlock(x remoteRow, channel string, web webChannelState) map[string]
 	}
 	var tags []string
 	_ = json.Unmarshal([]byte(x.TagsJSON), &tags)
+	tags = normalizeAccountTags(tags)
 	if tags == nil {
 		tags = []string{}
 	}

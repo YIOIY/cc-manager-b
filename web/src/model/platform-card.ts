@@ -75,6 +75,23 @@ export function paymentLabel(value: string | null | undefined): string {
   return payments[value] ?? value
 }
 
+/** Legacy platform tags → current labels. Tags cannot be changed after delivery. */
+const tagAliases: Record<string, string> = {
+  速刷: '速刷coding',
+  慢蒸: 'coding',
+  速刷coding: '速刷coding',
+  coding: 'coding',
+}
+
+export function normalizeAccountTag(tag: string): string {
+  return tagAliases[tag] ?? tag
+}
+
+export function formatTags(tags: string[] | null | undefined): string {
+  if (!tags?.length) return ''
+  return [...new Set(tags.map(normalizeAccountTag).filter(Boolean))].join('、')
+}
+
 export function formatTokens(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return '—'
   return Number(n).toLocaleString('en-US')

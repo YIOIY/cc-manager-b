@@ -165,7 +165,7 @@ import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/forma
 import { fenToUsdCents, formatUsdCents } from '../model/money'
 import { useSession } from '../composables/useSession'
 import PlatformUsageBlock from './PlatformUsageBlock.vue'
-import { locationLabel, paymentLabel, shortPlatformAlias } from '../model/platform-card'
+import { formatTags, locationLabel, paymentLabel, shortPlatformAlias } from '../model/platform-card'
 
 function billUsd(fen: number | undefined, rate: number | undefined) {
   if (!hasValue(fen)) return '未同步'
@@ -260,7 +260,7 @@ function profileFields(row: Account, p: PlatformInfo): ProfileField[] {
   ]
   if (f.recharge_time) list.push(field('recharge_time', '充值日期', f.recharge_time))
   if (f.warranty_period) list.push(field('warranty_period', '质保期', f.warranty_period))
-  if (f.tags?.length) list.push(field('tags', '标签', f.tags.join('、')))
+  if (f.tags?.length) list.push(field('tags', '标签', formatTags(f.tags)))
   return list
 }
 

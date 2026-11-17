@@ -26,6 +26,7 @@ import { applyFieldErrors } from '../errors'
 import { randomId } from '../utils/id'
 import type { Account, OnboardResult, ReauthorizeResult, ConnectionOption, ProxyOption } from '../types/api'
 import { deliveryState } from '../account-workflow'
+import { normalizeAccountTag } from '../model/platform-card'
 
 export interface AccountOnboardingProps {
   modelValue: boolean
@@ -656,7 +657,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         ? {
             ...row,
             balance: row.balance === undefined || row.balance === '' ? undefined : Number(row.balance),
-            tags: [...(row.tags || [])],
+            tags: [...new Set((row.tags || []).map(normalizeAccountTag))],
             credential_type: 'claude',
             platform_connection_id: props.connectionId || row.submission_job?.connection_id || defaultConnection(),
           }

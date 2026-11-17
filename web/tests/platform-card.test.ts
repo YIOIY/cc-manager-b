@@ -1,8 +1,10 @@
 import { expect, test } from 'vitest'
 import {
   formatResetAt,
+  formatTags,
   formatTokens,
   locationLabel,
+  normalizeAccountTag,
   paymentLabel,
   shortPlatformAlias,
   usageStale,
@@ -41,6 +43,9 @@ test('platform labels map known values and keep the rest', () => {
   expect(paymentLabel('google_pay')).toBe('GooglePay')
   expect(paymentLabel('apple_pay')).toBe('ApplePay')
   expect(paymentLabel('wechat')).toBe('wechat')
+  expect(normalizeAccountTag('慢蒸')).toBe('coding')
+  expect(normalizeAccountTag('速刷')).toBe('速刷coding')
+  expect(formatTags(['慢蒸', '速刷'])).toBe('coding、速刷coding')
 })
 
 test('token counts use thousands separators', () => {

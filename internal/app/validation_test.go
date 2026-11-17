@@ -10,6 +10,13 @@ func TestOptionalFieldsValidation(t *testing.T) {
 	if err := validOptionalMetadata(valid); err != nil {
 		t.Fatal(err)
 	}
+	legacy := map[string]any{"tags": []any{"慢蒸"}}
+	if err := validOptionalMetadata(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := legacy["tags"].([]any); !ok || len(got) != 1 || got[0] != "coding" {
+		t.Fatalf("legacy tag not rewritten: %#v", legacy["tags"])
+	}
 	for _, tc := range []map[string]any{
 		{"payment_method": "unknown"}, {"register_device": "iPad"}, {"balance": 101}, {"balance": "-1"},
 		{"recharge_time": "2026-02-30"}, {"warranty_period": 14}, {"tags": []any{"速刷coding", "coding"}},
@@ -17,6 +24,13 @@ func TestOptionalFieldsValidation(t *testing.T) {
 		if err := validOptionalMetadata(tc); err == nil {
 			t.Fatalf("accepted invalid optional data: %#v", tc)
 		}
+	}
+}
+
+func TestNormalizeAccountTags(t *testing.T) {
+	got := normalizeAccountTags([]string{"慢蒸", "速刷", "coding"})
+	if len(got) != 2 || got[0] != "coding" || got[1] != "速刷coding" {
+		t.Fatalf("normalizeAccountTags=%v", got)
 	}
 }
 

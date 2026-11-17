@@ -60,20 +60,62 @@ func validOptionalMetadataFields(in map[string]any) []errs.FieldError {
 			f.Invalid("tags", "标签必须是文本列表")
 		} else {
 			seen := map[string]bool{}
+			normalized := make([]any, 0, len(tags))
 			for _, item := range tags {
 				tag, ok := item.(string)
-				if !ok || (tag != "速刷coding" && tag != "coding") || seen[tag] {
+				canonical, known := canonicalizeAccountTag(tag)
+				if !ok || !known || seen[canonical] {
 					f.Add("tags", errs.FieldUnsupportedValue, "标签只能是“速刷coding”或“coding”，且不能重复")
 					break
 				}
-				seen[tag] = true
+				seen[canonical] = true
+				normalized = append(normalized, canonical)
 			}
 			if seen["速刷coding"] && seen["coding"] {
 				f.Add("tags", errs.FieldMismatch, "速刷coding与coding不能同时使用")
 			}
+			// Rewrite aliases (速刷/慢蒸) so stored metadata uses the current names.
+			if len(normalized) == len(tags) {
+				in["tags"] = normalized
+			}
 		}
 	}
 	return f.Items()
+}
+
+// accountTagAliases maps historical platform tag names onto the current ones.
+// Old accounts keep the legacy values upstream (tags are immutable after
+// delivery); we accept and display them as the renamed labels.
+var accountTagAliases = map[string]string{
+	"速刷coding": "速刷coding",
+	"coding":    "coding",
+	"速刷":      "速刷coding",
+	"慢蒸":      "coding",
+}
+
+func canonicalizeAccountTag(tag string) (string, bool) {
+	canonical, ok := accountTagAliases[tag]
+	return canonical, ok
+}
+
+func normalizeAccountTags(tags []string) []string {
+	if len(tags) == 0 {
+		return tags
+	}
+	out := make([]string, 0, len(tags))
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		canonical, ok := canonicalizeAccountTag(tag)
+		if !ok {
+			canonical = tag
+		}
+		if canonical == "" || seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		out = append(out, canonical)
+	}
+	return out
 }
 
 // validOptionalMetadata keeps the single-error form for callers that only
@@ -202,6 +244,20 @@ func pickMetadata(in map[string]any) map[string]any {
 	for _, key := range optionalMetadataKeys {
 		if value, ok := in[key]; ok && value != nil && value != "" {
 			metadata[key] = value
+		}
+	}
+	if raw, ok := metadata["tags"]; ok {
+		switch tags := raw.(type) {
+		case []string:
+			metadata["tags"] = normalizeAccountTags(tags)
+		case []any:
+			var asStrings []string
+			for _, item := range tags {
+				if s, ok := item.(string); ok {
+					asStrings = append(asStrings, s)
+				}
+			}
+			metadata["tags"] = normalizeAccountTags(asStrings)
 		}
 	}
 	return metadata
