@@ -339,9 +339,7 @@
           <dd>已填写 · 内容已隐藏</dd>
           <dt>设备资料</dt>
           <dd>
-            {{
-              savedCredentials ? '沿用已保存资料' : edit.claude_device_ids_text?.trim() ? '已填写' : '未填写'
-            }}
+            {{ savedCredentials ? '沿用已保存资料' : edit.claude_device_ids_text?.trim() ? '已填写' : '未填写' }}
           </dd>
         </dl>
         <p class="field-hint">提交后可查看平台处理进度；平台确认接收后才算上号成功。</p>
