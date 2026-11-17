@@ -157,6 +157,12 @@
         ><el-button v-if="state === 'submitting' || state === 'unknown'" :loading="busy" @click="emit('changed')"
           >刷新状态</el-button
         ><el-button
+          v-if="showReauth && canMutateAccount"
+          type="primary"
+          :disabled="busy"
+          @click="account && emit('reauthorize', account)"
+          >重新授权</el-button
+        ><el-button
           v-if="!enabledConnections.length && state !== 'linked' && can('connections.create')"
           type="primary"
           @click="emit('configure')"
@@ -192,7 +198,14 @@ import type { Account, ConnectionOption, Preflight } from '../types/api'
 import { planLabel } from '../utils/format'
 import { shortPlatformAlias } from '../model/platform-card'
 import { ElMessageBox } from 'element-plus'
-import { deliveryState, deliveryStates, runtimeLabel, deliveryIssue, outcomeText } from '../account-workflow'
+import {
+  deliveryState,
+  deliveryStates,
+  needsReauth,
+  runtimeLabel,
+  deliveryIssue,
+  outcomeText,
+} from '../account-workflow'
 import AssignUserDialog from './AssignUserDialog.vue'
 const props = defineProps<{ modelValue: boolean; account: Account | null; connections: ConnectionOption[] }>()
 const emit = defineEmits<{
@@ -200,6 +213,7 @@ const emit = defineEmits<{
   changed: []
   configure: []
   complete: [account: Account, connectionId?: string]
+  reauthorize: [account: Account]
   deleted: [accountId: string]
   assigned: [result: { userId: string; message?: string; proxy_action?: string }]
 }>()
@@ -218,6 +232,12 @@ const connectionId = ref(''),
 const state = computed(() => deliveryState(props.account || {})),
   presentation = computed(() => deliveryStates[state.value]),
   enabledConnections = computed(() => props.connections.filter((c) => c.enabled))
+const showReauth = computed(
+  () =>
+    state.value === 'linked' &&
+    needsReauth(props.account?.platform?.status || props.account?.platform_status) &&
+    (can('accounts.credentials') || can('accounts.onboard')),
+)
 // Unknown with LOCAL_LINK_SAVE_FAILED means the platform already accepted; keep
 // the local row so an operator can recover the link instead of hard-deleting.
 const canDeleteAccount = computed(

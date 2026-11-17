@@ -60,11 +60,11 @@ export const credentialInputs: CredentialInput[] = [
   {
     key: 'claude_device_ids_text',
     label: '设备标识',
-    code: 'claude_device_ids',
+    code: 'claude_device_ids · 选填',
     placeholder: '填写设备 ID，多个 ID 用逗号或换行分隔',
     textarea: true,
     wide: true,
-    required: true,
-    hint: '供应商要求的真实设备标识，OAuth 不返回此字段；请从已有有效凭证中获取，不要随机生成。',
+    required: false,
+    hint: '选填。真实设备标识 OAuth 不返回；有则从已有有效凭证中获取，不要随机生成。',
   },
 ]

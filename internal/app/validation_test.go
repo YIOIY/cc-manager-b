@@ -25,6 +25,15 @@ func TestClaudeAuthValidation(t *testing.T) {
 	if problems := validateAuth(auth); len(problems) != 0 {
 		t.Fatalf("valid auth rejected: %v", problems)
 	}
+	auth["claude_device_ids"] = []any{}
+	if problems := validateAuth(auth); len(problems) != 0 {
+		t.Fatalf("empty device ids should be optional: %v", problems)
+	}
+	delete(auth, "claude_device_ids")
+	if problems := validateAuth(auth); len(problems) != 0 {
+		t.Fatalf("missing device ids should be optional: %v", problems)
+	}
+	auth["claude_device_ids"] = []any{"device"}
 	auth["proxy_url"] = "ftp://1.2.3.4"
 	auth["expired"] = "yesterday"
 	problems := strings.Join(validateAuth(auth), ",")

@@ -57,6 +57,9 @@
           <span>{{ card.platform.reason_text }}</span>
           <small v-if="card.platform.reason_fetched_at">{{ formatDateTime(card.platform.reason_fetched_at) }}</small>
         </div>
+        <div v-if="card.needsReauth" class="platform-reauth-hint">
+          <span>Claude 登录失败，可重新授权后同步到平台。</span>
+        </div>
         <PlatformUsageBlock
           :usage="card.platform.usage"
           :observed-at="card.platform.observed_at"
@@ -116,8 +119,18 @@
           修改平台资料 <PencilLine :size="13" />
         </el-button>
         <el-button
+          v-if="card.needsReauth && canReauth"
           class="card-action"
-          :type="card.deliveryState === 'linked' ? '' : 'primary'"
+          type="primary"
+          size="small"
+          title="重新登录 Claude 并更新平台凭证"
+          @click="emit('reauthorize', card)"
+        >
+          重新授权 <KeyRound :size="13" />
+        </el-button>
+        <el-button
+          class="card-action"
+          :type="card.deliveryState === 'linked' || card.needsReauth ? '' : 'primary'"
           :disabled="card.archived && card.deliveryState !== 'linked'"
           size="small"
           @click="emit('select', card)"
@@ -144,9 +157,16 @@ import {
   Lock,
   PencilLine,
   UserRoundPlus,
+  KeyRound,
 } from 'lucide-vue-next'
 import type { Account, PlatformInfo } from '../types/api'
-import { deliveryState, deliveryStates, runtimeLabel, type DeliveryState } from '../account-workflow'
+import {
+  deliveryState,
+  deliveryStates,
+  needsReauth,
+  runtimeLabel,
+  type DeliveryState,
+} from '../account-workflow'
 import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/format'
 import { fenToUsdCents, formatUsdCents } from '../model/money'
 import { useSession } from '../composables/useSession'
@@ -163,10 +183,12 @@ const props = defineProps<{ accounts: Account[]; loading: boolean }>()
 const emit = defineEmits<{
   select: [account: Account]
   'edit-platform': [account: Account]
+  reauthorize: [account: Account]
   assign: [account: Account]
 }>()
 const { can, owns, user } = useSession()
 const isAdmin = computed(() => !!user.value?.is_admin)
+const canReauth = computed(() => can('accounts.credentials') || can('accounts.onboard'))
 
 // The platform edit needs ownership, the permission, a record the platform
 // still lists, and a console channel that is configured and not suspended.
@@ -193,6 +215,7 @@ type Card = Account & {
   statusLabel: string
   statusTone: string
   statusFailing: boolean
+  needsReauth: boolean
   connectionNames: string
   footer: string
   profileFields: ProfileField[]
@@ -270,6 +293,7 @@ const cards = computed<Card[]>(() =>
             ? 'attention'
             : 'unknown',
       statusFailing: failing,
+      needsReauth: state === 'linked' && needsReauth(platformStatus),
       connectionNames: names,
       profileFields: row.platform ? profileFields(row, row.platform) : [],
       footer: state === 'linked' ? '' : state === 'submitting' ? '上号结果自动更新' : '尚未完成平台上号',
@@ -396,8 +420,8 @@ const cards = computed<Card[]>(() =>
 }
 
 .mini-badge.provider {
-  background: #1d2140;
-  color: #9fb4ff;
+  background: #1aa383;
+  color: white;
   text-transform: none;
 }
 
@@ -483,6 +507,12 @@ const cards = computed<Card[]>(() =>
 .platform-reason small {
   flex: none;
   opacity: 0.8;
+}
+
+.platform-reauth-hint {
+  margin-top: 8px;
+  color: #c9a227;
+  font-size: 12px;
 }
 
 .usage-card-rule {

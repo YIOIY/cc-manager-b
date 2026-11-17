@@ -4,6 +4,7 @@ import { api, ApiError, errorMessage } from '../api'
 import { plans } from '../list-model'
 import {
   buildOnboardPayload,
+  buildReauthorizePayload,
   missingAccountFields,
   keepsSavedCredential,
   type AccountForm,
@@ -23,23 +24,26 @@ import {
 import { credentialInputs } from '../model/credential-inputs'
 import { applyFieldErrors } from '../errors'
 import { randomId } from '../utils/id'
-import type { Account, OnboardResult, ConnectionOption, ProxyOption } from '../types/api'
+import type { Account, OnboardResult, ReauthorizeResult, ConnectionOption, ProxyOption } from '../types/api'
+import { deliveryState } from '../account-workflow'
 
 export interface AccountOnboardingProps {
   modelValue: boolean
   account: Account | null
   connectionId?: string
+  /** Open the wizard already asking for a fresh Claude authorization. */
+  forceReauth?: boolean
   proxies: ProxyOption[]
   connections: ConnectionOption[]
 }
 export type AccountOnboardingEmit = {
   (event: 'update:modelValue', value: boolean): void
   (event: 'saved', result: OnboardResult): void
+  (event: 'reauthorized', result: ReauthorizeResult): void
   (event: 'proxy-created'): void
 }
 
 export function useAccountOnboarding(props: AccountOnboardingProps, emit: AccountOnboardingEmit) {
-  const stepLabels = ['连接账号', '补充资料', '确认上号']
   const step = ref(1)
   const edit = ref<AccountForm>({})
   const source = ref<'oauth' | 'import' | 'manual' | 'saved' | ''>('')
@@ -112,10 +116,38 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   const deviceImportOpen = ref(false)
   const devicePaste = ref('')
   const flashAnchor = ref('')
-  const missingFields = computed(() => missingAccountFields(edit.value))
-  const checklist = computed(() =>
-    completionChecklist(edit.value, { connection: selectedConnectionName.value, proxy: selectedProxyName.value }),
+  const linkedReauth = computed(
+    () => !!props.forceReauth && !!edit.value.id && deliveryState(props.account || {}) === 'linked',
   )
+  const linkedConnectionId = computed(
+    () =>
+      props.account?.platform_links?.find((l) => l.ingestion_state === 'accepted')?.connection_id ||
+      props.connectionId ||
+      '',
+  )
+  const linkedConnectionName = computed(() => {
+    const id = linkedConnectionId.value
+    const row = props.connections.find((c) => c.id === id)
+    return row?.name || row?.base_url || props.account?.platform_links?.find((l) => l.connection_id === id)?.connection_name || '已绑定平台'
+  })
+  const missingFields = computed(() => {
+    if (!linkedReauth.value) return missingAccountFields(edit.value)
+    // Reauth only needs a fresh credential; profile gaps are irrelevant.
+    try {
+      buildReauthorizePayload(edit.value)
+      return [] as string[]
+    } catch (e) {
+      return [errorMessage(e, '凭证待补充')]
+    }
+  })
+  const checklist = computed(() => {
+    const items = completionChecklist(edit.value, {
+      connection: selectedConnectionName.value,
+      proxy: selectedProxyName.value,
+    })
+    if (!linkedReauth.value) return items
+    return items.filter((i) => i.key === 'connection' || i.key === 'proxy' || i.key === 'credentials')
+  })
   const pendingAnchors = computed(() => new Set(checklist.value.filter((i) => !i.done).map((i) => i.anchor)))
   const gapCount = computed(() => pendingAnchors.value.size)
   const visibleCredentialInputs = computed(() =>
@@ -344,7 +376,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     await advance()
   }
   async function jumpTo(anchor: string) {
-    if ([fieldAnchors.proxy, fieldAnchors.connection].includes(anchor as typeof fieldAnchors.proxy)) step.value = 1
+    if ([fieldAnchors.proxy, fieldAnchors.connection].includes(anchor as typeof fieldAnchors.proxy) || linkedReauth.value)
+      step.value = 1
     else {
       step.value = 2
       if (anchor === fieldAnchors.credentials || anchor.startsWith('credential-field-'))
@@ -369,7 +402,9 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   }
   function goBack() {
     if (busy.value) return
-    step.value = Math.max(1, step.value - 1)
+    // Reauth never uses the profile step; back from review returns to auth.
+    if (linkedReauth.value && step.value === 3) step.value = 1
+    else step.value = Math.max(1, step.value - 1)
     notice.value = null
     scrollTop()
   }
@@ -390,13 +425,23 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     }
     return true
   }
+  async function validateReauth() {
+    try {
+      buildReauthorizePayload(edit.value)
+      return true
+    } catch (e) {
+      notice.value = e
+      credentialDetailsOpen.value = true
+      await jumpTo(fieldAnchors.credentials)
+      return false
+    }
+  }
   async function validateDetails() {
+    if (linkedReauth.value) return validateReauth()
     if (gapCount.value) {
       for (const [key, label] of accountRequiredFields)
         if (!hasValue(edit.value[key]) && !(key === 'password' && edit.value.password_configured))
           fieldErrors.value[key] = `请填写${label}`
-      if (!savedCredentials.value && !parseDeviceIds(edit.value.claude_device_ids_text).length)
-        fieldErrors.value.claude_device_ids_text = '请提供有效的设备资料'
       notice.value = new Error(`还有 ${gapCount.value} 组资料待补充，已定位到第一项`)
       await jumpTo(firstMissingAnchor(edit.value) || fieldAnchors.credentials)
       return false
@@ -427,8 +472,13 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         notice.value = new Error('请先授权或导入凭证')
         return
       }
-      step.value = 2
-      if (!missingFields.value.length && (await validateDetails())) step.value = 3
+      if (linkedReauth.value) {
+        // Profile fields are not part of reauth; stay on step 1 until credential is ready.
+        if (await validateReauth()) step.value = 3
+      } else {
+        step.value = 2
+        if (!missingFields.value.length && (await validateDetails())) step.value = 3
+      }
     } else if (await validateDetails()) step.value = 3
     scrollTop()
   }
@@ -458,6 +508,23 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     try {
       resetNotices()
       if (!checkConnectionAndProxy() || !(await validateDetails())) return
+      if (linkedReauth.value) {
+        const payload = buildReauthorizePayload(edit.value)
+        const body = {
+          auth_json: payload.auth_json,
+          proxy_id: payload.proxy_id,
+          expected_version: props.account?.version,
+        }
+        const result = await api<ReauthorizeResult>('/accounts/' + edit.value.id + '/reauthorize', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        })
+        edit.value = {}
+        credentialPaste.value = ''
+        emit('update:modelValue', false)
+        emit('reauthorized', result.data)
+        return
+      }
       const payload = buildOnboardPayload(edit.value)
       const serialized = JSON.stringify(payload)
       if (lastAttempt && lastAttempt !== serialized) idempotencyKey = randomId()
@@ -573,6 +640,12 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         source.value = 'saved'
         captureKnown()
       }
+      if (props.forceReauth && edit.value.id) {
+        replaceSavedCredential()
+        source.value = ''
+        const bound = linkedConnectionId.value
+        if (bound) edit.value.platform_connection_id = bound
+      }
       initialForm = JSON.stringify(edit.value)
       idempotencyKey = randomId()
       now.value = Date.now()
@@ -601,9 +674,19 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     lastAttempt = ''
     retainedDevices = null
   })
+  const stepLabels = computed(() =>
+    linkedReauth.value ? ['重新授权', '确认更新'] : ['连接账号', '补充资料', '确认上号'],
+  )
+  const displayStep = computed(() => {
+    if (!linkedReauth.value) return step.value
+    return step.value >= 3 ? 2 : 1
+  })
   return {
     stepLabels,
     step,
+    displayStep,
+    linkedReauth,
+    linkedConnectionName,
     edit,
     source,
     credentialPaste,

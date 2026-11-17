@@ -445,7 +445,8 @@ test('saved credential errors return to reauthorization while retaining business
   authorization = { ...fixture, auth_json: { ...fixture.auth_json, email: 'old@example.com' } }
   await w.get('.fake-oauth').trigger('click')
   await next(w)
-  expect((w.get('#field-plan-start input').element as HTMLInputElement).value).toBe('2026-01-01')
+  // device ids are optional, so a complete form advances straight to review
+  expect(w.get('[data-review]').text()).toContain('2026-01-01')
 })
 
 test('editing a field clears its stale inline error while preserving other missing-field errors', async () => {

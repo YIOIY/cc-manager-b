@@ -46,6 +46,7 @@ func (a *App) Handler() http.Handler {
 	need("POST /api/v1/accounts/{id}/restore", PermAccountsArchive, a.accountArchive(false))
 	need("PUT /api/v1/accounts/{id}/credentials", PermAccountsCredential, a.accountCredentials)
 	need("PATCH /api/v1/accounts/{id}/credentials", PermAccountsCredential, a.accountCredentials)
+	need("POST /api/v1/accounts/{id}/reauthorize", PermAccountsCredential, a.accountReauthorize)
 	need("POST /api/v1/accounts/{id}/preflight", PermAccountsView, a.accountPreflight)
 	need("GET /api/v1/accounts/{id}/platform-usage", PermAccountsUsage, a.accountPlatformUsage)
 	need("GET /api/v1/accounts/{id}/platform-usage-history", PermAccountsUsage, a.accountUsageHistory)

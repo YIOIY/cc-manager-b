@@ -152,7 +152,6 @@ export function missingAccountFields(edit: AccountForm): string[] {
     missing.push('套餐开始日期早于结束日期')
   if (!keepsSavedCredential(edit)) {
     for (const [key] of credentialFields) if (credentialMissing(edit, key)) missing.push(credentialLabels[key]!)
-    if (!parseDeviceIds(edit.claude_device_ids_text).length) missing.push(credentialLabels.claude_device_ids_text!)
   }
   return missing
 }
@@ -170,8 +169,6 @@ export function buildCredential(edit: AccountForm): CredentialPayload | null {
     hasValue(edit.claude_device_ids_text)
   if (!entered) return null
   const missing = credentialFields.filter(([key]) => credentialMissing(edit, key)).map(([, field]) => field as string)
-  const devices = parseDeviceIds(edit.claude_device_ids_text)
-  if (!devices.length) missing.push('claude_device_ids')
   if (missing.length) throw new Error('Claude 凭证缺少：' + missing.join('、'))
   const email = String(edit.credential_email).trim()
   if (!EMAIL_PATTERN.test(email)) throw new Error('凭证 email 格式不正确')
@@ -192,7 +189,7 @@ export function buildCredential(edit: AccountForm): CredentialPayload | null {
     account_uuid: String(edit.account_uuid),
     organization_uuid: String(edit.organization_uuid),
     organization_name: String(edit.organization_name),
-    claude_device_ids: devices,
+    claude_device_ids: parseDeviceIds(edit.claude_device_ids_text),
     type: String(edit.credential_type),
     expired: String(edit.expired),
     proxy_url: proxy,
@@ -217,6 +214,19 @@ export function buildOnboardPayload(edit: AccountForm): Record<string, unknown> 
   if (edit.id) payload.proxy_id = edit.proxy_id || ''
   for (const key of accountPayloadKeys) if (hasValue(edit[key])) payload[key] = edit[key]
   return payload
+}
+
+/**
+ * Credential refresh for an already-linked account: only auth_json + proxy_id.
+ * Always sends proxy_id (possibly "") so clearing the pool binding is explicit.
+ */
+export function buildReauthorizePayload(edit: AccountForm): {
+  auth_json: CredentialPayload
+  proxy_id: string
+} {
+  const credential = buildCredential(edit)
+  if (!credential) throw new Error('请先完成 Claude 授权或导入凭证')
+  return { auth_json: credential, proxy_id: String(edit.proxy_id ?? '') }
 }
 
 /** Default dates for a brand-new account: registered today, plan starts today and runs one month. */
@@ -296,7 +306,6 @@ export function applyCredentialJson(edit: AccountForm, text: string, now = new D
   const missing = credentialFields
     .filter(([key]) => credentialMissing(edit, key))
     .map(([key]) => credentialLabels[key]!)
-  if (!parseDeviceIds(edit.claude_device_ids_text).length) missing.push(credentialLabels.claude_device_ids_text!)
   return { filled, missing, accountFilled }
 }
 
@@ -409,13 +418,6 @@ export function completionChecklist(
       hint: '按账单或供应商约定确认',
       done: hasValue(edit.plan_start_time) && hasValue(edit.plan_end_time),
       anchor: fieldAnchors.planStart,
-    },
-    {
-      key: 'device_ids',
-      label: '设备标识 claude_device_ids',
-      hint: '供应商必填，从有效凭证中获取，不要随机生成',
-      done: saved || parseDeviceIds(edit.claude_device_ids_text).length > 0,
-      anchor: fieldAnchors.deviceIds,
     },
     {
       key: 'connection',

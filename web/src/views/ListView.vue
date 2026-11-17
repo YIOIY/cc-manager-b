@@ -50,6 +50,7 @@
       :loading="page.loading.value"
       @select="selectAccount"
       @edit-platform="editPlatform"
+      @reauthorize="reauthorizeAccount"
       @assign="openAssignAccount"
     />
     <div v-else class="table-scroll">
@@ -227,6 +228,7 @@
       @assigned="onAssigned"
       @configure="router.push({ name: 'connections' })"
       @complete="completeAccount"
+      @reauthorize="reauthorizeAccount"
       @deleted="onAccountDeleted"
     />
     <ImportDialog v-model="importOpen" @feedback="feedback" @imported="onImported" />
@@ -240,9 +242,11 @@
       v-model="accountFormOpen"
       :account="editingAccount"
       :connection-id="editingConnectionId"
+      :force-reauth="forceReauth"
       :proxies="proxies"
       :connections="connections"
       @saved="onAccountSaved"
+      @reauthorized="onAccountReauthorized"
       @proxy-created="refreshOnboardingProxies"
     />
   </template>
@@ -426,11 +430,23 @@ const importOpen = ref(false)
 const accountFormOpen = ref(false)
 const editingAccount = ref<Account | null>(null)
 const editingConnectionId = ref('')
+const forceReauth = ref(false)
 const platformProfileOpen = ref(false)
 const platformProfileAccount = ref<Account | null>(null)
 function editPlatform(row: Account) {
   platformProfileAccount.value = accountsAll.value.find((item) => item.id === row.id) || row
   platformProfileOpen.value = true
+  actionMessage.value = ''
+}
+function reauthorizeAccount(row: Account) {
+  deliveryOpen.value = false
+  editingAccount.value = accountsAll.value.find((item) => item.id === row.id) || row
+  editingConnectionId.value =
+    row.platform_links?.find((l) => l.ingestion_state === 'accepted')?.connection_id ||
+    row.submission_job?.connection_id ||
+    ''
+  forceReauth.value = true
+  accountFormOpen.value = true
   actionMessage.value = ''
 }
 function ownerLabel(row: { created_by_nickname?: string; created_by_username?: string }) {
@@ -483,13 +499,20 @@ function completeAccount(row: Account, connectionId?: string) {
   deliveryOpen.value = false
   editingAccount.value = row
   editingConnectionId.value = connectionId || ''
+  forceReauth.value = false
   accountFormOpen.value = true
 }
 async function onAccountSaved(result: OnboardResult) {
+  forceReauth.value = false
   feedback('账号已提交，等待平台处理。可在账号卡片查看上号结果。', 'info')
   await page.load()
   selectedAccount.value = accountsAll.value.find((row) => row.id === result.account_id) || null
   deliveryOpen.value = !!selectedAccount.value
+}
+async function onAccountReauthorized() {
+  forceReauth.value = false
+  feedback('凭证已更新并推送到平台，状态将在下次同步后刷新。', 'success')
+  await page.load()
 }
 async function onAccountDeleted() {
   selectedAccount.value = null
@@ -597,6 +620,7 @@ function openCreate() {
   if (listKey.value === 'accounts') {
     editingAccount.value = null
     editingConnectionId.value = ''
+    forceReauth.value = false
     accountFormOpen.value = true
   } else if (listKey.value === 'proxies') {
     editingProxy.value = null

@@ -5,7 +5,8 @@ import type { Account, PlatformInfo } from '../src/types/api'
 // The signed-in user is "me", not an admin: only accounts they own are editable.
 vi.mock('../src/composables/useSession', () => ({
   useSession: () => ({
-    can: (p: string) => p === 'accounts.platform_edit' || p === 'accounts.view',
+    can: (p: string) =>
+      p === 'accounts.platform_edit' || p === 'accounts.view' || p === 'accounts.credentials' || p === 'accounts.onboard',
     owns: (createdBy?: string | null) => createdBy === 'me',
     user: { value: { id: 'me', username: 'me', is_admin: false } },
   }),
@@ -93,6 +94,7 @@ function render(row: Account) {
 }
 
 const editButton = (w: VueWrapper) => w.findAll('button').find((b) => b.text().includes('修改平台资料'))
+const reauthButton = (w: VueWrapper) => w.findAll('button').find((b) => b.text().includes('重新授权'))
 
 test('a linked account with a configured web channel offers the platform edit', async () => {
   const row = account(platform())
@@ -101,6 +103,17 @@ test('a linked account with a configured web channel offers the platform edit', 
   expect(btn).toBeTruthy()
   await btn!.trigger('click')
   expect(w.emitted('edit-platform')?.[0]?.[0]).toMatchObject({ id: 'acc-1' })
+})
+
+test('a linked login_failed account offers reauthorize', async () => {
+  const w = render(account(platform({ status: 'login_failed', status_raw: 'login_failed', reason_text: 'token expired' })))
+  expect(w.text()).toContain('登录失败')
+  expect(w.text()).toContain('重新授权后同步到平台')
+  const btn = reauthButton(w)
+  expect(btn).toBeTruthy()
+  await btn!.trigger('click')
+  expect(w.emitted('reauthorize')?.[0]?.[0]).toMatchObject({ id: 'acc-1' })
+  expect(reauthButton(render(account(platform())))).toBeFalsy()
 })
 
 test('the edit is hidden when the platform removed the account or the channel is unusable', () => {

@@ -4,6 +4,7 @@ import {
   missingAccountFields,
   buildCredential,
   buildOnboardPayload,
+  buildReauthorizePayload,
   parseDeviceIds,
   applyOAuthResult,
   completionChecklist,
@@ -43,6 +44,17 @@ test('a complete form has nothing missing and builds a full payload', () => {
   assert.equal(payload.auth_json.email, 'Name@example.com')
   assert.equal(payload.auth_json.id_token, '')
   assert.equal('proxy_id' in payload, false)
+})
+
+test('reauthorize payload only carries credentials and always sends proxy_id', () => {
+  const withPool = buildReauthorizePayload({ ...complete, proxy_id: 'pool-proxy', credential_proxy_url: '' })
+  assert.equal(withPool.proxy_id, 'pool-proxy')
+  assert.equal(withPool.auth_json.proxy_url, '')
+  assert.equal(withPool.auth_json.access_token, 'a')
+  const cleared = buildReauthorizePayload({ ...complete, proxy_id: '' })
+  assert.equal(cleared.proxy_id, '')
+  assert.equal(cleared.auth_json.proxy_url, 'socks5h://user:pwd@1.2.3.4:1080')
+  assert.throws(() => buildReauthorizePayload({ account: 'a@b.co' }), /授权|凭证/)
 })
 
 test('a selected pool proxy satisfies the form without disclosing its password', () => {
@@ -114,7 +126,7 @@ test('credential validation rejects malformed values', () => {
   assert.throws(() => buildCredential({ ...complete, credential_email: 'other@example.com' }), /必须与账号一致/)
   assert.throws(() => buildCredential({ ...complete, expired: 'yesterday' }), /RFC3339/)
   assert.throws(() => buildCredential({ ...complete, credential_proxy_url: 'ftp://x' }), /proxy_url/)
-  assert.throws(() => buildCredential({ ...complete, claude_device_ids_text: ' , ' }), /claude_device_ids/)
+  assert.deepEqual(buildCredential({ ...complete, claude_device_ids_text: ' , ' }).claude_device_ids, [])
   assert.deepEqual(parseDeviceIds('a，b, c\n\nd'), ['a', 'b', 'c', 'd'])
 })
 
@@ -155,7 +167,7 @@ test('pasting a credential JSON fills the form, derives constants and reports ga
   assert.equal(partial.password, 'pw')
   assert.equal(r2.accountFilled, true)
   assert.ok(r2.missing.includes('refresh_token'))
-  assert.ok(r2.missing.includes('claude_device_ids'))
+  assert.equal(r2.missing.includes('claude_device_ids'), false)
 
   assert.throws(() => applyCredentialJson({}, '{not json'), /JSON/)
   assert.throws(() => applyCredentialJson({}, '"text"'), /对象/)
@@ -188,11 +200,11 @@ test('completion checklist lists what OAuth cannot provide and tracks progress',
   const items = completionChecklist(afterOAuth, { connection: '平台 A' })
   assert.deepEqual(
     items.map((i) => i.key),
-    ['password', 'plan_dates', 'device_ids', 'connection', 'proxy'],
+    ['password', 'plan_dates', 'connection', 'proxy'],
   )
   assert.deepEqual(
     items.map((i) => i.done),
-    [false, false, false, false, false],
+    [false, false, false, false],
   )
   assert.equal(firstMissingAnchor(afterOAuth), fieldAnchors.password)
   const progressed = {
@@ -206,11 +218,11 @@ test('completion checklist lists what OAuth cannot provide and tracks progress',
   const next = completionChecklist(progressed, { connection: '平台 A', proxy: '印度代理' })
   assert.deepEqual(
     next.filter((i) => !i.done).map((i) => i.key),
-    ['device_ids'],
+    [],
   )
   assert.equal(next.find((i) => i.key === 'proxy').hint, '已选 印度代理')
   assert.equal(next.find((i) => i.key === 'connection').hint, '已选 平台 A')
-  assert.equal(firstMissingAnchor(progressed), fieldAnchors.deviceIds)
+  assert.equal(firstMissingAnchor(progressed), null)
   assert.equal(firstMissingAnchor({ ...progressed, claude_device_ids_text: 'd1' }), null)
 })
 

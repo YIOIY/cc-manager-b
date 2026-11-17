@@ -52,11 +52,14 @@ type WebProfile struct {
 
 // WebProfileUpdate is the whole record PUT /supplier/accounts/{id} expects
 // for a Claude (CPA) account. Every field is sent, so the caller fills it
-// from the current snapshot and overlays the changes.
+// from the current snapshot and overlays the changes. AuthJSON is the
+// Claude credential object as JSON text; empty keeps the platform's current
+// credential (cpa_auth_json "").
 type WebProfileUpdate struct {
 	Provider, Model, Email, Remark                                    string
 	Plan, RegisterTime, PlanStart, PlanEnd, RegisterLocation, Balance string
 	PaymentMethod, RegisterDevice, RechargeTime, WarrantyPeriod       string
+	AuthJSON                                                          string
 }
 
 // WebUsage is the console's "账号用量" block. CostMicro is in millionths of a
@@ -662,7 +665,7 @@ func (c *WebClient) UpdateAccountProfile(ctx context.Context, id int64, p WebPro
 			"cpa_plan_end_time": p.PlanEnd, "cpa_register_location": p.RegisterLocation, "cpa_balance": p.Balance,
 			"cpa_payment_method": p.PaymentMethod, "cpa_register_device": p.RegisterDevice,
 			"cpa_recharge_time": p.RechargeTime, "cpa_warranty_period": p.WarrantyPeriod,
-			"cpa_auth_json": "", "enc_adc_config": enc,
+			"cpa_auth_json": p.AuthJSON, "enc_adc_config": enc,
 		}, nil
 	}
 	data, err := c.call(ctx, http.MethodPut, fmt.Sprintf("/supplier-account/api/supplier/accounts/%d", id), nil, bodyFn)

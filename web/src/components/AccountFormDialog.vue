@@ -13,9 +13,13 @@
       <div class="account-dialog-heading">
         <span class="account-dialog-icon"><UsersRound :size="21" /></span>
         <div>
-          <h2>{{ edit.id ? '完善资料并上号' : '添加 Claude 账号' }}</h2>
+          <h2>{{ forceReauth ? '重新授权' : edit.id ? '完善资料并上号' : '添加 Claude 账号' }}</h2>
           <p>
-            连接账号，补充上号资料，确认后提交。
+            {{
+              forceReauth
+                ? '重新登录 Claude，更新凭证并同步到平台。'
+                : '连接账号，补充上号资料，确认后提交。'
+            }}
             <a class="dialog-help-link" href="/help?topic=onboard" target="_blank" rel="noopener noreferrer"
               ><BookOpen :size="13" />上号手册</a
             >
@@ -26,11 +30,13 @@
         <li
           v-for="(label, index) in stepLabels"
           :key="label"
-          :aria-current="step === index + 1 ? 'step' : undefined"
-          :class="{ 'is-complete': step > index + 1 }"
+          :aria-current="displayStep === index + 1 ? 'step' : undefined"
+          :class="{ 'is-complete': displayStep > index + 1 }"
         >
           <span
-            ><CheckCircle2 v-if="step > index + 1" :size="17" /><template v-else>{{ index + 1 }}</template></span
+            ><CheckCircle2 v-if="displayStep > index + 1" :size="17" /><template v-else>{{
+              index + 1
+            }}</template></span
           >{{ label }}
         </li>
       </ol>
@@ -43,7 +49,7 @@
             v-model="edit.platform_connection_id"
             clearable
             filterable
-            :disabled="busy"
+            :disabled="busy || linkedReauth"
             placeholder="选择上号平台"
             aria-label="上号平台"
             ><el-option
@@ -55,9 +61,11 @@
           /></el-select>
           <div class="field-hint">
             {{
-              enabledConnections.length
-                ? '账号将提交到所选平台，授权后继续确认所需资料。'
-                : '暂无启用的平台连接，请先配置平台。'
+              linkedReauth
+                ? `凭证将更新到已绑定平台「${linkedConnectionName}」，不可更换。`
+                : enabledConnections.length
+                  ? '账号将提交到所选平台，授权后继续确认所需资料。'
+                  : '暂无启用的平台连接，请先配置平台。'
             }}
           </div>
         </el-form-item>
@@ -149,7 +157,7 @@
           </details>
         </template>
       </section>
-      <section v-if="step === 2" class="wizard-page" aria-label="补充资料">
+      <section v-if="step === 2 && !linkedReauth" class="wizard-page" aria-label="补充资料">
         <div class="wizard-identity">
           <span class="account-dialog-icon"><UsersRound :size="20" /></span>
           <div>
@@ -232,17 +240,16 @@
           v-if="!savedCredentials"
           :id="fieldAnchors.deviceIds"
           label="设备资料"
-          required
           :class="fieldClass(fieldAnchors.deviceIds)"
           :error="fieldErrors.claude_device_ids_text"
           ><el-input
             v-model="edit.claude_device_ids_text"
             type="textarea"
             :rows="2"
-            placeholder="填写设备 ID，多个 ID 用逗号或换行分隔"
+            placeholder="选填；填写设备 ID，多个 ID 用逗号或换行分隔"
           />
           <div class="field-hint">
-            从已有有效凭证获取真实设备 ID，授权不返回此项；资料缺失时暂不能上号。
+            选填。有则从已有有效凭证获取真实设备 ID，授权不返回此项。
             <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
               >如何获取？</a
             >
@@ -314,8 +321,8 @@
         <div class="wizard-connected">
           <CheckCircle2 :size="24" />
           <div>
-            <strong>资料已齐全</strong>
-            <p>核对信息后，提交到所选平台。</p>
+            <strong>{{ forceReauth ? '凭证已就绪' : '资料已齐全' }}</strong>
+            <p>{{ forceReauth ? '核对后将更新本地凭证并推送到平台。' : '核对信息后，提交到所选平台。' }}</p>
           </div>
         </div>
         <dl class="wizard-facts wizard-review">
@@ -330,13 +337,21 @@
           <dt>注册地区</dt>
           <dd>{{ edit.register_location === 'US' ? '美国（US）' : edit.register_location }}</dd>
           <dt>上号平台</dt>
-          <dd>{{ selectedConnectionName }}</dd>
+          <dd>{{ linkedReauth ? linkedConnectionName : selectedConnectionName }}</dd>
           <dt>所选代理</dt>
           <dd>{{ selectedProxyName }}</dd>
           <dt>凭证与密码</dt>
           <dd>已填写 · 内容已隐藏</dd>
           <dt>设备资料</dt>
-          <dd>{{ savedCredentials ? '沿用已保存资料' : '已填写' }}</dd>
+          <dd>
+            {{
+              savedCredentials
+                ? '沿用已保存资料'
+                : edit.claude_device_ids_text?.trim()
+                  ? '已填写'
+                  : '未填写（选填）'
+            }}
+          </dd>
         </dl>
         <p class="field-hint">提交后可查看平台处理进度；平台确认接收后才算上号成功。</p>
       </section>
@@ -354,7 +369,9 @@
           :disabled="busy || (step === 1 && !connected)"
           @click="advance"
           >{{
-            step === 1 ? (connected && !missingFields.length ? '继续，核对信息' : '继续，补充资料') : '继续，核对信息'
+            linkedReauth || (step === 1 && connected && !missingFields.length) || step > 1
+              ? '继续，核对信息'
+              : '继续，补充资料'
           }}</el-button
         ><el-button
           v-else
@@ -363,16 +380,19 @@
           :loading="saving"
           :disabled="oauthBusy || proxyBusy"
           @click="save"
-          >{{ saving ? '正在保存并提交…' : '确认并上号' }}</el-button
+          >{{
+            saving ? (forceReauth ? '正在更新凭证…' : '正在保存并提交…') : forceReauth ? '确认并更新凭证' : '确认并上号'
+          }}</el-button
         >
       </div></template
     >
   </el-dialog>
 </template>
 <script setup lang="ts">
+import { computed } from 'vue'
 import { UsersRound, ShieldCheck, CheckCircle2, BookOpen } from 'lucide-vue-next'
 import { useAccountOnboarding, type AccountOnboardingProps } from '../composables/useAccountOnboarding'
-import type { OnboardResult } from '../types/api'
+import type { OnboardResult, ReauthorizeResult } from '../types/api'
 import ClaudeOAuthPanel from './ClaudeOAuthPanel.vue'
 import AccountCompletionChecklist from './AccountCompletionChecklist.vue'
 import OnboardingProxyPicker from './OnboardingProxyPicker.vue'
@@ -382,11 +402,16 @@ const props = defineProps<AccountOnboardingProps>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   saved: [result: OnboardResult]
+  reauthorized: [result: ReauthorizeResult]
   'proxy-created': []
 }>()
+const forceReauth = computed(() => !!props.forceReauth)
 const {
   stepLabels,
   step,
+  displayStep,
+  linkedReauth,
+  linkedConnectionName,
   edit,
   source,
   credentialPaste,

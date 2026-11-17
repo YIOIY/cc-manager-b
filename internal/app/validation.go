@@ -98,9 +98,7 @@ func validateAuthFields(auth map[string]any) []errs.FieldError {
 	if _, ok := auth["id_token"].(string); !ok {
 		f.Add("auth_json.id_token", errs.FieldRequired, "缺少身份令牌字段（允许为空）")
 	}
-	if ids, ok := auth["claude_device_ids"].([]any); !ok || len(ids) == 0 {
-		f.Required("auth_json.claude_device_ids")
-	} else {
+	if ids, ok := auth["claude_device_ids"].([]any); ok {
 		for _, id := range ids {
 			value, ok := id.(string)
 			if !ok || strings.TrimSpace(value) == "" {
@@ -108,6 +106,8 @@ func validateAuthFields(auth map[string]any) []errs.FieldError {
 				break
 			}
 		}
+	} else if _, present := auth["claude_device_ids"]; present {
+		f.Invalid("auth_json.claude_device_ids", "设备标识必须是字符串数组")
 	}
 	for _, key := range []string{"last_refresh", "expired"} {
 		if value, ok := auth[key].(string); ok && value != "" {

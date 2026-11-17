@@ -585,4 +585,11 @@ export interface OnboardResult {
   state: string
 }
 
+/** Result of POST /accounts/{id}/reauthorize. */
+export interface ReauthorizeResult {
+  account_id: string
+  platform_pushed: boolean
+  upstream_id: string
+}
+
 export type ListRow = Record<string, unknown> & { id?: string }

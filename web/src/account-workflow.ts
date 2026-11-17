@@ -73,6 +73,13 @@ export function runtimeLabel(status: string) {
   )
 }
 
+/** Platform statuses where Claude login failed and a credential refresh may help. */
+export const reauthStatuses = new Set(['login_failed', 're_login', 're_login_failed'])
+
+export function needsReauth(status: string | undefined | null): boolean {
+  return !!status && reauthStatuses.has(status)
+}
+
 /** Text for a submission outcome: the stored message, else generated copy. */
 export function outcomeText(job?: { code?: string; message?: string } | null): string {
   if (job?.message) return job.message
