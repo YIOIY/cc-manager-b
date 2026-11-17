@@ -128,7 +128,12 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   const linkedConnectionName = computed(() => {
     const id = linkedConnectionId.value
     const row = props.connections.find((c) => c.id === id)
-    return row?.name || row?.base_url || props.account?.platform_links?.find((l) => l.connection_id === id)?.connection_name || '已绑定平台'
+    return (
+      row?.name ||
+      row?.base_url ||
+      props.account?.platform_links?.find((l) => l.connection_id === id)?.connection_name ||
+      '已绑定平台'
+    )
   })
   const missingFields = computed(() => {
     if (!linkedReauth.value) return missingAccountFields(edit.value)
@@ -376,7 +381,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     await advance()
   }
   async function jumpTo(anchor: string) {
-    if ([fieldAnchors.proxy, fieldAnchors.connection].includes(anchor as typeof fieldAnchors.proxy) || linkedReauth.value)
+    if (
+      [fieldAnchors.proxy, fieldAnchors.connection].includes(anchor as typeof fieldAnchors.proxy) ||
+      linkedReauth.value
+    )
       step.value = 1
     else {
       step.value = 2

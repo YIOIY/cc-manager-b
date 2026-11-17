@@ -15,11 +15,7 @@
         <div>
           <h2>{{ forceReauth ? '重新授权' : edit.id ? '完善资料并上号' : '添加 Claude 账号' }}</h2>
           <p>
-            {{
-              forceReauth
-                ? '重新登录 Claude，更新凭证并同步到平台。'
-                : '连接账号，补充上号资料，确认后提交。'
-            }}
+            {{ forceReauth ? '重新登录 Claude，更新凭证并同步到平台。' : '连接账号，补充上号资料，确认后提交。' }}
             <a class="dialog-help-link" href="/help?topic=onboard" target="_blank" rel="noopener noreferrer"
               ><BookOpen :size="13" />上号手册</a
             >
@@ -34,9 +30,7 @@
           :class="{ 'is-complete': displayStep > index + 1 }"
         >
           <span
-            ><CheckCircle2 v-if="displayStep > index + 1" :size="17" /><template v-else>{{
-              index + 1
-            }}</template></span
+            ><CheckCircle2 v-if="displayStep > index + 1" :size="17" /><template v-else>{{ index + 1 }}</template></span
           >{{ label }}
         </li>
       </ol>
@@ -345,11 +339,7 @@
           <dt>设备资料</dt>
           <dd>
             {{
-              savedCredentials
-                ? '沿用已保存资料'
-                : edit.claude_device_ids_text?.trim()
-                  ? '已填写'
-                  : '未填写（选填）'
+              savedCredentials ? '沿用已保存资料' : edit.claude_device_ids_text?.trim() ? '已填写' : '未填写（选填）'
             }}
           </dd>
         </dl>

@@ -6,7 +6,10 @@ import type { Account, PlatformInfo } from '../src/types/api'
 vi.mock('../src/composables/useSession', () => ({
   useSession: () => ({
     can: (p: string) =>
-      p === 'accounts.platform_edit' || p === 'accounts.view' || p === 'accounts.credentials' || p === 'accounts.onboard',
+      p === 'accounts.platform_edit' ||
+      p === 'accounts.view' ||
+      p === 'accounts.credentials' ||
+      p === 'accounts.onboard',
     owns: (createdBy?: string | null) => createdBy === 'me',
     user: { value: { id: 'me', username: 'me', is_admin: false } },
   }),
@@ -106,7 +109,9 @@ test('a linked account with a configured web channel offers the platform edit', 
 })
 
 test('a linked login_failed account offers reauthorize', async () => {
-  const w = render(account(platform({ status: 'login_failed', status_raw: 'login_failed', reason_text: 'token expired' })))
+  const w = render(
+    account(platform({ status: 'login_failed', status_raw: 'login_failed', reason_text: 'token expired' })),
+  )
   expect(w.text()).toContain('登录失败')
   expect(w.text()).toContain('重新授权后同步到平台')
   const btn = reauthButton(w)

@@ -160,13 +160,7 @@ import {
   KeyRound,
 } from 'lucide-vue-next'
 import type { Account, PlatformInfo } from '../types/api'
-import {
-  deliveryState,
-  deliveryStates,
-  needsReauth,
-  runtimeLabel,
-  type DeliveryState,
-} from '../account-workflow'
+import { deliveryState, deliveryStates, needsReauth, runtimeLabel, type DeliveryState } from '../account-workflow'
 import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/format'
 import { fenToUsdCents, formatUsdCents } from '../model/money'
 import { useSession } from '../composables/useSession'
