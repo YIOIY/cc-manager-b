@@ -88,9 +88,9 @@ func validOptionalMetadataFields(in map[string]any) []errs.FieldError {
 // delivery); we accept and display them as the renamed labels.
 var accountTagAliases = map[string]string{
 	"速刷coding": "速刷coding",
-	"coding":    "coding",
-	"速刷":      "速刷coding",
-	"慢蒸":      "coding",
+	"coding":   "coding",
+	"速刷":       "速刷coding",
+	"慢蒸":       "coding",
 }
 
 func canonicalizeAccountTag(tag string) (string, bool) {
