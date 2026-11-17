@@ -34,6 +34,16 @@ func TestNormalizeAccountTags(t *testing.T) {
 	}
 }
 
+func TestUpstreamAccountTags(t *testing.T) {
+	got := upstreamAccountTags([]string{"coding", "速刷coding"})
+	if len(got) != 2 || got[0] != "慢蒸" || got[1] != "速刷" {
+		t.Fatalf("upstreamAccountTags=%v", got)
+	}
+	if got := tagsForUpstream([]any{"速刷coding"}); len(got.([]string)) != 1 || got.([]string)[0] != "速刷" {
+		t.Fatalf("tagsForUpstream=%#v", got)
+	}
+}
+
 func TestClaudeAuthValidation(t *testing.T) {
 	auth := map[string]any{"id_token": "", "access_token": "a", "refresh_token": "r", "last_refresh": "2026-09-20T00:17:44-07:00", "email": "user@example.com", "account_uuid": "u", "organization_uuid": "o", "organization_name": "name", "claude_device_ids": []any{"device"}, "type": "t", "expired": "2026-10-20T00:17:44-07:00", "proxy_url": "socks5h://user:pwd@1.2.3.4:8080", "verification_status": "v"}
 	if problems := validateAuth(auth); len(problems) != 0 {

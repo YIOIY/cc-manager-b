@@ -353,7 +353,7 @@ func (a *App) upsertRemoteAccount(ctx context.Context, connectionID string, r su
 	if r.AID > 0 {
 		aid = fmt.Sprint(r.AID)
 	}
-	tags, _ := json.Marshal(normalizeAccountTags(append([]string{}, r.Profile.Tags...)))
+	tags, _ := json.Marshal(append([]string{}, r.Profile.Tags...))
 	models := "[]"
 	if r.ModelsUsable {
 		models = `[{"name":` + fmt.Sprintf("%q", r.Model) + `,"usable":true}]`

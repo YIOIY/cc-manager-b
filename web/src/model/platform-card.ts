@@ -75,7 +75,7 @@ export function paymentLabel(value: string | null | undefined): string {
   return payments[value] ?? value
 }
 
-/** Legacy platform tags → current labels. Tags cannot be changed after delivery. */
+/** Upstream still uses 速刷/慢蒸; local UI shows 速刷coding/coding. */
 const tagAliases: Record<string, string> = {
   速刷: '速刷coding',
   慢蒸: 'coding',

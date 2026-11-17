@@ -13,7 +13,7 @@
           <el-select v-model="edit.tags" multiple :multiple-limit="1" clearable placeholder="速刷coding或coding">
             <el-option label="速刷coding" value="速刷coding" /><el-option label="coding" value="coding" />
           </el-select>
-          <div class="field-hint">二者互斥，上号后不支持修改。</div>
+          <div class="field-hint">二者互斥；界面显示新名称，上号时仍按上游「速刷 / 慢蒸」提交。上号后不支持修改。</div>
         </el-form-item>
         <el-form-item label="支付方式">
           <el-select v-model="edit.payment_method" clearable placeholder="选填">

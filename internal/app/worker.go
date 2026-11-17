@@ -213,7 +213,11 @@ func (a *App) runOne(ctx context.Context) {
 	if json.Unmarshal([]byte(metadataJSON), &metadata) == nil {
 		for _, key := range optionalMetadataKeys {
 			if value, ok := metadata[key]; ok {
-				upstreamPayload[key] = value
+				if key == "tags" {
+					upstreamPayload[key] = tagsForUpstream(value)
+				} else {
+					upstreamPayload[key] = value
+				}
 			}
 		}
 	}

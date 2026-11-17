@@ -83,14 +83,21 @@ func validOptionalMetadataFields(in map[string]any) []errs.FieldError {
 	return f.Items()
 }
 
-// accountTagAliases maps historical platform tag names onto the current ones.
-// Old accounts keep the legacy values upstream (tags are immutable after
-// delivery); we accept and display them as the renamed labels.
+// Local UI uses “速刷coding” / “coding”; the supplier OpenAPI still expects
+// “速刷” / “慢蒸”. Map both ways so forms and display stay on the new names
+// while upstream payloads keep the old ones.
 var accountTagAliases = map[string]string{
 	"速刷coding": "速刷coding",
 	"coding":   "coding",
 	"速刷":       "速刷coding",
 	"慢蒸":       "coding",
+}
+
+var upstreamTagNames = map[string]string{
+	"速刷coding": "速刷",
+	"coding":   "慢蒸",
+	"速刷":       "速刷",
+	"慢蒸":       "慢蒸",
 }
 
 func canonicalizeAccountTag(tag string) (string, bool) {
@@ -116,6 +123,44 @@ func normalizeAccountTags(tags []string) []string {
 		out = append(out, canonical)
 	}
 	return out
+}
+
+func upstreamAccountTags(tags []string) []string {
+	if len(tags) == 0 {
+		return tags
+	}
+	out := make([]string, 0, len(tags))
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		upstream, ok := upstreamTagNames[tag]
+		if !ok {
+			upstream = tag
+		}
+		if upstream == "" || seen[upstream] {
+			continue
+		}
+		seen[upstream] = true
+		out = append(out, upstream)
+	}
+	return out
+}
+
+// tagsForUpstream converts local/display tag values into the names OpenAPI expects.
+func tagsForUpstream(raw any) any {
+	switch tags := raw.(type) {
+	case []string:
+		return upstreamAccountTags(tags)
+	case []any:
+		asStrings := make([]string, 0, len(tags))
+		for _, item := range tags {
+			if s, ok := item.(string); ok {
+				asStrings = append(asStrings, s)
+			}
+		}
+		return upstreamAccountTags(asStrings)
+	default:
+		return raw
+	}
 }
 
 // validOptionalMetadata keeps the single-error form for callers that only
