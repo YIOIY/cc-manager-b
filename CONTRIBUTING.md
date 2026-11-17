@@ -130,7 +130,9 @@ make lint    # 前端类型检查、ESLint、Prettier
 
 | 手段 | 作用 |
 | --- | --- |
-| Git 钩子（`make setup`） | 提交前拦截数据库文件、密钥文件、常见令牌、没格式化的 Go 代码、无意义的提交标题；推送前拦截强制推送和删除 `main` |
+| Git 钩子（`make setup`） | 提交前拦截数据库文件、密钥文件、常见令牌、无意义的提交标题；自动 `gofmt` / Prettier 暂存区文件；推送前拦截强制推送和删除 `main` |
+| 编辑器（`.vscode/settings.json`） | 保存时按 Prettier / gofmt 格式化 |
+| Cursor Agent（`.cursor/hooks/`） | Agent 改完文件后自动格式化，减少 `format:check` 红灯 |
 | 自动检查（GitHub Actions） | 每次推送和每个 PR 都跑：后端、前端、端到端、镜像构建。结果显示在提交旁边 |
 
-钩子在本地执行，每个人克隆仓库后要执行一次 `make setup` 才生效。
+钩子在本地执行，每个人克隆仓库后要执行一次 `make setup` 才生效。前端格式化需要 Node 24（`nvm use 24`）。

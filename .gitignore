@@ -35,7 +35,9 @@ deploy/production/部署验收记录-*.md
 # 编辑器与系统
 .DS_Store
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 *.swp
 coverage.out
 web/test-results/

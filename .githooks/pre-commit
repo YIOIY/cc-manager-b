@@ -22,14 +22,65 @@ if [ -n "$hits" ]; then
     fail=1
 fi
 
-# 3. Go formatting, the same check CI runs.
+# 3. Auto-format Go (same as CI gofmt check).
 gofiles=$(printf '%s\n' "$staged" | grep -E '\.go$' || true)
 if [ -n "$gofiles" ] && command -v gofmt >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    gofmt -w $gofiles 2>/dev/null || true
+    # shellcheck disable=SC2086
+    git add $gofiles
     unformatted=$(gofmt -l $gofiles 2>/dev/null || true)
     if [ -n "$unformatted" ]; then
-        echo "pre-commit: 这些 Go 文件没有格式化，先执行 gofmt -w：" >&2
+        echo "pre-commit: 这些 Go 文件无法自动格式化：" >&2
         printf '  %s\n' $unformatted >&2
         fail=1
+    fi
+fi
+
+# 4. Auto-format frontend with Prettier (same as CI format:check).
+webfiles=$(printf '%s\n' "$staged" | grep -E '^web/.*\.(vue|ts|tsx|js|jsx|mjs|cjs|json|css|md|yml|yaml)$' || true)
+if [ -n "$webfiles" ]; then
+    prettier=web/node_modules/.bin/prettier
+    if [ ! -x "$prettier" ]; then
+        echo "pre-commit: 缺少 web/node_modules，先执行 make web-install" >&2
+        fail=1
+    else
+        pick_node() {
+            is_ok() {
+                bin=$1
+                [ -x "$bin" ] || return 1
+                major=$("$bin" -p "process.versions.node.split('.')[0]" 2>/dev/null) || return 1
+                [ "$major" -ge 18 ]
+            }
+            candidate=$(command -v node 2>/dev/null || true)
+            if [ -n "$candidate" ] && is_ok "$candidate"; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+            for root in "${NVM_DIR:-}" "${HOME}/.nvm" /usr/local/opt/nvm; do
+                [ -n "$root" ] && [ -d "$root/versions/node" ] || continue
+                for bin in $(ls -1d "$root/versions/node"/v*/bin/node 2>/dev/null | sort -V -r); do
+                    if is_ok "$bin"; then
+                        printf '%s\n' "$bin"
+                        return 0
+                    fi
+                done
+            done
+            return 1
+        }
+        if ! node_bin=$(pick_node); then
+            echo "pre-commit: 需要 Node 18+（项目推荐 24）才能跑 Prettier。先 nvm use 24" >&2
+            fail=1
+        else
+            # shellcheck disable=SC2086
+            if ! PATH="$(dirname "$node_bin"):$PATH" "$prettier" --write $webfiles; then
+                echo "pre-commit: Prettier 格式化失败" >&2
+                fail=1
+            else
+                # shellcheck disable=SC2086
+                git add $webfiles
+            fi
+        fi
     fi
 fi
 exit $fail
