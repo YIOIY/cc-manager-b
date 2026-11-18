@@ -213,6 +213,7 @@ type ProfileField = { key: string; label: string; value: string; local: string; 
 type Card = Account & {
   deliveryState: DeliveryState
   delivery: (typeof deliveryStates)[DeliveryState]
+  deliveryDetail: string
   statusLabel: string
   statusTone: string
   statusFailing: boolean
