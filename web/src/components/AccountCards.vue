@@ -506,26 +506,33 @@ const cards = computed<Card[]>(() =>
 
 .platform-reason {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   margin-top: 10px;
   padding: 8px 10px;
   border-radius: 8px;
   background: #3d1414;
   color: #ff8a80;
   font-size: 12px;
+  line-height: 1.45;
+}
+
+.platform-reason :deep(svg) {
+  flex: none;
+  margin-top: 2px;
 }
 
 .platform-reason span {
-  flex: 1;
+  flex: 1 1 12em;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .platform-reason small {
-  flex: none;
+  flex: 1 0 100%;
+  padding-left: 22px;
   opacity: 0.8;
 }
 
