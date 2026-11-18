@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Run by cc-manager-update.timer. Deploys the image that ":prod" points at
-# when it differs from what runs now, using docker-deploy.sh (backup, health
-# check, rollback). Publish with scripts/release.sh on a workstation.
+# Run by cc-manager-b-update.timer as /opt/cc-manager-b/docker/docker-update-b.sh.
+# Deploys the image that ":prod" points at when it differs from what runs now,
+# using docker-deploy.sh (backup, health check, rollback). Publish with
+# scripts/release.sh on a workstation.
 #
 # - The version comes from the image label org.opencontainers.image.version
 #   (sha-<12 hex>); the pulled image is tagged with it locally and deployed
@@ -13,7 +14,7 @@
 #   install-docker.sh).
 set -Eeuo pipefail
 
-root=${DEPLOY_ROOT:-/opt/cc-manager/docker}
+root=${DEPLOY_ROOT:-/opt/cc-manager-b/docker}
 channel=${CHANNEL:-prod}
 state=$root/state
 mkdir -p "$state"

@@ -1,12 +1,13 @@
 # Production compose: pulls a pre-built image, never builds from source.
 # Used by deploy/production/docker-deploy.sh, which supplies IMAGE and TAG.
 # Secrets stay in ENV_FILE on the server; the image carries none.
+name: cc-manager-b
 services:
-  cc-manager:
+  cc-manager-b:
     image: ${IMAGE:?IMAGE is required}:${TAG:?TAG is required}
-    container_name: cc-manager
+    container_name: cc-manager-b
     env_file:
-      - ${ENV_FILE:-/etc/cc-manager/cc-manager.env}
+      - ${ENV_FILE:-/etc/cc-manager/cc-manager-b.env}
     environment:
       # These override the systemd-era values that may still be in ENV_FILE.
       CC_MANAGER_LISTEN: 0.0.0.0:8080
@@ -20,11 +21,12 @@ services:
       - "host.docker.internal:host-gateway"
     # Loopback by default (nginx/Cloudflare in front). A server without a
     # reverse proxy can publish on all interfaces by writing 0.0.0.0 to
-    # /opt/cc-manager/docker/bind-addr; see docker-deploy.sh.
+    # /opt/cc-manager-b/docker/bind-addr; see docker-deploy.sh.
+    # Default 18081 so the older cc-manager can keep 18080 on the same host.
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-18080}:8080"
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-18081}:8080"
     volumes:
-      - ${DATA_DIR:-/var/lib/cc-manager}:/data
+      - ${DATA_DIR:-/var/lib/cc-manager-b}:/data
     restart: unless-stopped
     read_only: true
     tmpfs:

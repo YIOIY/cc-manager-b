@@ -88,7 +88,7 @@
           :class="{ 'is-spinning': card.deliveryState === 'submitting' }"
         />
         <strong>{{ card.delivery.label }}</strong>
-        <p>{{ card.delivery.description }}</p>
+        <p :title="card.deliveryDetail">{{ card.deliveryDetail }}</p>
         <div v-if="card.deliveryState === 'pending' || card.deliveryState === 'failed'" class="account-material-status">
           <span>{{ card.password_configured ? '密码已配置' : '密码待补充' }}</span
           ><span>{{ card.credentials_configured ? '凭证已配置' : '凭证待补充' }}</span>
@@ -97,7 +97,7 @@
       <div class="usage-card-foot">
         <span
           v-if="card.footer"
-          :title="card.deliveryState === 'linked' ? card.connectionNames : card.delivery.description"
+          :title="card.deliveryState === 'linked' ? card.connectionNames : card.deliveryDetail"
           >{{ card.footer }}</span
         >
         <el-button
@@ -160,7 +160,14 @@ import {
   KeyRound,
 } from 'lucide-vue-next'
 import type { Account, PlatformInfo } from '../types/api'
-import { deliveryState, deliveryStates, needsReauth, runtimeLabel, type DeliveryState } from '../account-workflow'
+import {
+  deliveryDescription,
+  deliveryState,
+  deliveryStates,
+  needsReauth,
+  runtimeLabel,
+  type DeliveryState,
+} from '../account-workflow'
 import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/format'
 import { fenToUsdCents, formatUsdCents } from '../model/money'
 import { useSession } from '../composables/useSession'
@@ -273,10 +280,12 @@ const cards = computed<Card[]>(() =>
       .join('、')
     const platformStatus = row.platform?.status || row.platform_status
     const failing = failingStatuses.has(platformStatus)
+    const detail = deliveryDescription(state, row.submission_job)
     return {
       ...row,
       deliveryState: state,
       delivery: deliveryStates[state],
+      deliveryDetail: detail,
       statusLabel: runtimeLabel(platformStatus),
       statusTone:
         state === 'linked'
@@ -829,12 +838,17 @@ const cards = computed<Card[]>(() =>
 }
 
 :global(.account-delivery-placeholder > p) {
-  max-width: 280px;
+  max-width: 100%;
   margin: 7px 0 0;
   color: #87969d;
   font-family: inherit;
   font-size: 11px;
-  line-height: 1.7;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .account-delivery-placeholder.progress {

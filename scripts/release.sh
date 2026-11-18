@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds, tests and publishes a production image from this machine. The
-# server's update timer (deploy/production/docker-update.sh) deploys whatever
+# server's update timer (deploy/production/docker-update-b.sh) deploys whatever
 # ":prod" points at within a few minutes, with the usual backup and rollback.
 #
 #   scripts/release.sh                  test, build, push sha-<commit>, move :prod to it
@@ -12,7 +12,7 @@
 #   --allow-dirty  build uncommitted changes (local testing only: the tag then
 #                  does not identify the code)
 # Environment:
-#   RELEASE_IMAGE     registry path without tag (default ghcr.io/<origin owner>/cc-manager)
+#   RELEASE_IMAGE     registry path without tag (default ghcr.io/<origin owner>/cc-manager-b)
 #   RELEASE_PLATFORM  target platform (default linux/amd64)
 #
 # One-time login (needs the write:packages scope):
@@ -38,7 +38,7 @@ done
 
 origin=$(git remote get-url origin 2>/dev/null || true)
 owner=$(printf '%s' "$origin" | sed -nE 's#^(git@github\.com:|https://github\.com/)([^/]+)/.*#\2#p' | tr '[:upper:]' '[:lower:]')
-image=${RELEASE_IMAGE:-${owner:+ghcr.io/$owner/cc-manager}}
+image=${RELEASE_IMAGE:-${owner:+ghcr.io/$owner/cc-manager-b}}
 [ -n "$image" ] || die "cannot derive the image from the git remote; set RELEASE_IMAGE"
 platform=${RELEASE_PLATFORM:-linux/amd64}
 tag_re='^sha-[0-9a-f]{12}$'
@@ -116,7 +116,7 @@ if [ "$move_prod" = 1 ]; then
     docker tag "$image:$tag" "$image:prod"
     docker push -q "$image:prod" >/dev/null
     echo "done: :prod -> $tag; the server deploys it within a few minutes"
-    echo "watch: ssh to the server, then: journalctl -u cc-manager-update -f"
+    echo "watch: ssh to the server, then: journalctl -u cc-manager-b-update -f"
 else
     echo "done: pushed $tag only (:prod unchanged). Deploy later with: $0 --promote $tag"
 fi

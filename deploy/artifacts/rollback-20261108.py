@@ -14,11 +14,11 @@ if '--check' in sys.argv:
  print('rollback snapshot restore check: ok');sys.exit(0)
 subprocess.run(['systemctl','stop','cc-manager'],check=True)
 if '--restore-db' in sys.argv:
- target=pathlib.Path('/var/lib/cc-manager/cc-manager.db')
+ target=pathlib.Path('/var/lib/cc-manager-b/cc-manager.db')
  for suffix in ['-wal','-shm']:
   pathlib.Path(str(target)+suffix).unlink(missing_ok=True)
  shutil.copy2(snapshot,target);shutil.chown(target,user='cc-manager',group='cc-manager');target.chmod(0o600)
-for name,target in [('cc-manager.env','/etc/cc-manager/cc-manager.env'),('cc-manager.service','/etc/systemd/system/cc-manager.service')]:shutil.copy2(cfg/name,target)
+for name,target in [('cc-manager.env','/etc/cc-manager/cc-manager-b.env'),('cc-manager.service','/etc/systemd/system/cc-manager.service')]:shutil.copy2(cfg/name,target)
 link=pathlib.Path('/opt/cc-manager/rollback.next');link.unlink(missing_ok=True);link.symlink_to((b/'previous-release').read_text().strip());link.replace('/opt/cc-manager/current')
 subprocess.run(['systemctl','daemon-reload'],check=True);subprocess.run(['systemctl','start','cc-manager'],check=True)
 print('previous release restored; database restored:', '--restore-db' in sys.argv)

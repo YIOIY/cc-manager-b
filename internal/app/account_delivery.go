@@ -117,6 +117,7 @@ func (a *App) decorateAccountDelivery(items []any) error {
 		var data struct {
 			Code      string `json:"code"`
 			Message   string `json:"message"`
+			Hint      string `json:"hint"`
 			Action    string `json:"action"`
 			Retryable bool   `json:"retryable"`
 		}
@@ -126,12 +127,15 @@ func (a *App) decorateAccountDelivery(items []any) error {
 			if data.Message == "" {
 				data.Message = def.Message
 			}
+			if data.Hint == "" {
+				data.Hint = def.Hint
+			}
 			if data.Action == "" {
 				data.Action = string(def.Action)
 				data.Retryable = def.Retryable
 			}
 		}
-		m["submission_job"] = map[string]any{"id": id, "connection_id": conn, "state": state, "code": data.Code, "message": data.Message, "action": data.Action, "retryable": data.Retryable, "updated_at": updated, "allowed_actions": allowedJobActions(state)}
+		m["submission_job"] = map[string]any{"id": id, "connection_id": conn, "state": state, "code": data.Code, "message": data.Message, "hint": data.Hint, "action": data.Action, "retryable": data.Retryable, "updated_at": updated, "allowed_actions": allowedJobActions(state)}
 		if m["onboarding_state"] == "linked" || m["onboarding_state"] == "unknown" {
 			continue
 		}

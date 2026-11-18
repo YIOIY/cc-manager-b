@@ -91,6 +91,7 @@
         <el-alert
           v-if="state === 'failed'"
           :title="account.submission_job ? outcomeText(account.submission_job) : deliveryIssue('PLATFORM_REJECTED')"
+          :description="account.submission_job?.hint || ''"
           type="warning"
           show-icon
           :closable="false"

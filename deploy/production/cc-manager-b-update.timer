@@ -1,5 +1,5 @@
 [Unit]
-Description=Check for a new cc-manager release every 2 minutes
+Description=Check for a new cc-manager-b release every 2 minutes
 
 [Timer]
 OnBootSec=2min

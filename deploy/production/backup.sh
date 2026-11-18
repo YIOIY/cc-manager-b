@@ -9,8 +9,8 @@ set -euo pipefail
 # BACKUP_ALLOW_NON_ROOT=1 exists only for local tests of the deploy script.
 [ "$(id -u)" = 0 ] || [ "${BACKUP_ALLOW_NON_ROOT:-0}" = 1 ] || { echo 'run as root' >&2; exit 1; }
 umask 077
-root=${BACKUP_ROOT:-/var/backups/cc-manager}
-db=${CC_MANAGER_DB:-/var/lib/cc-manager/cc-manager.db}
+root=${BACKUP_ROOT:-/var/backups/cc-manager-b}
+db=${CC_MANAGER_DB:-/var/lib/cc-manager-b/cc-manager.db}
 backup_dir=${1:-$root/$(date -u +%Y%m%dT%H%M%SZ)}
 retention_days=${RETENTION_DAYS:-30}
 [ ! -e "$backup_dir" ] || { echo 'Backup destination already exists' >&2; exit 1; }
@@ -59,8 +59,8 @@ memory.close()
 assert check.execute('pragma integrity_check').fetchone()[0] == 'ok'
 check.close()
 PY
-if [ -f /opt/cc-manager/current/SHA256SUMS ]; then
-    cp -a /opt/cc-manager/current/SHA256SUMS "$backup_dir/release-SHA256SUMS"
+if [ -f /opt/cc-manager-b/current/SHA256SUMS ]; then
+    cp -a /opt/cc-manager-b/current/SHA256SUMS "$backup_dir/release-SHA256SUMS"
 fi
 # sha256sum on Linux, shasum on macOS; same output format.
 if command -v sha256sum >/dev/null; then sum='sha256sum'; else sum='shasum -a 256'; fi

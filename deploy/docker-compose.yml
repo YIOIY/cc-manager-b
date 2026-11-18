@@ -1,5 +1,6 @@
+name: cc-manager-b
 services:
-  cc-manager:
+  cc-manager-b:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -13,7 +14,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - cc-manager-data:/data
+      - cc-manager-b-data:/data
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -29,4 +30,4 @@ services:
       retries: 3
       start_period: 10s
 volumes:
-  cc-manager-data:
+  cc-manager-b-data:

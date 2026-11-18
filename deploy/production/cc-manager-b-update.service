@@ -1,12 +1,12 @@
 [Unit]
-Description=Deploy the cc-manager image that :prod points at
-Documentation=file:/opt/cc-manager/docker/docker-update.sh
+Description=Deploy the cc-manager-b image that :prod points at
+Documentation=file:/opt/cc-manager-b/docker/docker-update-b.sh
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/opt/cc-manager/docker/docker-update.sh
+ExecStart=/opt/cc-manager-b/docker/docker-update-b.sh
 # backup + start + up to 90 s health wait + rollback
 TimeoutStartSec=15min

@@ -10,9 +10,9 @@ for p in [d,*d.rglob('*')]:
  p.chmod(0o755 if p.is_dir() or p.name=='cc-manager' or p.suffix=='.sh' else 0o644)
 b=pathlib.Path('/var/backups/cc-manager')/r;b.mkdir(mode=0o700)
 cfg=pathlib.Path('/etc/cc-manager/backups')/r;cfg.mkdir(parents=True,mode=0o700)
-for source,name in [('/etc/cc-manager/cc-manager.env','cc-manager.env'),('/etc/systemd/system/cc-manager.service','cc-manager.service'),('/etc/nginx/conf.d/cc-manager.conf','cc-manager.nginx.conf')]:shutil.copy2(source,cfg/name)
+for source,name in [('/etc/cc-manager/cc-manager-b.env','cc-manager.env'),('/etc/systemd/system/cc-manager.service','cc-manager.service'),('/etc/nginx/conf.d/cc-manager.conf','cc-manager.nginx.conf')]:shutil.copy2(source,cfg/name)
 (b/'previous-release').write_text(os.path.realpath('/opt/cc-manager/current')+'\n')
-source=sqlite3.connect('/var/lib/cc-manager/cc-manager.db'); dest=sqlite3.connect(b/'online.db');source.backup(dest);dest.close();source.close()
+source=sqlite3.connect('/var/lib/cc-manager-b/cc-manager.db'); dest=sqlite3.connect(b/'online.db');source.backup(dest);dest.close();source.close()
 pre=b/'preflight';pre.mkdir(mode=0o700);shutil.copy2(b/'online.db',pre/'test.db')
 env=os.environ.copy()
 for line in (cfg/'cc-manager.env').read_text().splitlines():

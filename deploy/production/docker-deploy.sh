@@ -17,10 +17,11 @@
 #                                           first Docker deploy)
 #   5. record the tag, disable systemd, prune old images (best effort)
 #
-# Installed once by install-docker.sh into /opt/cc-manager/docker and run as
+# Installed once by install-docker.sh into /opt/cc-manager-b/docker and run as
 # root (the CI user may only sudo this exact path; sudo's env_reset drops the
 # overrides below). Paths can be overridden for local testing; defaults are
-# the production layout.
+# the production layout for the cc-manager-b instance (runs beside the older
+# cc-manager on the same host; do not reuse its ports or /opt/cc-manager/docker).
 set -Eeuo pipefail
 # Keep going if the SSH session that started us goes away: a half-finished
 # deploy must still roll back.
@@ -29,16 +30,18 @@ trap '' HUP PIPE
 tag=${1:?usage: docker-deploy.sh <tag> [registry-user]}
 registry_user=${2:-}
 
-root=${DEPLOY_ROOT:-/opt/cc-manager/docker}
-env_file=${ENV_FILE:-/etc/cc-manager/cc-manager.env}
-data_dir=${DATA_DIR:-/var/lib/cc-manager}
-backup_root=${BACKUP_ROOT:-/var/backups/cc-manager}
-app_port=${APP_PORT:-18080}
+root=${DEPLOY_ROOT:-/opt/cc-manager-b/docker}
+env_file=${ENV_FILE:-/etc/cc-manager/cc-manager-b.env}
+data_dir=${DATA_DIR:-/var/lib/cc-manager-b}
+backup_root=${BACKUP_ROOT:-/var/backups/cc-manager-b}
+app_port=${APP_PORT:-18081}
 # Host address the port is published on. Loopback unless this server says
 # otherwise in $root/bind-addr (one line, an IPv4 address such as 0.0.0.0).
 bind_addr=${BIND_ADDR:-}
 pull=${PULL:-1}
-systemd_unit=${SYSTEMD_UNIT-cc-manager}   # empty: no systemd handling
+# Empty by default so a first Docker deploy never stops/disables the older
+# cc-manager systemd unit that still serves production traffic.
+systemd_unit=${SYSTEMD_UNIT-}
 systemd_user=${SYSTEMD_USER:-cc-manager}
 chown_data=${CHOWN_DATA:-1}
 health_timeout=${HEALTH_TIMEOUT:-90}
@@ -109,7 +112,7 @@ trap cleanup EXIT
 compose() {
     local use_tag=$1; shift
     IMAGE=$image TAG=$use_tag ENV_FILE=$env_file DATA_DIR=$data_dir APP_PORT=$app_port BIND_ADDR=$bind_addr HOST_TZ=$host_tz \
-        docker compose -p cc-manager -f "$compose_file" "$@" >> "$run_log" 2>&1
+        docker compose -p cc-manager-b -f "$compose_file" "$@" >> "$run_log" 2>&1
 }
 
 wait_healthy() {
@@ -200,9 +203,9 @@ rollback() {
     log "rolling back: $1"
     compose "$tag" logs --no-color --tail 80
     compose "$tag" down --timeout 10
-    docker rm -f cc-manager >/dev/null 2>&1
-    if docker ps -a --format '{{.Names}}' | grep -qx cc-manager; then
-        log "ERROR: container cc-manager is still present; database left untouched"
+    docker rm -f cc-manager-b >/dev/null 2>&1
+    if docker ps -a --format '{{.Names}}' | grep -qx cc-manager-b; then
+        log "ERROR: container cc-manager-b is still present; database left untouched"
     elif [ -n "$backup_dir" ]; then
         local schema_after
         schema_after=$(schema_version "$db")

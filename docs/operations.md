@@ -10,7 +10,7 @@
 make release
 ```
 
-生成 `dist/cc-manager-<version>-<os>-<arch>.tar.gz`，包含二进制、`web/dist`、`deploy/production` 与 `SHA256SUMS`。在目标机器解压到 `/opt/cc-manager/releases/<version>/`。
+生成 `dist/cc-manager-<version>-<os>-<arch>.tar.gz`，包含二进制、`web/dist`、`deploy/production` 与 `SHA256SUMS`。在目标机器解压到 `/opt/cc-manager-b/releases/<version>/`。
 
 ### 1.2 首次安装（Ubuntu + systemd + nginx）
 
@@ -21,10 +21,10 @@ make release
 2. 执行安装脚本：
 
 ```bash
-sudo SERVER_NAME=cc.example.com APP_PORT=18080 NGINX_PORT=8088 ./deploy/production/install.sh /opt/cc-manager/releases/<version> /path/to/cc-manager.env
+sudo SERVER_NAME=cc.example.com APP_PORT=18081 NGINX_PORT=8089 ./deploy/production/install.sh /opt/cc-manager-b/releases/<version> /path/to/cc-manager-b.env
 ```
 
-脚本会创建 `cc-manager` 系统用户、写入 `/etc/cc-manager/cc-manager.env`（0600）、切换 `/opt/cc-manager/current` 软链接、安装 systemd 单元与 nginx 配置、重启服务并检查 `/healthz`。
+脚本会创建 `cc-manager` 系统用户（若尚无存在）、写入 `/etc/cc-manager/cc-manager-b.env`（0600）、切换 `/opt/cc-manager-b/current` 软链接、安装 `cc-manager-b.service` 与 `cc-manager-b` nginx 配置、重启服务并检查 `/healthz`。默认端口避开仍在运行的旧实例。
 
 ### 1.3 升级
 
@@ -41,7 +41,9 @@ docker compose -f deploy/docker-compose.yml up -d --build
 
 ### 1.5 Docker 发布（生产方式）
 
-在自己电脑上运行 `scripts/release.sh`：跑测试、构建 linux/amd64 镜像，推送到 GHCR（`ghcr.io/<owner>/cc-manager:sha-<12 位提交号>`），再把 `:prod` 指向它。服务器上的 `cc-manager-update.timer` 每 2 分钟检查一次 `:prod`，发现新版本就调用部署脚本完成备份、切换、健康检查，失败自动回滚。服务器不需要源码，GitHub Actions 只负责跑测试。
+在自己电脑上运行 `scripts/release.sh`：跑测试、构建 linux/amd64 镜像，推送到 GHCR（`ghcr.io/<owner>/cc-manager-b:sha-<12 位提交号>`），再把 `:prod` 指向它。服务器上的 `cc-manager-b-update.timer` 每 2 分钟检查一次 `:prod`，发现新版本就调用部署脚本完成备份、切换、健康检查，失败自动回滚。服务器不需要源码，GitHub Actions 只负责跑测试。
+
+**与旧实例并存**：同一台机器上旧的 `cc-manager` 可继续跑。本仓库默认全部隔离——镜像名、容器名、数据目录、环境文件、部署目录、备份目录、更新定时器、宿主机端口（`18081`，旧实例常用 `18080`）。部署脚本默认**不会**停止或禁用旧的 `cc-manager` systemd 单元。公网流量切到 b 时，再改 nginx / Cloudflare Tunnel 指向 `127.0.0.1:18081`。
 
 ```
 本机 release.sh ─▶ make test ─▶ 构建镜像 ─▶ 推送 sha-<提交号> ─▶ :prod 指向它
@@ -60,38 +62,37 @@ docker-deploy.sh: 在线备份 SQLite ─▶ 停旧容器 ─▶ 启动新镜像
    gh auth token | docker login ghcr.io -u <github 用户名> --password-stdin
    ```
 2. **服务器拉取凭证**：在 GitHub → Settings → Developer settings → Personal access tokens (classic) 新建令牌，**只勾选 `read:packages`**。GHCR 目前只接受 classic 令牌。它保存在服务器 root 的 Docker 配置里，只能读取镜像。
-3. **服务器**（Ubuntu，保留现有 `/etc/cc-manager/cc-manager.env` 与 `/var/lib/cc-manager`）：
+3. **服务器**（Ubuntu，保留现有 `/etc/cc-manager/cc-manager-b.env` 与 `/var/lib/cc-manager-b`；旧实例目录不要动）：
    ```bash
    sudo apt-get install -y docker.io docker-compose-v2 curl python3
    # 把仓库的 deploy/production 目录拷到服务器后：
-   printf '%s' '<read:packages 令牌>' | sudo ./deploy/production/install-docker.sh ghcr.io/<owner>/cc-manager <github 用户名>
+   printf '%s' '<read:packages 令牌>' | sudo ./deploy/production/install-docker.sh ghcr.io/<owner>/cc-manager-b <github 用户名>
    ```
-   脚本把 `compose.yml`、`docker-deploy.sh`、`docker-update.sh`、`backup.sh` 安装到 `/opt/cc-manager/docker`（root 所有），用令牌执行 `docker login`，安装并启动 `cc-manager-update.timer`。如果服务器上还有旧方案的 CI 部署入口（`cc-deploy` 用户、它的 sudo 规则和 sshd 配置块），会一并删除。`:prod` 还不存在时定时器什么都不做。
+   脚本把文件安装到 `/opt/cc-manager-b/docker`（root 所有），用令牌执行 `docker login`，安装并启动 `cc-manager-b-update.timer`。不触碰旧的 `/opt/cc-manager`、定时器与 `cc-deploy` 用户。`:prod` 还不存在时定时器什么都不做。
 
    安装前它会检查环境文件和代理池（只报告键名，不打印值）：
    - **环境文件里含 `$` 的值必须用单引号包住**，例如 `CC_MANAGER_ADMIN_PASSWORD_HASH='$argon2id$v=19$…'`。Docker Compose 会展开未加引号的 `$`，哈希会被改坏。存在这种值时安装和部署都会拒绝继续。
    - 如果 `CC_MANAGER_SUPPLIER_PROXY` 或代理池里的代理指向 `127.0.0.1`/`localhost`，会给出警告：容器里的回环地址是容器自己，切换后要改成 `host.docker.internal`（compose 已把它映射到宿主机），并让宿主机上的代理监听 Docker 网桥地址（如 `172.17.0.1`）或 `0.0.0.0`（配合防火墙）。
 
-#### 首次切换（从 systemd）
+#### 首次部署（与旧实例并存）
 
-第一次部署时，脚本发现还没有 Docker 记录，会先备份数据库、停止 systemd 的 `cc-manager` 服务、把 `/var/lib/cc-manager` 交给容器用户（UID 10001）、启动容器。健康检查通过后禁用 systemd 服务；失败则交回目录所有权、重新启动 systemd 服务，线上保持原状。nginx 与 Cloudflare Tunnel 不需要改动（容器仍监听 `127.0.0.1:18080`）。
+第一次部署时，脚本发现还没有 Docker 记录，会备份 b 自己的数据库、启动 `cc-manager-b` 容器（默认 `127.0.0.1:18081`），**不会**停止旧的 `cc-manager`。健康检查失败则回滚 b 自己的容器/库。公网仍指向旧实例，直到你改 nginx/Tunnel。
 
 **回滚时数据库何时恢复**：只有新版本已经执行了数据库迁移（`schema_migrations` 版本变高）才会用部署前的备份覆盖数据库，因为旧版本无法在新结构上运行；这种情况下新版本运行期间的写入会丢失，请在任务中心核对 `unknown` 状态的交付。结构没变时保留数据库原样（包括新版本已经提交的账号），日志写明 `database kept`。
 
 #### 日常
 
-- **上线**：提交并推送代码，然后在本机运行 `./scripts/release.sh`。2 分钟内服务器自动更新；在服务器上 `journalctl -u cc-manager-update -f` 可以看到过程。
+- **上线**：提交并推送代码，然后在本机运行 `./scripts/release.sh`。2 分钟内服务器自动更新；在服务器上 `journalctl -u cc-manager-b-update -f` 可以看到过程。
 - **只推镜像不上线**：`./scripts/release.sh --no-prod`，之后用 `--promote` 上线。
 - **回退或切到指定版本**：`./scripts/release.sh --promote sha-0123456789ab`。只移动 `:prod`，不重新构建。数据库若已被新版本迁移，回退旧镜像前请先用该次部署前的备份恢复（见第 4 节），因为迁移只能向前。
 - **失败的版本不会反复重试**：部署失败并回滚后，该版本记在 `state/failed-tag`，定时器不再尝试，直到 `:prod` 指向别的版本。修复后发布新提交即可；确实要重试同一版本，在服务器上删除 `state/failed-tag`。
-- **暂停自动更新**：`sudo systemctl stop cc-manager-update.timer`（恢复用 `start`）。
-- **部署记录**：`/opt/cc-manager/docker/state/deploys.log`（时间、标签、上一标签、备份目录）；当前标签在 `state/current-tag`；定时器的判断记录在 `state/update.log`。
-- **日志**：`docker logs -f cc-manager`（单文件 20 MB，保留 5 个）。
-- **备份**：每次部署前自动生成 `/var/backups/cc-manager/<时间>-pre-<tag>/`；定期备份仍按第 4 节。
-- **失败详情**：`/opt/cc-manager/docker/state/last-deploy.log`（含容器最后 80 行日志）。
+- **暂停自动更新**：`sudo systemctl stop cc-manager-b-update.timer`（恢复用 `start`）。
+- **部署记录**：`/opt/cc-manager-b/docker/state/deploys.log`（时间、标签、上一标签、备份目录）；当前标签在 `state/current-tag`；定时器的判断记录在 `state/update.log`。
+- **日志**：`docker logs -f cc-manager-b`（单文件 20 MB，保留 5 个）。
+- **备份**：每次部署前自动生成 `/var/backups/cc-manager-b/<时间>-pre-<tag>/`；定期备份仍按第 4 节。
+- **失败详情**：`/opt/cc-manager-b/docker/state/last-deploy.log`（含容器最后 80 行日志）。
 - **更新服务器上的部署脚本**：仓库里改了 `deploy/production/` 下的脚本、`compose.yml` 或定时器后，把目录拷到服务器重新运行一次 `install-docker.sh`（令牌已保存，不必再传，命令末尾的用户名仍需要）。
-- **不要再运行 `install.sh`**：它会重新启用 systemd 服务，开机后与容器争抢 18080 端口。如需退回 systemd，先停定时器和容器（`systemctl disable --now cc-manager-update.timer; docker rm -f cc-manager`），把 `/var/lib/cc-manager` 交还 `cc-manager` 用户（`chown -R cc-manager:cc-manager`），再 `systemctl enable --now cc-manager`。
-- **镜像存储**：每次发布都会在 GHCR 留下一个 `sha-*` 镜像。服务器只保留最近 3 个（`KEEP_IMAGES`）；GHCR 上的旧版本在 GitHub → Packages → cc-manager → Package settings 中按需删除，至少保留当前和上一个标签以便回退。
+- **镜像存储**：每次发布都会在 GHCR 留下一个 `sha-*` 镜像。服务器只保留最近 3 个（`KEEP_IMAGES`）；GHCR 上的旧版本在 GitHub → Packages → cc-manager-b → Package settings 中按需删除，至少保留当前和上一个标签以便回退。
 - **注意**：会话保存在内存中，每次部署后所有人需要重新登录。
 
 ## 2. 配置项
@@ -101,7 +102,7 @@ docker-deploy.sh: 在线备份 SQLite ─▶ 停旧容器 ─▶ 启动新镜像
 ## 3. 健康检查与日志
 
 - `GET /healthz`：返回 `ok`、`version`、`database`、各后台 worker 的最近心跳；数据库不可用时返回 503。
-- 日志为 JSON（stderr），每条 HTTP 日志含 `request_id`、方法、路径、状态码、耗时、来源 IP；5xx 另有 `request failed` 记录。Docker 部署用 `docker logs -f cc-manager` 查看，systemd 部署用 `journalctl -u cc-manager -f`。
+- 日志为 JSON（stderr），每条 HTTP 日志含 `request_id`、方法、路径、状态码、耗时、来源 IP；5xx 另有 `request failed` 记录。Docker 部署用 `docker logs -f cc-manager-b` 查看，systemd 部署用 `journalctl -u cc-manager -f`。
 - 500 响应头带 `X-Request-ID`，用户反馈时可据此检索日志。
 
 ## 4. 备份与恢复
@@ -110,25 +111,73 @@ docker-deploy.sh: 在线备份 SQLite ─▶ 停旧容器 ─▶ 启动新镜像
 sudo ./deploy/production/backup.sh
 ```
 
-- 使用 SQLite 在线备份 API，备份后做两次 `integrity_check`，输出到 `/var/backups/cc-manager/<时间戳>/`。
-- **环境文件（含主密钥）不会复制到备份目录。** 请单独把 `/etc/cc-manager/cc-manager.env` 备份到访问受控的位置；没有密钥的数据库无法解密任何凭证。
+- 使用 SQLite 在线备份 API，备份后做两次 `integrity_check`，输出到 `/var/backups/cc-manager-b/<时间戳>/`。
+- **环境文件（含主密钥）不会复制到备份目录。** 请单独把 `/etc/cc-manager/cc-manager-b.env` 备份到访问受控的位置；没有密钥的数据库无法解密任何凭证。
 - `RETENTION_DAYS`（默认 30）控制旧备份清理。
 
-恢复步骤：停止服务 → 用备份的 `cc-manager.db` 覆盖 `/var/lib/cc-manager/cc-manager.db`（删除旧的 `-wal/-shm`）→ 确认环境文件中的密钥与备份时一致 → 启动服务 → 在任务中心核对状态为 `unknown` 的交付并人工核实平台记录。
+恢复步骤：停止服务 → 用备份的 `cc-manager.db` 覆盖 `/var/lib/cc-manager-b/cc-manager.db`（删除旧的 `-wal/-shm`）→ 确认环境文件中的密钥与备份时一致 → 启动服务 → 在任务中心核对状态为 `unknown` 的交付并人工核实平台记录。
 
 Docker 部署时的对应命令（`<tag>` 取 `state/current-tag`，若要回到旧版本则用与备份对应的标签）：
 
 ```bash
-cd /opt/cc-manager/docker
+cd /opt/cc-manager-b/docker
 export IMAGE=$(cat image) TAG=$(cat state/current-tag) HOST_TZ=$(cat /etc/timezone 2>/dev/null || echo UTC)
-sudo -E docker compose -p cc-manager -f compose.yml down
-sudo rm -f /var/lib/cc-manager/cc-manager.db-wal /var/lib/cc-manager/cc-manager.db-shm
-sudo cp /var/backups/cc-manager/<备份目录>/cc-manager.db /var/lib/cc-manager/cc-manager.db
-sudo chown -R 10001:10001 /var/lib/cc-manager
-sudo -E docker compose -p cc-manager -f compose.yml up -d
+sudo -E docker compose -p cc-manager-b -f compose.yml down
+sudo rm -f /var/lib/cc-manager-b/cc-manager.db-wal /var/lib/cc-manager-b/cc-manager.db-shm
+sudo cp /var/backups/cc-manager-b/<备份目录>/cc-manager.db /var/lib/cc-manager-b/cc-manager.db
+sudo chown -R 10001:10001 /var/lib/cc-manager-b
+sudo -E docker compose -p cc-manager-b -f compose.yml up -d
 ```
 
 如果换了标签，把新标签写入 `state/current-tag`，下一次部署才会以它为回滚目标。
+
+### 4.1 生产机查库（Python / SQLite 版本）
+
+生产机（Alibaba Cloud CentOS 7 系）宿主机实测：
+
+| 组件 | 版本 | 备注 |
+|---|---|---|
+| Python | **3.6.8** | 系统自带 |
+| SQLite | **3.7.17** | 系统自带；无 `Connection.backup`，也不适合依赖较新 SQL |
+
+因此：
+
+- **给排障/运维写的查询 SQL 与 Python 片段，按上述版本约束来写**：避免 f-string 以外还好（3.6 有 f-string）、避免 wal 专用新 API、避免依赖 SQLite ≥ 3.8 的 partial index 语法去「现场建索引」；只读 `SELECT` 尽量用标准 SQL。
+- **推荐查库方式**：不要用宿主机 `python3` 做复杂库操作；挂载只读库，用一次性容器（与 `backup.sh` / `docker-deploy.sh` 的回退一致）：
+
+```bash
+# 库路径：/var/lib/cc-manager-b/cc-manager.db
+sudo docker run --rm -i --network none \
+  -v /var/lib/cc-manager-b:/data:ro \
+  python:3.12-alpine python - <<'PY'
+import sqlite3, json
+con = sqlite3.connect("file:/data/cc-manager.db?mode=ro", uri=True)
+con.row_factory = sqlite3.Row
+# 在此写 SELECT；上号失败优先看 jobs.result_json
+email = "user@example.com"
+rows = con.execute(
+    "SELECT id, account, plan, archived FROM accounts WHERE lower(account)=lower(?)",
+    (email,),
+).fetchall()
+print([dict(r) for r in rows])
+if rows:
+    aid = rows[0]["id"]
+    for r in con.execute(
+        "SELECT id, state, result_json, created_at FROM jobs "
+        "WHERE account_id=? AND kind='account.submit' "
+        "ORDER BY created_at DESC, rowid DESC LIMIT 5",
+        (aid,),
+    ):
+        d = dict(r)
+        try:
+            d["result"] = json.loads(d.pop("result_json") or "{}")
+        except Exception:
+            pass
+        print(json.dumps(d, ensure_ascii=False, indent=2))
+PY
+```
+
+上号失败时重点表：`jobs`（`kind='account.submit'` 的 `state` / `result_json`）、`deliveries.ingestion_state`、`platform_remote_accounts.reason_text`（平台同步原因，不是提交 API 原文）。
 
 ## 5. 用户、密码与密钥
 
@@ -138,14 +187,14 @@ sudo -E docker compose -p cc-manager -f compose.yml up -d
 
 ```bash
 cc-manager reset-password admin                        # systemd 部署
-sudo docker exec -it cc-manager /app/cc-manager reset-password admin   # Docker 部署
+sudo docker exec -it cc-manager-b /app/cc-manager reset-password admin   # Docker 部署
 ```
 
   命令从标准输入读取新密码，重置后该用户会被重新启用，所有已有会话失效，并记录 `user.password_reset` 审计事件。
 - 密钥轮换（已支持）：
   1. 生成新密钥 `openssl rand -base64 32`。
   2. 在环境文件中把旧值移到 `CC_MANAGER_ENCRYPTION_KEYS_PREVIOUS`，新值写入 `CC_MANAGER_ENCRYPTION_KEY`，重启服务。此时旧密文仍可读取，新写入已使用新密钥。
-  3. 执行 `cc-manager rotate-key --check` 查看待重加密行数，再执行 `cc-manager rotate-key`（同一环境文件，服务可继续运行；命令在单个事务内完成，任何一行无法解密都会整体回滚）。Docker 部署时改完环境文件需要重建容器才能读到新值：`sudo -E docker compose -p cc-manager -f /opt/cc-manager/docker/compose.yml up -d --force-recreate`（先按上面 export `IMAGE`、`TAG`），然后用 `sudo docker exec cc-manager /app/cc-manager rotate-key --check` / `rotate-key` 执行。
+  3. 执行 `cc-manager rotate-key --check` 查看待重加密行数，再执行 `cc-manager rotate-key`（同一环境文件，服务可继续运行；命令在单个事务内完成，任何一行无法解密都会整体回滚）。Docker 部署时改完环境文件需要重建容器才能读到新值：`sudo -E docker compose -p cc-manager-b -f /opt/cc-manager-b/docker/compose.yml up -d --force-recreate`（先按上面 export `IMAGE`、`TAG`），然后用 `sudo docker exec cc-manager-b /app/cc-manager rotate-key --check` / `rotate-key` 执行。
   4. 确认 `rotate-key --check` 各表为 0 后，删除 `CC_MANAGER_ENCRYPTION_KEYS_PREVIOUS` 并重启。
   - 密文格式为 `k1:<key-id>:<base64>`，旧格式（无前缀）在轮换时自动升级；审计日志记录 `security.key_rotation`。
 - 泄露处置：立即更换平台 OpenAPI Token（平台侧）、代理密码，再按上述步骤轮换主密钥。

@@ -81,11 +81,26 @@ export function needsReauth(status: string | undefined | null): boolean {
 }
 
 /** Text for a submission outcome: the stored message, else generated copy. */
-export function outcomeText(job?: { code?: string; message?: string } | null): string {
+export function outcomeText(job?: { code?: string; message?: string; hint?: string } | null): string {
   if (job?.message) return job.message
   const code = job?.code as ErrorCode | undefined
   if (code && ErrorMessages[code]) return ErrorMessages[code]
   return '请核对账号资料与平台配置'
+}
+
+/** Card / list copy: prefer the last job's concrete error over the generic state blurb. */
+export function deliveryDescription(
+  state: DeliveryState,
+  job?: { code?: string; message?: string; hint?: string } | null,
+): string {
+  if ((state === 'failed' || state === 'unknown') && job && (job.message || job.code)) {
+    const detail = outcomeText(job)
+    if (job.hint && job.message && !job.message.includes(job.hint)) {
+      return `${detail}（${job.hint}）`
+    }
+    return detail
+  }
+  return deliveryStates[state].description
 }
 
 /** @deprecated kept for old call sites; same lookup as outcomeText. */

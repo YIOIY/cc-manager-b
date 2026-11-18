@@ -130,6 +130,7 @@ export interface SubmissionJob {
   state: string
   code: string
   message?: string
+  hint?: string
   updated_at: string
 }
 

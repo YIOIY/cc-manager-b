@@ -1,5 +1,5 @@
 [Unit]
-Description=CC Manager
+Description=CC Manager B
 After=network-online.target
 Wants=network-online.target
 
@@ -7,14 +7,14 @@ Wants=network-online.target
 Type=simple
 User=cc-manager
 Group=cc-manager
-WorkingDirectory=/opt/cc-manager/current
-EnvironmentFile=/etc/cc-manager/cc-manager.env
-ExecStart=/opt/cc-manager/current/cc-manager
+WorkingDirectory=/opt/cc-manager-b/current
+EnvironmentFile=/etc/cc-manager/cc-manager-b.env
+ExecStart=/opt/cc-manager-b/current/cc-manager
 Restart=always
 RestartSec=3
 TimeoutStopSec=40
 KillSignal=SIGTERM
-StateDirectory=cc-manager
+StateDirectory=cc-manager-b
 StateDirectoryMode=0700
 UMask=0077
 LimitNOFILE=65536

@@ -2,28 +2,27 @@
 # One-time (re-runnable) server setup for Docker releases pulled by the server.
 #
 #   printf '%s' "$READ_TOKEN" | sudo ./deploy/production/install-docker.sh <image> <registry-user>
-#   e.g. ... install-docker.sh ghcr.io/acme/cc-manager acme
+#   e.g. ... install-docker.sh ghcr.io/acme/cc-manager-b acme
 #
 # READ_TOKEN: a GitHub classic token with only the read:packages scope. It is
 # stored by `docker login` in root's Docker config and used by the update timer
 # to pull images. Without a token on stdin the existing login is kept.
 #
 # What it does:
-#   - installs compose.yml, docker-deploy.sh, docker-update.sh and backup.sh into
-#     /opt/cc-manager/docker (root-owned)
-#   - installs and starts cc-manager-update.timer: every 2 minutes it deploys
-#     the image ":prod" points at, if that is a new version
-#   - removes the older CI deploy access if present (cc-deploy user, its sudo
-#     rule and its sshd block)
-# What it does NOT do on its own: switch traffic. While no image is published
-# to ":prod" the timer does nothing; the first release replaces the systemd
-# service and rolls back to it if the new container is unhealthy.
+#   - installs compose.yml, docker-deploy.sh, docker-update-b.sh and backup.sh into
+#     /opt/cc-manager-b/docker (root-owned), beside the older /opt/cc-manager
+#   - installs and starts cc-manager-b-update.timer: every 2 minutes it runs
+#     docker-update-b.sh to deploy the image ":prod" points at, if new
+# What it does NOT do:
+#   - touch the older cc-manager instance (ports, /opt/cc-manager, its timer,
+#     systemd unit, or the legacy cc-deploy SSH user)
+#   - switch public traffic; point nginx / Cloudflare Tunnel at :18081 when ready
 #
 # Re-run it after changing any of the installed files.
 set -euo pipefail
 image=${1:?usage: install-docker.sh <image> <registry-user>  (read-only token on stdin)}
 registry_user=${2:?usage: install-docker.sh <image> <registry-user>  (read-only token on stdin)}
-root=/opt/cc-manager/docker
+root=/opt/cc-manager-b/docker
 here=$(cd "$(dirname "$0")" && pwd)
 
 [ "$(id -u)" = 0 ] || { echo 'run as root' >&2; exit 1; }
@@ -37,11 +36,11 @@ if [ "${missing:-0}" = 1 ]; then
     echo 'On Ubuntu: apt-get install -y docker.io docker-compose-v2 curl python3' >&2
     exit 1
 fi
-env_file=/etc/cc-manager/cc-manager.env
+env_file=/etc/cc-manager/cc-manager-b.env
 [ -f "$env_file" ] || { echo "missing $env_file (keep the existing one: the encryption key must not change)" >&2; exit 1; }
 
 # Pre-cutover checks. Values are never printed.
-python3 - "$env_file" "${DATA_DIR:-/var/lib/cc-manager}/cc-manager.db" <<'PY'
+python3 - "$env_file" "${DATA_DIR:-/var/lib/cc-manager-b}/cc-manager.db" <<'PY'
 import sqlite3, sys
 env_path, db_path = sys.argv[1], sys.argv[2]
 blocking, warnings = [], []
@@ -90,48 +89,22 @@ PY
 install -d -o root -g root -m 0755 "$root" "$root/state"
 install -o root -g root -m 0644 "$here/compose.yml" "$root/compose.yml"
 install -o root -g root -m 0755 "$here/docker-deploy.sh" "$root/docker-deploy.sh"
-install -o root -g root -m 0755 "$here/docker-update.sh" "$root/docker-update.sh"
+install -o root -g root -m 0755 "$here/docker-update-b.sh" "$root/docker-update-b.sh"
 install -o root -g root -m 0755 "$here/backup.sh" "$root/backup.sh"
 printf '%s\n' "$image" > "$root/image"
 chmod 0644 "$root/image"
-install -d -m 0700 /var/backups/cc-manager
+install -d -m 0700 /var/backups/cc-manager-b
 
-install -o root -g root -m 0644 "$here/cc-manager-update.service" /etc/systemd/system/cc-manager-update.service
-install -o root -g root -m 0644 "$here/cc-manager-update.timer" /etc/systemd/system/cc-manager-update.timer
+install -o root -g root -m 0644 "$here/cc-manager-b-update.service" /etc/systemd/system/cc-manager-b-update.service
+install -o root -g root -m 0644 "$here/cc-manager-b-update.timer" /etc/systemd/system/cc-manager-b-update.timer
 systemctl daemon-reload
-systemctl enable --now cc-manager-update.timer >/dev/null
-
-# Remove the CI deploy access used before releases were pulled by the server.
-legacy_user=cc-deploy
-sshd_config=/etc/ssh/sshd_config
-begin='# BEGIN cc-manager deploy user (managed by install-docker.sh)'
-if grep -qF "$begin" "$sshd_config" 2>/dev/null; then
-    cp -p "$sshd_config" "$sshd_config.cc-manager.bak"
-    python3 - "$sshd_config" "$begin" '# END cc-manager deploy user' <<'PY'
-import sys
-path, begin, end = sys.argv[1:]
-text = open(path, encoding="utf-8").read()
-head, rest = text.split(begin, 1)
-open(path, "w", encoding="utf-8").write(head.rstrip("\n") + "\n" + rest.split(end, 1)[1].lstrip("\n"))
-PY
-    if sshd -t; then
-        systemctl reload ssh 2>/dev/null || systemctl reload sshd
-        echo "sshd: removed the $legacy_user block (backup: $sshd_config.cc-manager.bak)"
-    else
-        mv -f "$sshd_config.cc-manager.bak" "$sshd_config"
-        echo "WARNING: sshd rejected the config without the $legacy_user block; left it in place" >&2
-    fi
-fi
-rm -f /etc/sudoers.d/cc-manager-deploy "$root/ci-entry.sh"
-if id "$legacy_user" >/dev/null 2>&1; then
-    userdel -r "$legacy_user" >/dev/null 2>&1 || userdel "$legacy_user"
-    echo "removed the $legacy_user user (CI no longer logs in)"
-fi
+systemctl enable --now cc-manager-b-update.timer >/dev/null
 
 cat <<EOS
 Installed into $root for image $image.
-Update timer: $(systemctl is-active cc-manager-update.timer) (every 2 minutes; log: journalctl -u cc-manager-update)
-Current service: $(cat "$root/state/current-tag" 2>/dev/null || echo "systemd ($(systemctl is-active cc-manager 2>/dev/null || echo unknown))")
+Update timer: $(systemctl is-active cc-manager-b-update.timer) (every 2 minutes; log: journalctl -u cc-manager-b-update)
+Current tag: $(cat "$root/state/current-tag" 2>/dev/null || echo "none yet")
+Host port: 127.0.0.1:18081 (older cc-manager keeps 18080; point nginx/tunnel when ready)
 
 Publish from a workstation with scripts/release.sh; the server deploys :prod within a few minutes.
 EOS
