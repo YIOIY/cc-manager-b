@@ -351,7 +351,7 @@ const accountListBase = `WITH latest AS (
 	SELECT r.connection_id,r.upstream_id,r.five_hour_used,r.last_seen_at FROM platform_remote_accounts r
 )
 SELECT a.id,a.account,a.plan,a.register_location,a.register_time,a.plan_start_time,a.plan_end_time,a.proxy_id,a.version,a.archived,a.created_at,a.updated_at,a.rowid AS rid,
-COALESCE(NULLIF(m.upstream_aid,''),m.upstream_id,NULLIF(l.upstream_aid,''),l.upstream_id,'') AS platform_account_id,
+COALESCE(NULLIF(NULLIF(m.upstream_aid,''),'0'),NULLIF(NULLIF(l.upstream_aid,''),'0'),NULLIF(m.upstream_id,''),NULLIF(l.upstream_id,''),'') AS platform_account_id,
 COALESCE(m.alias,l.alias,'') AS platform_alias,
 CASE WHEN COALESCE(l.last_observed_at,'')>=COALESCE(m.fetched_at,'') THEN COALESCE(l.runtime_status,m.runtime_status,'') ELSE COALESCE(m.runtime_status,l.runtime_status,'') END AS platform_status,
 CASE WHEN COALESCE(l.last_observed_at,'')>=COALESCE(m.fetched_at,'') THEN COALESCE(l.last_observed_at,m.fetched_at,'') ELSE COALESCE(m.fetched_at,l.last_observed_at,'') END AS platform_observed_at,

@@ -266,7 +266,7 @@ function profileFields(row: Account, p: PlatformInfo): ProfileField[] {
   })
   const list: ProfileField[] = [
     field('alias', '账号别名', shortPlatformAlias(p.alias) || p.alias),
-    field('aid', '平台账号 ID', p.aid || p.upstream_id),
+    field('aid', '平台账号 ID', (p.aid && p.aid !== '0' ? p.aid : '') || p.upstream_id || ''),
     field('plan', '套餐', f.plan, row.plan),
     field('register_time', '注册时间', f.register_time, row.register_time),
     field('plan_start_time', '套餐开始时间', f.plan_start_time, row.plan_start_time),
