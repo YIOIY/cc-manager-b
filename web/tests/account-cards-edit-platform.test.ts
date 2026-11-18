@@ -10,6 +10,7 @@ vi.mock('../src/composables/useSession', () => ({
       p === 'accounts.view' ||
       p === 'accounts.credentials' ||
       p === 'accounts.onboard',
+    canOnboard: () => true,
     owns: (createdBy?: string | null) => createdBy === 'me',
     user: { value: { id: 'me', username: 'me', is_admin: false } },
   }),
@@ -108,6 +109,11 @@ test('a linked account with a configured web channel offers the platform edit', 
   expect(w.emitted('edit-platform')?.[0]?.[0]).toMatchObject({ id: 'acc-1' })
 })
 
+test('a bound proxy host appears on the card', () => {
+  const w = render({ ...account(platform()), proxy_id: 'px-1', proxy_host: '203.0.113.44' })
+  expect(w.text()).toContain('代理 203.0.113.44')
+})
+
 test('a linked login_failed account offers reauthorize', async () => {
   const w = render(
     account(platform({ status: 'login_failed', status_raw: 'login_failed', reason_text: 'token expired' })),
@@ -119,6 +125,18 @@ test('a linked login_failed account offers reauthorize', async () => {
   await btn!.trigger('click')
   expect(w.emitted('reauthorize')?.[0]?.[0]).toMatchObject({ id: 'acc-1' })
   expect(reauthButton(render(account(platform())))).toBeFalsy()
+})
+
+test('a linked sync_failed account offers reauthorize', async () => {
+  const w = render(
+    account(platform({ status: 'sync_failed', status_raw: 'sync_failed', reason_text: 'cookie expired' })),
+  )
+  expect(w.text()).toContain('同步失败')
+  expect(w.text()).toContain('平台同步失败，可重新授权后同步到平台')
+  const btn = reauthButton(w)
+  expect(btn).toBeTruthy()
+  await btn!.trigger('click')
+  expect(w.emitted('reauthorize')?.[0]?.[0]).toMatchObject({ id: 'acc-1' })
 })
 
 test('the edit is hidden when the platform removed the account or the channel is unusable', () => {

@@ -100,7 +100,7 @@
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /accounts` | 分页、筛选和脱敏摘要 |
-| `POST /accounts` | 新建本地草稿；最小必填account；其他字段可稍后补齐 |
+| `POST /accounts` | 新建本地草稿；最小必填 `account`（实现侧当前仍要求合法 `plan`）；日期等可稍后补齐。上号/`POST /accounts/onboard` 则要求完整资料与三个日期 |
 | `GET /accounts/{id}` | 基础资料、凭证元信息、代理摘要、交付关系、状态和最新用量 |
 | `PATCH /accounts/{id}` | 更新本地基本资料/密码/绑定代理，不同步远端 |
 | `POST /accounts/{id}/archive` | 本地归档；未结束上传任务存在时拒绝 |
@@ -129,10 +129,10 @@
 | --- | --- | --- |
 | `account` | string | 创建最小必填，不含空白；标识匹配按总体方案 |
 | `password` | string，write-only | 创建时可不填；PATCH省略保持，传非空字符串替换；显式空字符串返回422 |
-| `plan` | string或null | 配置允许的套餐；草稿可空 |
-| `register_location` | string或null | 当前US；草稿可空 |
-| `register_time` | date或null | 如提供必须是合法日期 |
-| `plan_start_time` / `plan_end_time` | date或null | 不允许非法日期或开始晚于结束 |
+| `plan` | string或null | 配置允许的套餐；草稿建议填写（当前实现创建时非空）；`onboard`/预检/上号必填 |
+| `register_location` | string或null | 当前仅 `US`；草稿可空，`onboard`/上号必填且须为 `US` |
+| `register_time` | date或null | 草稿可缺；如提供须为 `YYYY-MM-DD`。`onboard`/预检/上号三者日期均必填，且 `注册 ≤ 开始 ≤ 结束` |
+| `plan_start_time` / `plan_end_time` | date或null | 草稿可缺；如提供须合法且开始不晚于结束。`onboard`/预检/上号必填（同上顺序约束） |
 | `proxy_id` | UUID或null | 选择本地代理；null明确解除本地绑定并使预检不通过 |
 | `payment_method` / `register_device` | string或null | 依能力枚举；未核实值不可自动选择 |
 | `balance` | number或null | 手工录入的初始剩余百分比0–100，单独记录来源和录入时间，不能当实时额度 |
@@ -352,7 +352,7 @@ PATCH对顶层字段逐项合并：未出现保持，null删除，字符串/数�
 
 ### 原子上号
 
-`POST /accounts/onboard` 接收账号基础字段、`auth_json`、`platform_connection_id` 和可选 `proxy_id`。
+`POST /accounts/onboard` 接收账号基础字段（含 `plan`、`register_location`、`register_time`、`plan_start_time`、`plan_end_time`、`password`）、`auth_json`、`platform_connection_id` 和可选 `proxy_id`。日期为 `YYYY-MM-DD`，须满足 `注册 ≤ 开始 ≤ 结束`；与草稿 `POST /accounts` 不同，此处不允许缺日期。
 服务会依次校验凭证、探测已选择的代理、调用供应商上号接口并读取 metrics 与 bill；全部步骤成功后才在一个事务中写入账号、密钥、交付、平台关联和快照。任一步失败都不会写入本地业务表。供应商已接收但同步失败时，响应会返回 `upstream_id` 并明确提示远端孤儿风险，便于人工处理。
 | `GET /billing/ledger` | 系统计费账本；在受信任调用事件源接入前返回 `billing_status=计费源未接入`，不复制平台账单 |
 | `GET /sync/status` | 各连接同步时间、失败分片、积压和下一次运行摘要 |
@@ -448,10 +448,10 @@ Token受控轮换、允许套餐和启停修改仍增加版本，已排队上传
 ## 附录：用户与权限（RBAC，2026-11-08）
 
 - 权限名为 `<模块>.<动作>`，完整目录由 `GET /permissions` 返回：`[{key, label, permissions:[{key,label,hint}]}]`（需 `roles.view`）。无权限统一 `403 PERMISSION_DENIED`。
-- `GET /auth/session` / `POST /auth/login` 返回 `user: {id, username, roles:[{id,name,builtin}], permissions:[...], is_admin}`。`is_admin` 表示持有内置管理员角色（超级权限）。
+- `GET /auth/session` / `POST /auth/login` 返回 `user: {id, username, nickname, can_onboard, roles:[{id,name,builtin}], permissions:[...], is_admin}`。`is_admin` 表示持有内置管理员角色（超级权限）。`can_onboard=false` 时即使持有 `accounts.onboard` / `accounts.create` / `accounts.import`，上号相关写接口仍返回 `403 ONBOARD_DISABLED`。
 - `POST /auth/password`（任何登录用户）：`{current_password, new_password}`。
 - 角色：`GET /roles`（`roles.view`）→ `[{id,name,description,builtin,permissions,version,user_count,...}]`；`POST /roles` `{name, description, permissions[]}`；`PATCH /roles/{id}` `{name?, description?, permissions?, expected_version?}`；`DELETE /roles/{id}`。约束：权限名必须在目录内且不超过操作者自身权限（`VALIDATION_FAILED`）；管理员角色权限不可改、内置角色不可改名/删除（`ROLE_IMMUTABLE`）；仍被绑定的角色不可删（`ROLE_IN_USE`）；重名 `409 ROLE_EXISTS`。
-- 用户：`GET /users`（`users.view`）；`POST /users` `{username, password, role_ids[]}`（`users.create`）；`PATCH /users/{id}` `{role_ids?, enabled?, password?, expected_version?}`（`users.update`，带 `password` 还需 `users.reset_password`）；`DELETE /users/{id}`（`users.delete`）。约束：至少一个角色；非管理员不能授予管理员角色或修改管理员用户；`SELF_DEMOTION` / `SELF_DISABLE` / `SELF_DELETE` / `LAST_ADMIN`。
+- 用户：`GET /users`（`users.view`）；`POST /users` `{username, password, role_ids[]}`（`users.create`）；`PATCH /users/{id}` `{role_ids?, enabled?, can_onboard?, password?, nickname?, expected_version?}`（`users.update`，带 `password` 还需 `users.reset_password`）；`DELETE /users/{id}`（`users.delete`）。约束：至少一个角色；非管理员不能授予管理员角色或修改管理员用户；`SELF_DEMOTION` / `SELF_DISABLE` / `SELF_DELETE` / `LAST_ADMIN`。`can_onboard` 默认 `true`，关闭后禁止该用户新建/上号/导入/Claude OAuth。
 - 审计新增 `role.create` / `role.update` / `role.delete`；`user.*` 事件的 detail 记录角色 id 列表。
 
 ## 附录：列表分页与写限速（2026-11-08）

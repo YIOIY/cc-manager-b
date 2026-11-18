@@ -16,6 +16,7 @@ declare module 'vue' {
     AccountDeliveryDialog: typeof import('./components/AccountDeliveryDialog.vue')['default']
     AccountFormDialog: typeof import('./components/AccountFormDialog.vue')['default']
     AccountOptionalFields: typeof import('./components/AccountOptionalFields.vue')['default']
+    AnnouncementDialog: typeof import('./components/AnnouncementDialog.vue')['default']
     AssignUserDialog: typeof import('./components/AssignUserDialog.vue')['default']
     AttentionList: typeof import('./components/AttentionList.vue')['default']
     BillModelsPanel: typeof import('./components/BillModelsPanel.vue')['default']

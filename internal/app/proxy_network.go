@@ -5,6 +5,7 @@ import (
 	"cc-manager/internal/errs"
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -372,11 +373,25 @@ func runProxyProbe(ctx context.Context, raw string, s proxySettings, upstream *u
 	return
 }
 
-func (a *App) checkProxy(ctx context.Context, id string) (proxyProbeResult, error) {
-	raw, err := a.resolveProxyURL(id, "")
-	if err != nil {
-		return proxyProbeResult{}, err
+func buildProxyURL(scheme, host string, port int, username, password string) (string, error) {
+	u := &url.URL{Scheme: scheme, Host: net.JoinHostPort(host, strconv.Itoa(port))}
+	if username != "" {
+		u.User = url.UserPassword(username, password)
 	}
+	if _, err := proxyEndpoint(u.String()); err != nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
+func (a *App) probeProxyCandidate(ctx context.Context, raw string) (proxyProbeResult, error) {
+	if a.probeCandidateProxy != nil {
+		return a.probeCandidateProxy(ctx, raw)
+	}
+	return a.probeProxyURL(ctx, raw)
+}
+
+func (a *App) probeProxyURL(ctx context.Context, raw string) (proxyProbeResult, error) {
 	s, err := a.loadProxySettings()
 	if err != nil {
 		return proxyProbeResult{}, err
@@ -401,17 +416,33 @@ func (a *App) checkProxy(ctx context.Context, id string) (proxyProbeResult, erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(s.TimeoutSeconds)*time.Second)
 	defer cancel()
-	result := runProxyProbe(ctx, raw, s, upstream, "https://example.com/", "https://api.ipify.org?format=json")
+	return runProxyProbe(ctx, raw, s, upstream, "https://example.com/", "https://api.ipify.org?format=json"), nil
+}
+
+func recordProxyCheck(tx *sql.Tx, proxyID string, result proxyProbeResult) error {
+	checkID := newID()
+	if _, err := tx.Exec(`INSERT INTO proxy_checks(id,proxy_id,ok,latency_ms,exit_ip,error_code,checked_at) VALUES(?,?,?,?,?,?,?)`, checkID, proxyID, boolInt(result.OK), result.LatencyMS, result.ExitIP, result.ErrorCode, result.CheckedAt); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO proxy_check_details(check_id,stage,message,route_mode,warning) VALUES(?,?,?,?,?)`, checkID, result.Stage, result.Message, result.RouteMode, result.Warning)
+	return err
+}
+
+func (a *App) checkProxy(ctx context.Context, id string) (proxyProbeResult, error) {
+	raw, err := a.resolveProxyURL(id, "")
+	if err != nil {
+		return proxyProbeResult{}, err
+	}
+	result, err := a.probeProxyURL(ctx, raw)
+	if err != nil {
+		return result, err
+	}
 	tx, err := a.DB.BeginTx(context.WithoutCancel(ctx), nil)
 	if err != nil {
 		return result, err
 	}
 	defer tx.Rollback()
-	checkID := newID()
-	if _, err = tx.Exec(`INSERT INTO proxy_checks(id,proxy_id,ok,latency_ms,exit_ip,error_code,checked_at) VALUES(?,?,?,?,?,?,?)`, checkID, id, boolInt(result.OK), result.LatencyMS, result.ExitIP, result.ErrorCode, result.CheckedAt); err != nil {
-		return result, err
-	}
-	if _, err = tx.Exec(`INSERT INTO proxy_check_details(check_id,stage,message,route_mode,warning) VALUES(?,?,?,?,?)`, checkID, result.Stage, result.Message, result.RouteMode, result.Warning); err != nil {
+	if err = recordProxyCheck(tx, id, result); err != nil {
 		return result, err
 	}
 	return result, tx.Commit()

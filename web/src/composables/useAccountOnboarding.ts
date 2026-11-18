@@ -8,6 +8,7 @@ import {
   missingAccountFields,
   keepsSavedCredential,
   type AccountForm,
+  type AccountDateKey,
   applyCredentialJson,
   applyOAuthResult,
   credentialFields,
@@ -19,6 +20,7 @@ import {
   describeTokenExpiry,
   fieldAnchors,
   accountRequiredFields,
+  accountDateErrors,
   parseDeviceIds,
 } from '../model/account-form'
 import { credentialInputs } from '../model/credential-inputs'
@@ -27,6 +29,7 @@ import { randomId } from '../utils/id'
 import type { Account, OnboardResult, ReauthorizeResult, ConnectionOption, ProxyOption } from '../types/api'
 import { deliveryState } from '../account-workflow'
 import { normalizeAccountTag } from '../model/platform-card'
+import { useSession } from './useSession'
 
 export interface AccountOnboardingProps {
   modelValue: boolean
@@ -45,6 +48,7 @@ export type AccountOnboardingEmit = {
 }
 
 export function useAccountOnboarding(props: AccountOnboardingProps, emit: AccountOnboardingEmit) {
+  const { check, onboardAllowed } = useSession()
   const step = ref(1)
   const edit = ref<AccountForm>({})
   const source = ref<'oauth' | 'import' | 'manual' | 'saved' | ''>('')
@@ -455,16 +459,31 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       return false
     }
   }
+  const dateFieldAnchors: Record<AccountDateKey, string> = {
+    register_time: fieldAnchors.registerTime,
+    plan_start_time: fieldAnchors.planStart,
+    plan_end_time: fieldAnchors.planEnd,
+  }
+
   async function validateDetails() {
     if (linkedReauth.value) return validateReauth()
-    if (gapCount.value) {
-      for (const [key, label] of accountRequiredFields)
-        if (!hasValue(edit.value[key]) && !(key === 'password' && edit.value.password_configured))
-          fieldErrors.value[key] = `请填写${label}`
-      if (!parseDeviceIds(edit.value.claude_device_ids_text).length && !keepsSavedCredential(edit.value))
-        fieldErrors.value.claude_device_ids_text = '请填写设备资料'
-      notice.value = new Error(`还有 ${gapCount.value} 组资料待补充，已定位到第一项`)
-      await jumpTo(firstMissingAnchor(edit.value) || fieldAnchors.credentials)
+    const dateErrors = accountDateErrors(edit.value)
+    for (const [key, label] of accountRequiredFields) {
+      if (key === 'register_time' || key === 'plan_start_time' || key === 'plan_end_time') continue
+      if (!hasValue(edit.value[key]) && !(key === 'password' && edit.value.password_configured))
+        fieldErrors.value[key] = `请填写${label}`
+    }
+    Object.assign(fieldErrors.value, dateErrors)
+    if (!parseDeviceIds(edit.value.claude_device_ids_text).length && !keepsSavedCredential(edit.value))
+      fieldErrors.value.claude_device_ids_text = '请填写设备资料'
+    if (gapCount.value || Object.keys(dateErrors).length) {
+      const firstDate = (['register_time', 'plan_start_time', 'plan_end_time'] as const).find((key) => dateErrors[key])
+      notice.value = new Error(
+        gapCount.value ? `还有 ${gapCount.value} 组资料待补充，已定位到第一项` : dateErrors[firstDate!]!,
+      )
+      await jumpTo(
+        (firstDate && dateFieldAnchors[firstDate]) || firstMissingAnchor(edit.value) || fieldAnchors.credentials,
+      )
       return false
     }
     try {
@@ -473,10 +492,11 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     } catch (e) {
       notice.value = e
       const message = errorMessage(e)
-      if (message.includes('日期')) {
-        const key = message.includes('注册') ? 'register_time' : 'plan_end_time'
-        fieldErrors.value[key] = message
-        await jumpTo(key === 'register_time' ? fieldAnchors.registerTime : fieldAnchors.planEnd)
+      const orderErrors = accountDateErrors(edit.value, { requirePresent: false })
+      const orderKey = (['register_time', 'plan_start_time', 'plan_end_time'] as const).find((key) => orderErrors[key])
+      if (orderKey) {
+        Object.assign(fieldErrors.value, orderErrors)
+        await jumpTo(dateFieldAnchors[orderKey])
       } else if (message.includes('设备')) {
         fieldErrors.value.claude_device_ids_text = message
         await jumpTo(fieldAnchors.deviceIds)
@@ -549,6 +569,15 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         credentialPaste.value = ''
         emit('update:modelValue', false)
         emit('reauthorized', result.data)
+        return
+      }
+      try {
+        await check()
+      } catch {
+        /* API still enforces */
+      }
+      if (!onboardAllowed()) {
+        notice.value = new Error('当前账号已被禁止上号，请联系管理员')
         return
       }
       const payload = buildOnboardPayload(edit.value)

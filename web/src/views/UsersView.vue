@@ -85,6 +85,20 @@
           }}</span>
         </template>
       </el-table-column>
+      <el-table-column label="可上号" width="100">
+        <template #default="{ row }">
+          <el-switch
+            v-if="can('users.update')"
+            :model-value="row.can_onboard !== false"
+            :disabled="togglingOnboardId === row.id"
+            size="small"
+            @change="(v: string | number | boolean) => toggleCanOnboard(row as User, !!v)"
+          />
+          <span v-else class="access-state" :class="row.can_onboard !== false ? 'is-on' : 'is-off'">{{
+            row.can_onboard !== false ? '允许' : '禁止'
+          }}</span>
+        </template>
+      </el-table-column>
       <el-table-column v-if="can('users.update') || can('users.delete')" label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <div class="access-row-actions">
@@ -196,6 +210,7 @@ const loading = ref(false)
 const error = ref('')
 const saving = ref(false)
 const formError = ref('')
+const togglingOnboardId = ref('')
 
 function rowMenu(row: User) {
   const self = row.id === me.value?.id
@@ -245,6 +260,22 @@ function openCreateUser() {
 function openEditUser(row: User) {
   editingUser.value = row
   userFormOpen.value = true
+}
+async function toggleCanOnboard(row: User, next: boolean) {
+  if (togglingOnboardId.value || (row.can_onboard !== false) === next) return
+  togglingOnboardId.value = row.id
+  error.value = ''
+  try {
+    await api('/users/' + row.id, {
+      method: 'PATCH',
+      body: JSON.stringify({ can_onboard: next, expected_version: row.version }),
+    })
+    await load()
+  } catch (e) {
+    error.value = errorMessage(e)
+  } finally {
+    togglingOnboardId.value = ''
+  }
 }
 async function userCommand(cmd: string, row: User) {
   if (cmd === 'password') return openPassword(row)

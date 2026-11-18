@@ -56,6 +56,7 @@ const (
 	PermRolesView            Permission = "roles.view"
 	PermRolesManage          Permission = "roles.manage"
 	PermFeedbackManage       Permission = "feedback.manage"
+	PermAnnouncementManage   Permission = "announcement.manage"
 )
 
 var permissionCatalogue = []permissionModule{
@@ -109,6 +110,11 @@ var permissionCatalogue = []permissionModule{
 	// own feedback); the permission is for seeing and answering everyone's.
 	{"feedback", "用户之声", "", []permissionDef{
 		{PermFeedbackManage, "处理用户反馈", "查看全部反馈、回复、修改状态；提交和查看自己的反馈不需要权限"},
+	}},
+	// Reading the announcement needs only a login; publishing needs this
+	// permission (administrators hold it automatically).
+	{"announcement", "系统公告", "", []permissionDef{
+		{PermAnnouncementManage, "发布系统公告", "编辑顶部公告文案；清空即下线；所有登录用户可见"},
 	}},
 }
 

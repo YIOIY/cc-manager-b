@@ -370,7 +370,9 @@ func (a *App) proxyUpdate(w http.ResponseWriter, r *http.Request) {
 		scheme = strings.ToLower(str(in, "scheme"))
 	}
 	if _, ok := in["host"]; ok {
-		host = str(in, "host")
+		host = normalizeProxyHost(str(in, "host"))
+	} else {
+		host = normalizeProxyHost(host)
 	}
 	if _, ok := in["port"]; ok {
 		port = intValue(in["port"])
@@ -386,6 +388,13 @@ func (a *App) proxyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if e := proxyFieldErrors(scheme, host, port); e != nil {
 		writeError(w, r, e)
+		return
+	}
+	if taken, err := a.proxyHostPortTaken(r.Context(), host, port, id); err != nil {
+		writeError(w, r, storageError(err, "代理查重失败"))
+		return
+	} else if taken {
+		writeError(w, r, errs.New(errs.CodeProxyExists))
 		return
 	}
 	if clear, _ := in["clear_password"].(bool); clear {
@@ -405,7 +414,7 @@ func (a *App) proxyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := a.DB.ExecContext(r.Context(), `UPDATE proxies SET name=?,scheme=?,host=?,port=?,username=?,password_secret=?,enabled=?,version=version+1,updated_at=? WHERE id=? AND version=?`, name, scheme, host, port, username, secret, enabled, now(), id, version)
 	if err != nil {
-		dbError(w, r, err, "PROXY_EXISTS", "代理已存在", "代理保存失败")
+		dbError(w, r, err, "PROXY_EXISTS", "相同主机和端口的代理已存在", "代理保存失败")
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {

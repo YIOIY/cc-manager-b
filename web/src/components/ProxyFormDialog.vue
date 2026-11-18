@@ -50,11 +50,14 @@
         <el-switch v-model="form.enabled" active-text="启用" inactive-text="停用" />
         <small class="muted proxy-enabled-hint">停用后不再参与检测与新账号绑定，已绑定账号不受影响。</small>
       </el-form-item>
+      <p v-else class="muted proxy-create-hint">新增代理会先做本机检测，通过后才会保存到代理池。</p>
     </el-form>
     <template #footer>
       <div class="create-dialog-actions">
         <el-button :disabled="saving" @click="emit('update:modelValue', false)">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存代理</el-button>
+        <el-button type="primary" :loading="saving" @click="save">{{
+          saving ? (proxy ? '正在保存…' : '正在检测并保存…') : proxy ? '保存代理' : '检测并保存'
+        }}</el-button>
       </div>
     </template>
   </el-dialog>
@@ -188,5 +191,10 @@ async function save() {
   margin-top: 4px;
   font-size: 12px;
   color: var(--accent-dark);
+}
+.proxy-create-hint {
+  margin: 0 0 4px 100px;
+  font-size: 12px;
+  line-height: 1.4;
 }
 </style>

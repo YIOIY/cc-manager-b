@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -561,9 +562,12 @@ func TestAdminAssignAccountAndProxy(t *testing.T) {
 	assertEnvelope(t, admin.do(http.MethodPost, "/api/v1/accounts/"+accBound+"/assign", `{"user_id":"`+meB.Data.User.ID+`"}`), http.StatusConflict, "ACCOUNT_IN_PROGRESS")
 }
 
+var ownedProxyPortSeq atomic.Int64
+
 func createOwnedProxy(t *testing.T, c *testClient, name string) string {
 	t.Helper()
-	res := c.do(http.MethodPost, "/api/v1/proxies", `{"name":"`+name+`","scheme":"http","host":"127.0.0.1","port":1080}`)
+	port := 20000 + int(ownedProxyPortSeq.Add(1))
+	res := c.do(http.MethodPost, "/api/v1/proxies", fmt.Sprintf(`{"name":%q,"scheme":"http","host":"127.0.0.1","port":%d}`, name, port))
 	var out struct {
 		Data  struct{ ID string }
 		Error struct{ Message string }

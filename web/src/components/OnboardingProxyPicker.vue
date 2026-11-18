@@ -55,15 +55,13 @@
         id="onboarding-proxy-address"
         v-model="address"
         data-proxy-address
-        type="password"
-        show-password
-        autocomplete="new-password"
+        autocomplete="off"
         :disabled="saving || disabled"
         placeholder="http://user:pass@host:port 或 host:port:user:pass"
       />
       <p v-if="parsed" class="field-hint">
         已识别 {{ parsed.scheme || 'http' }} · {{ parsed.host }}:{{ parsed.port
-        }}{{ parsed.username ? ' · 含认证信息' : '' }}
+        }}{{ parsed.username ? ' · 含认证信息（提交后密码单独加密保存）' : '' }}
       </p>
       <details>
         <summary>代理名称（选填）</summary>
@@ -75,9 +73,13 @@
         />
       </details>
       <div class="proxy-save-row">
-        <el-button data-save-proxy :loading="saving" :disabled="disabled || !canCreate || !address.trim()" @click="save"
-          >保存并使用</el-button
-        ><span class="field-hint">保存到代理池，取消上号后仍可复用。</span>
+        <el-button
+          data-save-proxy
+          :loading="saving"
+          :disabled="disabled || !canCreate || !address.trim()"
+          @click="save"
+          >{{ saving ? '正在检测并保存…' : '检测并保存' }}</el-button
+        ><span class="field-hint">本机检测通过后才会写入代理池，取消上号后仍可复用。</span>
       </div>
     </div>
     <p v-if="!canCreate" class="field-hint">当前账号可选择已有代理，新建代理需要相应权限。</p>

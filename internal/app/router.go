@@ -27,20 +27,33 @@ func (a *App) Handler() http.Handler {
 	route("GET /api/v1/feedback/summary", a.feedbackSummary)
 	need("PATCH /api/v1/feedback/{id}", PermFeedbackManage, a.feedbackUpdate)
 
+	// Site-wide announcement: every signed-in user can read; publish needs manage.
+	route("GET /api/v1/announcement", a.announcementGet)
+	need("PUT /api/v1/announcement", PermAnnouncementManage, a.announcementPut)
+
 	need("GET /api/v1/dashboard", PermDashboardView, a.dashboard)
 	need("GET /api/v1/dashboard/attention", PermDashboardView, a.dashboardAttention)
 	need("GET /api/v1/dashboard/insights", PermDashboardView, a.dashboardInsights)
-	need("POST /api/v1/claude-oauth/sessions", PermAccountsOnboard, a.claudeOAuthStart)
-	need("POST /api/v1/claude-oauth/sessions/{id}/exchange", PermAccountsOnboard, a.claudeOAuthExchange)
-	need("DELETE /api/v1/claude-oauth/sessions/{id}", PermAccountsOnboard, a.claudeOAuthCancel)
+	needOnboard := func(pattern string, p Permission, h http.HandlerFunc) {
+		need(pattern, p, a.requireCanOnboard(h))
+	}
+	needOnboard("POST /api/v1/claude-oauth/sessions", PermAccountsOnboard, a.claudeOAuthStart)
+	needOnboard("POST /api/v1/claude-oauth/sessions/{id}/exchange", PermAccountsOnboard, a.claudeOAuthExchange)
+	needOnboard("DELETE /api/v1/claude-oauth/sessions/{id}", PermAccountsOnboard, a.claudeOAuthCancel)
 
-	needFn("/api/v1/accounts", byMethod(PermAccountsView, map[string]Permission{"POST": PermAccountsCreate}), a.accounts)
-	need("POST /api/v1/accounts/onboard", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.onboardAccount(w, r) })
+	needFn("/api/v1/accounts", byMethod(PermAccountsView, map[string]Permission{"POST": PermAccountsCreate}), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			a.requireCanOnboard(a.accounts)(w, r)
+			return
+		}
+		a.accounts(w, r)
+	})
+	needOnboard("POST /api/v1/accounts/onboard", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.onboardAccount(w, r) })
 	need("GET /api/v1/accounts/{id}", PermAccountsView, a.accountGet)
 	need("PATCH /api/v1/accounts/{id}", PermAccountsUpdate, a.accountPatch)
 	need("POST /api/v1/accounts/{id}/assign", PermAccountsUpdate, a.accountAssign)
 	need("POST /api/v1/accounts/{id}/platform-profile", PermAccountsPlatformEdit, a.platformProfileUpdate)
-	need("POST /api/v1/accounts/{id}/onboard", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.onboardAccount(w, r, r.PathValue("id")) })
+	needOnboard("POST /api/v1/accounts/{id}/onboard", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.onboardAccount(w, r, r.PathValue("id")) })
 	need("DELETE /api/v1/accounts/{id}", PermAccountsDelete, a.accountDelete)
 	need("POST /api/v1/accounts/{id}/archive", PermAccountsArchive, a.accountArchive(true))
 	need("POST /api/v1/accounts/{id}/restore", PermAccountsArchive, a.accountArchive(false))
@@ -50,7 +63,7 @@ func (a *App) Handler() http.Handler {
 	need("POST /api/v1/accounts/{id}/preflight", PermAccountsView, a.accountPreflight)
 	need("GET /api/v1/accounts/{id}/platform-usage", PermAccountsUsage, a.accountPlatformUsage)
 	need("GET /api/v1/accounts/{id}/platform-usage-history", PermAccountsUsage, a.accountUsageHistory)
-	need("POST /api/v1/accounts/{id}/submit", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.submitExistingAccount(w, r, r.PathValue("id")) })
+	needOnboard("POST /api/v1/accounts/{id}/submit", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.submitExistingAccount(w, r, r.PathValue("id")) })
 
 	needFn("/api/v1/proxy-settings", byMethod(PermProxiesView, map[string]Permission{"PUT": PermProxiesSettings}), a.proxyNetworkSettings)
 	needFn("/api/v1/proxies", byMethod(PermProxiesView, map[string]Permission{"POST": PermProxiesCreate}), a.proxies)
@@ -65,8 +78,8 @@ func (a *App) Handler() http.Handler {
 	need("POST /api/v1/proxies/{id}/test", PermProxiesTest, a.proxyTest)
 	need("GET /api/v1/proxies/{id}/checks", PermProxiesView, func(w http.ResponseWriter, r *http.Request) { a.proxyChecks(w, r, r.PathValue("id")) })
 
-	need("POST /api/v1/imports/preview", PermAccountsImport, a.importPreview)
-	need("POST /api/v1/imports/{id}/commit", PermAccountsImport, func(w http.ResponseWriter, r *http.Request) { a.importCommit(w, r, r.PathValue("id")) })
+	needOnboard("POST /api/v1/imports/preview", PermAccountsImport, a.importPreview)
+	needOnboard("POST /api/v1/imports/{id}/commit", PermAccountsImport, func(w http.ResponseWriter, r *http.Request) { a.importCommit(w, r, r.PathValue("id")) })
 
 	needFn("/api/v1/platform-connections", byMethod(PermConnectionsView, map[string]Permission{"POST": PermConnectionsCreate}), a.platformConnections)
 	needFn("/api/v1/platform-connections/{id}", byMethod(PermConnectionsView, map[string]Permission{"PUT": PermConnectionsUpdate, "PATCH": PermConnectionsUpdate, "DELETE": PermConnectionsDelete}), a.platformConnectionDetail)

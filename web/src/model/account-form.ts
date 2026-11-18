@@ -139,17 +139,64 @@ export function parseDeviceIds(text: unknown): string[] {
     .filter(Boolean)
 }
 
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+const accountDateLabels: Record<AccountDateKey, string> = {
+  register_time: '注册日期',
+  plan_start_time: '套餐开始日期',
+  plan_end_time: '套餐结束日期',
+}
+
+const accountDateKeys: AccountDateKey[] = ['register_time', 'plan_start_time', 'plan_end_time']
+
+/**
+ * Per-field date problems for the onboard wizard. Empty values are reported
+ * when requirePresent is true (default); format and ordering always apply to
+ * whatever is filled. Does not change the YYYY-MM-DD payload format.
+ */
+export function accountDateErrors(
+  edit: Pick<AccountForm, AccountDateKey>,
+  options: { requirePresent?: boolean } = {},
+): Partial<Record<AccountDateKey, string>> {
+  const requirePresent = options.requirePresent !== false
+  const errors: Partial<Record<AccountDateKey, string>> = {}
+  const values: Partial<Record<AccountDateKey, string>> = {}
+  for (const key of accountDateKeys) {
+    const value = String(edit[key] ?? '').trim()
+    if (!value) {
+      if (requirePresent) errors[key] = `请填写${accountDateLabels[key]}`
+      continue
+    }
+    if (!DATE_PATTERN.test(value)) {
+      errors[key] = `${accountDateLabels[key]}格式不正确`
+      continue
+    }
+    values[key] = value
+  }
+  if (values.register_time && values.plan_start_time && values.register_time > values.plan_start_time) {
+    errors.register_time = '注册日期不能晚于套餐开始日期'
+  }
+  if (values.plan_start_time && values.plan_end_time && values.plan_start_time > values.plan_end_time) {
+    errors.plan_end_time = '套餐开始日期不能晚于结束日期'
+  }
+  return errors
+}
+
+function firstAccountDateError(errors: Partial<Record<AccountDateKey, string>>): AccountDateKey | null {
+  return accountDateKeys.find((key) => errors[key]) || null
+}
+
 /** Labels of everything still missing; empty means the form can be submitted. */
 export function missingAccountFields(edit: AccountForm): string[] {
   const missing: string[] = []
   for (const [key, label] of accountRequiredFields) {
     if (key === 'password' && edit.password_configured) continue
+    if (accountDateKeys.includes(key as AccountDateKey)) continue
     if (!hasValue(edit[key])) missing.push(label)
   }
-  if (edit.register_time && edit.plan_start_time && String(edit.register_time) > String(edit.plan_start_time))
-    missing.push('注册日期早于套餐开始日期')
-  if (edit.plan_start_time && edit.plan_end_time && String(edit.plan_start_time) > String(edit.plan_end_time))
-    missing.push('套餐开始日期早于结束日期')
+  for (const message of Object.values(accountDateErrors(edit))) {
+    if (message) missing.push(message)
+  }
   if (!keepsSavedCredential(edit)) {
     for (const [key] of credentialFields) if (credentialMissing(edit, key)) missing.push(credentialLabels[key]!)
     if (!parseDeviceIds(edit.claude_device_ids_text).length) missing.push(credentialLabels.claude_device_ids_text!)
@@ -204,12 +251,14 @@ export function buildCredential(edit: AccountForm): CredentialPayload | null {
 export function buildOnboardPayload(edit: AccountForm): Record<string, unknown> {
   for (const [key, label] of accountRequiredFields) {
     if (key === 'password' && edit.password_configured) continue
+    if (accountDateKeys.includes(key as AccountDateKey)) continue
     if (!hasValue(edit[key])) throw new Error(`${label}不能为空`)
   }
+  const dateErrors = accountDateErrors(edit)
+  const dateKey = firstAccountDateError(dateErrors)
+  if (dateKey) throw new Error(dateErrors[dateKey]!)
   const account = String(edit.account)
   if (account.includes('@') && !EMAIL_PATTERN.test(account)) throw new Error('账号邮箱格式不正确')
-  if (String(edit.register_time) > String(edit.plan_start_time)) throw new Error('注册日期不能晚于套餐开始日期')
-  if (String(edit.plan_start_time) > String(edit.plan_end_time)) throw new Error('套餐开始日期不能晚于结束日期')
   const credential = buildCredential(edit)
   if (!credential && !edit.credentials_configured) throw new Error('Claude 凭证为必填，请补齐全部字段')
   const payload: Record<string, unknown> = { platform_connection_id: edit.platform_connection_id }
@@ -472,14 +521,22 @@ export function completionChecklist(
   return items
 }
 
+const accountDateAnchors: Record<AccountDateKey, string> = {
+  register_time: fieldAnchors.registerTime,
+  plan_start_time: fieldAnchors.planStart,
+  plan_end_time: fieldAnchors.planEnd,
+}
+
 /** Anchor of the first thing still missing, or null when the form is complete. */
 export function firstMissingAnchor(edit: AccountForm): string | null {
   const pending = completionChecklist(edit).find((item) => !item.done)
   if (pending) return pending.anchor
-  // Everything is present; what remains can only be a date-ordering problem.
+  // Everything is present; what remains can only be a date format/ordering problem.
+  const dateKey = firstAccountDateError(accountDateErrors(edit, { requirePresent: false }))
+  if (dateKey) return accountDateAnchors[dateKey]
   const rest = missingAccountFields(edit)
   if (!rest.length) return null
-  return rest[0]!.startsWith('注册日期') ? fieldAnchors.registerTime : fieldAnchors.planStart
+  return fieldAnchors.credentials
 }
 
 /** Human-readable remaining lifetime of the access token; empty when unknown. */

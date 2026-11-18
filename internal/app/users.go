@@ -11,14 +11,15 @@ import (
 )
 
 type userRecord struct {
-	ID        string
-	Username  string
-	Nickname  string
-	Enabled   bool
-	Version   int
-	CreatedAt string
-	UpdatedAt string
-	LastLogin string
+	ID         string
+	Username   string
+	Nickname   string
+	Enabled    bool
+	CanOnboard bool
+	Version    int
+	CreatedAt  string
+	UpdatedAt  string
+	LastLogin  string
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9._@-]{2,64}$`)
@@ -38,11 +39,11 @@ func normalizeNickname(raw string) (string, string) {
 
 func (a *App) userPublic(u userRecord) map[string]any {
 	ac, _ := a.userAccess(u.ID)
-	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "enabled": u.Enabled, "version": u.Version, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt, "last_login_at": u.LastLogin, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
+	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "enabled": u.Enabled, "can_onboard": u.CanOnboard, "version": u.Version, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt, "last_login_at": u.LastLogin, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
 }
 
 func sessionUserPayload(u userRecord, ac access) map[string]any {
-	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
+	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "can_onboard": u.CanOnboard, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
 }
 
 // ensureBootstrapAdmin creates the first administrator from the environment
@@ -77,13 +78,14 @@ func (a *App) ensureBootstrapAdmin() error {
 func scanUser(row interface{ Scan(...any) error }) (userRecord, string, error) {
 	var u userRecord
 	var hash string
-	var enabled int
-	err := row.Scan(&u.ID, &u.Username, &u.Nickname, &hash, &enabled, &u.Version, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
+	var enabled, canOnboard int
+	err := row.Scan(&u.ID, &u.Username, &u.Nickname, &hash, &enabled, &canOnboard, &u.Version, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
 	u.Enabled = enabled == 1
+	u.CanOnboard = canOnboard == 1
 	return u, hash, err
 }
 
-const userColumns = `id,username,COALESCE(nickname,''),password_hash,enabled,version,created_at,updated_at,COALESCE(last_login_at,'')`
+const userColumns = `id,username,COALESCE(nickname,''),password_hash,enabled,can_onboard,version,created_at,updated_at,COALESCE(last_login_at,'')`
 
 func (a *App) userByName(username string) (userRecord, string, error) {
 	return scanUser(a.DB.QueryRow(`SELECT `+userColumns+` FROM users WHERE username=?`, username))
@@ -244,6 +246,7 @@ func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		RoleIDs         []string `json:"role_ids"`
 		Enabled         *bool    `json:"enabled"`
+		CanOnboard      *bool    `json:"can_onboard"`
 		Password        string   `json:"password"`
 		Nickname        *string  `json:"nickname"`
 		ExpectedVersion int      `json:"expected_version"`
@@ -306,6 +309,10 @@ func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 	if in.Enabled != nil {
 		sets, args = append(sets, "enabled=?"), append(args, boolInt(*in.Enabled))
 		detail = append(detail, map[bool]string{true: "enabled", false: "disabled"}[*in.Enabled])
+	}
+	if in.CanOnboard != nil {
+		sets, args = append(sets, "can_onboard=?"), append(args, boolInt(*in.CanOnboard))
+		detail = append(detail, map[bool]string{true: "can_onboard", false: "can_onboard_off"}[*in.CanOnboard])
 	}
 	if in.Password != "" {
 		hash, err := HashPassword(in.Password)

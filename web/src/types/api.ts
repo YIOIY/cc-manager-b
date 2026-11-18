@@ -37,6 +37,7 @@ export type Permission =
   | 'roles.view'
   | 'roles.manage'
   | 'feedback.manage'
+  | 'announcement.manage'
 
 export interface RoleRef {
   id: string
@@ -48,6 +49,7 @@ export interface SessionUser {
   id: string
   username: string
   nickname: string
+  can_onboard: boolean
   roles: RoleRef[]
   permissions: Permission[]
   is_admin: boolean
@@ -64,6 +66,7 @@ export interface User {
   username: string
   nickname: string
   enabled: boolean
+  can_onboard: boolean
   version: number
   created_at: string
   updated_at: string
@@ -143,6 +146,8 @@ export interface Account {
   plan_start_time: string
   plan_end_time: string
   proxy_id: string
+  /** Bound pool proxy host/IP when proxy_id resolves; empty when unbound or missing. */
+  proxy_host?: string
   version: number
   archived: boolean
   created_at: string

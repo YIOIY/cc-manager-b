@@ -34,9 +34,10 @@ type sessionState struct {
 
 // sessionUserInfo is what handlers see about the caller.
 type sessionUserInfo struct {
-	ID       string
-	Username string
-	Access   access
+	ID         string
+	Username   string
+	CanOnboard bool
+	Access     access
 }
 
 const sessionUserKey ctxKey = 2
@@ -385,7 +386,7 @@ func (a *App) protect(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, r, storageError(err, "读取权限失败"))
 			return
 		}
-		ctx := context.WithValue(r.Context(), sessionUserKey, sessionUserInfo{ID: u.ID, Username: u.Username, Access: ac})
+		ctx := context.WithValue(r.Context(), sessionUserKey, sessionUserInfo{ID: u.ID, Username: u.Username, CanOnboard: u.CanOnboard, Access: ac})
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -395,6 +396,18 @@ func (a *App) require(p Permission, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !sessionUser(r).Access.allows(p) {
 			writeError(w, r, errs.New(errs.CodePermissionDenied).WithDetail("permission", string(p)))
+			return
+		}
+		next(w, r)
+	}
+}
+
+// requireCanOnboard rejects onboarding-related writes when the user flag is off.
+// Compose after require(...) so RBAC denial stays PERMISSION_DENIED.
+func (a *App) requireCanOnboard(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !sessionUser(r).CanOnboard {
+			writeError(w, r, errs.New(errs.CodeOnboardDisabled))
 			return
 		}
 		next(w, r)

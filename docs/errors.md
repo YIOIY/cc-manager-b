@@ -69,6 +69,7 @@
 | `OAUTH_RESULT_INVALID` | validation | 422 | 否 | fix_input | 授权结果无法识别 | 本地解析错误，文案由解析器给出；允许调用方自定义文案 |
 | `OAUTH_SESSION_EXPIRED` | not_found | 404 | 否 | reauthorize | 授权链接已失效 | 链接过期、被替换、已使用或不属于当前会话 |
 | `OAUTH_START_FAILED` | internal | 500 | 是 | retry | 无法生成授权链接 | 随机数生成失败 |
+| `ONBOARD_DISABLED` | permission | 403 | 否 | contact_admin | 当前账号已被禁止上号 | users.can_onboard=0 时拦截新建/上号/导入/Claude OAuth |
 | `OPTIONAL_METADATA_INVALID` | validation | 422 | 否 | fix_input | 补充信息格式不正确 | 余额、标签、支付方式等选填项 |
 | `ORIGIN_FAILED` | auth | 403 | 否 | none | 请求来源与当前站点不一致 | Origin 头与 Host 不匹配 |
 | `PASSWORD_INVALID` | auth | 403 | 否 | fix_input | 当前密码不正确 | 修改密码时旧密码校验 |
@@ -89,13 +90,14 @@
 | `PLATFORM_UNAVAILABLE` | upstream | 502 | 是 | retry | 平台暂时无法访问 | 上游 5xx/429/网络失败；允许调用方自定义文案 |
 | `PREFLIGHT_BLOCKED` | validation | 422 | 否 | fix_input | 资料或凭证未完善 | 预检有 error 项时拒绝提交 |
 | `PROXY_CHECK_FAILED` | internal | 500 | 是 | retry | 代理检测记录保存失败 |  |
-| `PROXY_EXISTS` | conflict | 409 | 否 | none | 代理已存在 | 唯一约束冲突 |
+| `PROXY_EXISTS` | conflict | 409 | 否 | fix_input | 相同主机和端口的代理已存在 | proxies.host+port 唯一约束 |
 | `PROXY_INVALID` | validation | 422 | 否 | fix_input | 代理配置不可用 | 代理不存在、已停用或字段无效；HTTP 与任务共用；允许调用方自定义文案 |
 | `PROXY_IN_USE` | conflict | 409 | 否 | none | 仍有账号绑定该代理 | ；允许调用方自定义文案 |
 | `PROXY_PROBE_FAILED` | upstream | — | 是 | retry | 历史任务的本机代理检测失败 | 旧任务码 |
 | `PROXY_REQUIRED` | validation | — | 否 | fix_input | 缺少可用代理 | 预检 |
 | `PROXY_SETTINGS_INVALID` | validation | 422 | 否 | fix_input | 代理网络设置不正确 | 代理池前置代理设置；允许调用方自定义文案 |
 | `PROXY_TIMEOUT` | upstream | — | 是 | fix_input | 代理检测超时或已取消 | 代理检测阶段码 |
+| `PROXY_UNREACHABLE` | validation | 422 | 是 | fix_input | 本机检测未通过，代理未保存 | 新增代理强制本机检测失败；AllowCustomMessage 带探测文案；details.stage 为探测阶段；允许调用方自定义文案 |
 | `QUERY_INVALID` | validation | 422 | 否 | fix_input | 查询参数不正确 | fields 列出每个有问题的查询参数；允许调用方自定义文案 |
 | `QUERY_SCOPE_TOO_LARGE` | validation | 422 | 否 | fix_input | 单次最多选择 10000 个账号 | 账单查询范围 |
 | `RATE_LIMITED` | rate_limit | 429 | 否 | wait | 操作过于频繁 | details.retry_after_seconds 与 Retry-After 头一致 |

@@ -60,9 +60,10 @@ test('pasting a full proxy URL into the host field fills every other field', asy
   expect(wrapper.text()).toContain('已识别')
   // saving sends the split fields, not the pasted string
   fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: 'p1' } }), { status: 201 }))
+  expect(wrapper.text()).toContain('本机检测')
   await wrapper
     .findAll('button')
-    .find((b) => b.text() === '保存代理')!
+    .find((b) => b.text() === '检测并保存')!
     .trigger('click')
   await flushPromises()
   const body = JSON.parse(fetchMock.mock.calls[0]![1].body)

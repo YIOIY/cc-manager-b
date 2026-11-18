@@ -21,6 +21,7 @@ func init() {
 		Def{Code: "CSRF_FAILED", Category: CategoryAuth, Status: 403, Action: ActionRetry, Message: "页面会话已过期", Hint: "请刷新页面后重试", Doc: "缺少或不匹配的 X-CSRF-Token"},
 		Def{Code: "ORIGIN_FAILED", Category: CategoryAuth, Status: 403, Action: ActionNone, Message: "请求来源与当前站点不一致", Doc: "Origin 头与 Host 不匹配"},
 		Def{Code: "PERMISSION_DENIED", Category: CategoryPermission, Status: 403, Action: ActionContactAdmin, Message: "当前账号没有执行此操作的权限", Hint: "如需此权限请联系管理员", Doc: "details.permission 为所需权限；阶段 1 保留自定义文案", AllowCustomMessage: true},
+		Def{Code: "ONBOARD_DISABLED", Category: CategoryPermission, Status: 403, Action: ActionContactAdmin, Message: "当前账号已被禁止上号", Hint: "请联系管理员开启上号权限", Doc: "users.can_onboard=0 时拦截新建/上号/导入/Claude OAuth"},
 		Def{Code: "PAYLOAD_TOO_LARGE", Category: CategoryValidation, Status: 413, Action: ActionFixInput, Message: "提交的内容超过大小限制", Hint: "请减少单次提交的数据量", Doc: "请求体超过上限"},
 		Def{Code: "METHOD_NOT_ALLOWED", Category: CategoryValidation, Status: 405, Action: ActionNone, Message: "不支持的请求方式", Doc: "路由存在但方法不匹配"},
 		Def{Code: "QUERY_SCOPE_TOO_LARGE", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "单次最多选择 10000 个账号", Hint: "请缩小选择范围", Doc: "账单查询范围"},
@@ -38,6 +39,7 @@ func init() {
 		Def{Code: "PLATFORM_CONNECTION_REQUIRED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "缺少平台连接", Hint: "请选择要提交的供应商平台", Doc: "HTTP 层阶段 2 并入 fields；预检保留"},
 		Def{Code: "PREFLIGHT_BLOCKED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "资料或凭证未完善", Hint: "请按预检提示补充后再提交", Doc: "预检有 error 项时拒绝提交"},
 		Def{Code: "PROXY_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "代理配置不可用", Hint: "请检查代理协议、主机、端口与认证信息", Doc: "代理不存在、已停用或字段无效；HTTP 与任务共用", AllowCustomMessage: true},
+		Def{Code: "PROXY_UNREACHABLE", Category: CategoryValidation, Status: 422, Retryable: true, Action: ActionFixInput, Message: "本机检测未通过，代理未保存", Hint: "请检查代理地址、认证与本机检测路径后重试", Doc: "新增代理强制本机检测失败；AllowCustomMessage 带探测文案；details.stage 为探测阶段", AllowCustomMessage: true},
 		Def{Code: "PROXY_SETTINGS_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "代理网络设置不正确", Doc: "代理池前置代理设置", AllowCustomMessage: true},
 		Def{Code: "OPTIONAL_METADATA_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "补充信息格式不正确", Doc: "余额、标签、支付方式等选填项"},
 		Def{Code: "OAUTH_RESULT_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "授权结果无法识别", Hint: "请粘贴 Claude 授权页给出的授权码或完整回调地址", Doc: "本地解析错误，文案由解析器给出", AllowCustomMessage: true},
@@ -94,7 +96,7 @@ func init() {
 		Def{Code: "QUERY_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "查询参数不正确", Hint: "请检查分页、排序或筛选条件", Doc: "fields 列出每个有问题的查询参数", AllowCustomMessage: true},
 		Def{Code: "USER_DISABLED", Category: CategoryAuth, Status: 401, Action: ActionLogin, Message: "当前账号已停用或不存在", Hint: "请联系管理员或重新登录", Doc: "会话有效但用户行已停用或删除"},
 		Def{Code: "USER_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "目标用户不可用", Hint: "请选择仍启用的用户", Doc: "资源分配：目标用户不存在或已停用", AllowCustomMessage: true},
-		Def{Code: "PROXY_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "代理已存在", Doc: "唯一约束冲突"},
+		Def{Code: "PROXY_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionFixInput, Message: "相同主机和端口的代理已存在", Hint: "请改用已有代理，或更换主机/端口后再新建", Doc: "proxies.host+port 唯一约束"},
 		Def{Code: "CONNECTION_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "平台连接已存在", Doc: "唯一约束冲突"},
 		Def{Code: "ROLE_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "角色名称已存在", Doc: "唯一约束冲突"},
 		Def{Code: "USER_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "账号已存在", Doc: "唯一约束冲突"},
@@ -172,6 +174,7 @@ const (
 	CodeCsrfFailed                  = "CSRF_FAILED"
 	CodeOriginFailed                = "ORIGIN_FAILED"
 	CodePermissionDenied            = "PERMISSION_DENIED"
+	CodeOnboardDisabled             = "ONBOARD_DISABLED"
 	CodePayloadTooLarge             = "PAYLOAD_TOO_LARGE"
 	CodeMethodNotAllowed            = "METHOD_NOT_ALLOWED"
 	CodeQueryScopeTooLarge          = "QUERY_SCOPE_TOO_LARGE"
@@ -189,6 +192,7 @@ const (
 	CodePlatformConnectionRequired  = "PLATFORM_CONNECTION_REQUIRED"
 	CodePreflightBlocked            = "PREFLIGHT_BLOCKED"
 	CodeProxyInvalid                = "PROXY_INVALID"
+	CodeProxyUnreachable            = "PROXY_UNREACHABLE"
 	CodeProxySettingsInvalid        = "PROXY_SETTINGS_INVALID"
 	CodeOptionalMetadataInvalid     = "OPTIONAL_METADATA_INVALID"
 	CodeOauthResultInvalid          = "OAUTH_RESULT_INVALID"

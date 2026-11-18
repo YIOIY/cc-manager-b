@@ -380,6 +380,12 @@ func validAccountDates(registered, start, end string, required bool) error {
 	return nil
 }
 
+// normalizeProxyHost trims brackets/spaces and lowercases so host+port
+// uniqueness does not depend on how the operator typed the address.
+func normalizeProxyHost(host string) string {
+	return strings.ToLower(strings.TrimSpace(strings.Trim(host, "[]")))
+}
+
 // proxyFieldErrors checks a proxy's scheme, host and port together.
 func proxyFieldErrors(scheme, host string, port int) *errs.Error {
 	var f errs.Fields
@@ -395,7 +401,7 @@ func proxyFieldErrors(scheme, host string, port int) *errs.Error {
 		f.Add("port", errs.FieldOutOfRange, "端口必须在 1 到 65535 之间")
 	}
 	if f.Len() == 0 {
-		if _, err := proxyEndpoint((&url.URL{Scheme: scheme, Host: net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(port))}).String()); err != nil {
+		if _, err := proxyEndpoint((&url.URL{Scheme: scheme, Host: net.JoinHostPort(normalizeProxyHost(host), strconv.Itoa(port))}).String()); err != nil {
 			f.Invalid("host", err.Error())
 		}
 	}

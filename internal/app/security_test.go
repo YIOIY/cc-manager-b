@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -189,7 +190,7 @@ func TestWriteRateLimitReturns429PerUser(t *testing.T) {
 	c.login("correct-horse-battery")
 	limited := false
 	for i := 0; i < 8; i++ {
-		res := c.do(http.MethodPost, "/api/v1/proxies", `{"name":"p`+string(rune('a'+i))+`","scheme":"http","host":"127.0.0.1","port":8080}`)
+		res := c.do(http.MethodPost, "/api/v1/proxies", `{"name":"p`+string(rune('a'+i))+`","scheme":"http","host":"127.0.0.1","port":`+strconv.Itoa(8080+i)+`}`)
 		res.Body.Close()
 		if res.StatusCode == http.StatusTooManyRequests {
 			if res.Header.Get("Retry-After") == "" {

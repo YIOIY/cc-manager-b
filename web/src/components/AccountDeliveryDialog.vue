@@ -168,8 +168,7 @@
           type="primary"
           @click="emit('configure')"
           >配置平台</el-button
-        ><template
-          v-else-if="(state === 'pending' || state === 'failed') && can('accounts.onboard') && canMutateAccount"
+        ><template v-else-if="(state === 'pending' || state === 'failed') && canOnboard() && canMutateAccount"
           ><el-button @click="account && emit('complete', account, connectionId)">完善资料</el-button
           ><el-button type="primary" :loading="busy" :disabled="checking || !preflight?.can_submit" @click="submit">{{
             busy ? '正在提交…' : '提交上号'
@@ -218,7 +217,7 @@ const emit = defineEmits<{
   deleted: [accountId: string]
   assigned: [result: { userId: string; message?: string; proxy_action?: string }]
 }>()
-const { can, owns, user } = useSession()
+const { can, canOnboard, check: refreshSession, onboardAllowed, owns, user } = useSession()
 const isAdmin = computed(() => !!user.value?.is_admin)
 const canMutateAccount = computed(() => owns(props.account?.created_by_user_id))
 const ownerLabel = computed(() =>
@@ -237,7 +236,7 @@ const showReauth = computed(
   () =>
     state.value === 'linked' &&
     needsReauth(props.account?.platform?.status || props.account?.platform_status) &&
-    (can('accounts.credentials') || can('accounts.onboard')),
+    (can('accounts.credentials') || canOnboard()),
 )
 // Unknown with LOCAL_LINK_SAVE_FAILED means the platform already accepted; keep
 // the local row so an operator can recover the link instead of hard-deleting.
@@ -315,6 +314,15 @@ async function submit() {
   busy.value = true
   error.value = ''
   try {
+    try {
+      await refreshSession()
+    } catch {
+      /* API still enforces */
+    }
+    if (!onboardAllowed()) {
+      error.value = '当前账号已被禁止上号，请联系管理员'
+      return
+    }
     await api('/accounts/' + props.account!.id + '/submit', {
       method: 'POST',
       headers: { 'Idempotency-Key': key },

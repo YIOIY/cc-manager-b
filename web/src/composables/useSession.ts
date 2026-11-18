@@ -23,6 +23,16 @@ export function can(permission: Permission): boolean {
   return !!user.value?.permissions.includes(permission)
 }
 
+/** True when the user-level上号 switch is on (defaults true for older payloads). */
+export function onboardAllowed(): boolean {
+  return user.value?.can_onboard !== false
+}
+
+/** True when the user may start Claude onboarding (RBAC + user switch). */
+export function canOnboard(): boolean {
+  return can('accounts.onboard') && onboardAllowed()
+}
+
 /** True when the signed-in user may mutate a row with this created_by_user_id. */
 export function owns(createdByUserId?: string | null): boolean {
   const me = user.value
@@ -108,6 +118,8 @@ export function useSession() {
     checked: computed(() => checked.value),
     user: computed(() => user.value),
     can,
+    onboardAllowed,
+    canOnboard,
     owns,
     check,
     login,

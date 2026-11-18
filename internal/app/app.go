@@ -38,6 +38,10 @@ type App struct {
 	webClients map[string]*supplier.WebClient
 	webSyncMu  map[string]*sync.Mutex
 
+	// probeCandidateProxy, when set, replaces the live probe used before
+	// createProxy inserts a row. Tests install a stub; production leaves it nil.
+	probeCandidateProxy func(ctx context.Context, raw string) (proxyProbeResult, error)
+
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -45,6 +49,10 @@ type App struct {
 	ticks     struct{ jobs, metrics, bills, schedule, janitor, webAccounts, webBills atomic.Int64 }
 	http      httpStats
 }
+
+// autoStubProxyProbe is set by TestMain so ordinary HTTP tests can create
+// pool entries without a live exit. Production binaries leave it false.
+var autoStubProxyProbe bool
 
 // New loads configuration from the environment, opens the database at path
 // (or CC_MANAGER_DB when empty) and starts the background workers.
@@ -68,7 +76,7 @@ CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, account TEXT UNIQUE NOT
 CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',scheme TEXT NOT NULL DEFAULT '',host TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,username TEXT NOT NULL DEFAULT '',password_secret TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',created_by_user_id TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',web_username TEXT NOT NULL DEFAULT '',web_password_secret TEXT NOT NULL DEFAULT '',web_suspended_at TEXT NOT NULL DEFAULT '',web_suspended_reason TEXT NOT NULL DEFAULT '',usd_cny_rate REAL NOT NULL DEFAULT 7.2);
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',connection_id TEXT NOT NULL DEFAULT '',payload_json TEXT NOT NULL DEFAULT '{}',result_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
-CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL DEFAULT '',password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
+CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL DEFAULT '',password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,can_onboard INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
 CREATE TABLE IF NOT EXISTS roles(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,description TEXT NOT NULL DEFAULT '',builtin INTEGER NOT NULL DEFAULT 0,permissions_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS user_roles(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id),PRIMARY KEY(user_id,role_id));
 CREATE TABLE IF NOT EXISTS audit_events(id INTEGER PRIMARY KEY AUTOINCREMENT,action TEXT NOT NULL DEFAULT '',resource_type TEXT NOT NULL DEFAULT '',resource_id TEXT NOT NULL DEFAULT '',actor TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT '');
@@ -122,6 +130,11 @@ func NewWithConfig(cfg Config, workers bool) (*App, error) {
 		}
 	}
 	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now()}
+	if autoStubProxyProbe {
+		a.probeCandidateProxy = func(context.Context, string) (proxyProbeResult, error) {
+			return proxyProbeResult{OK: true, Stage: "complete", Message: "test stub", CheckedAt: now()}, nil
+		}
+	}
 	if err = a.ensureBootstrapAdmin(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap admin: %w", err)
@@ -353,8 +366,9 @@ rem.five_hour_used AS five_hour_used,
 CASE WHEN rem.upstream_id IS NULL THEN '' WHEN COALESCE(rem.last_seen_at,'')>=COALESCE(m.fetched_at,'') THEN 'web' ELSE 'openapi' END AS platform_channel,
 COALESCE(a.created_by_user_id,'') AS created_by_user_id,
 COALESCE(u.nickname,'') AS created_by_nickname,
-COALESCE(u.username,'') AS created_by_username
-FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id LEFT JOIN remote rem ON rem.connection_id=l.connection_id AND rem.upstream_id=l.upstream_id LEFT JOIN users u ON u.id=a.created_by_user_id`
+COALESCE(u.username,'') AS created_by_username,
+COALESCE(px.host,'') AS proxy_host
+FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id LEFT JOIN remote rem ON rem.connection_id=l.connection_id AND rem.upstream_id=l.upstream_id LEFT JOIN users u ON u.id=a.created_by_user_id LEFT JOIN proxies px ON px.id=a.proxy_id AND a.proxy_id<>''`
 
 // unpagedAccountLimit caps the legacy array response; the UI always pages.
 const unpagedAccountLimit = 2000
@@ -405,7 +419,7 @@ func accountListFilter(w http.ResponseWriter, q url.Values) (listFilter, bool) {
 	}
 	f.dateRange("t.plan_end_time", q.Get("end_from"), q.Get("end_to"))
 	f.dateRange("t.created_at", q.Get("created_from"), q.Get("created_to"))
-	f.keyword(q.Get("q"), "t.account", "t.id", "t.plan", "t.register_location", "t.proxy_id", "t.platform_account_id", "t.platform_alias", "t.platform_status")
+	f.keyword(q.Get("q"), "t.account", "t.id", "t.plan", "t.register_location", "t.proxy_id", "t.proxy_host", "t.platform_account_id", "t.platform_alias", "t.platform_status")
 	return f, true
 }
 
@@ -456,12 +470,12 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		var rid int64
 		var requests, prompt, completion, cost sql.NullInt64
 		var success, fiveHour sql.NullFloat64
-		var channel, createdByID, createdByNickname, createdByUsername string
-		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding, &fiveHour, &channel, &createdByID, &createdByNickname, &createdByUsername); err != nil {
+		var channel, createdByID, createdByNickname, createdByUsername, proxyHost string
+		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding, &fiveHour, &channel, &createdByID, &createdByNickname, &createdByUsername, &proxyHost); err != nil {
 			writeError(w, r, storageError(err, "账号读取失败"))
 			return
 		}
-		m := map[string]any{"id": id, "account": account, "plan": plan, "register_location": loc, "register_time": rt, "plan_start_time": ps, "plan_end_time": pe, "proxy_id": proxy, "version": version, "archived": archived == 1, "created_at": created, "updated_at": updated, "platform_account_id": upstreamID, "platform_alias": alias, "platform_status": platformStatus, "platform_observed_at": observed, "onboarding_state": onboarding, "created_by_user_id": createdByID, "created_by_nickname": createdByNickname, "created_by_username": createdByUsername}
+		m := map[string]any{"id": id, "account": account, "plan": plan, "register_location": loc, "register_time": rt, "plan_start_time": ps, "plan_end_time": pe, "proxy_id": proxy, "proxy_host": proxyHost, "version": version, "archived": archived == 1, "created_at": created, "updated_at": updated, "platform_account_id": upstreamID, "platform_alias": alias, "platform_status": platformStatus, "platform_observed_at": observed, "onboarding_state": onboarding, "created_by_user_id": createdByID, "created_by_nickname": createdByNickname, "created_by_username": createdByUsername}
 		if requests.Valid {
 			m["platform_requests"] = requests.Int64
 		}
@@ -984,31 +998,81 @@ func (a *App) createProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	scheme := strings.ToLower(str(in, "scheme"))
 	port := intValue(in["port"])
-	host := str(in, "host")
+	host := normalizeProxyHost(str(in, "host"))
 	if e := proxyFieldErrors(scheme, host, port); e != nil {
 		writeError(w, r, e)
 		return
 	}
+	if taken, err := a.proxyHostPortTaken(r.Context(), host, port, ""); err != nil {
+		writeError(w, r, storageError(err, "代理查重失败"))
+		return
+	} else if taken {
+		writeError(w, r, errs.New(errs.CodeProxyExists))
+		return
+	}
 	id, t := newID(), now()
 	username, password := str(in, "username"), str(in, "password")
+	raw, err := buildProxyURL(scheme, host, port, username, password)
+	if err != nil {
+		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
+			Field: "host", Code: errs.FieldInvalidFormat, Message: err.Error(),
+		}))
+		return
+	}
+	probe, err := a.probeProxyCandidate(r.Context(), raw)
+	if err != nil {
+		serverError(w, r, "PROXY_CHECK_FAILED", "代理检测设置或结果记录失败", err)
+		return
+	}
+	if !probe.OK {
+		msg := strings.TrimSpace(probe.Message)
+		if msg == "" {
+			msg = "本机检测未通过，代理未保存"
+		}
+		err := errs.New(errs.CodeProxyUnreachable).WithMessage(msg)
+		if probe.Stage != "" {
+			err = err.WithDetail("stage", probe.Stage)
+		}
+		writeError(w, r, err)
+		return
+	}
 	var secret string
 	if password != "" {
 		if a.keys == nil {
 			fail(w, http.StatusServiceUnavailable, "ENCRYPTION_KEY_REQUIRED", "未配置凭证加密密钥")
 			return
 		}
-		var err error
 		if secret, err = a.keys.Seal([]byte(password), []byte(id)); err != nil {
 			writeError(w, r, secretError("proxy_password", "代理密码加密失败", err))
 			return
 		}
 	}
-	if _, err := a.DB.ExecContext(r.Context(), `INSERT INTO proxies(id,name,scheme,host,port,username,password_secret,created_at,updated_at,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), scheme, host, port, username, secret, t, t, sessionUser(r).ID); err != nil {
-		dbError(w, r, err, "PROXY_EXISTS", "代理已存在", "代理保存失败")
+	tx, err := a.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, r, storageError(err, "代理保存失败"))
+		return
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO proxies(id,name,scheme,host,port,username,password_secret,created_at,updated_at,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, str(in, "name"), scheme, host, port, username, secret, t, t, sessionUser(r).ID); err != nil {
+		dbError(w, r, err, "PROXY_EXISTS", "相同主机和端口的代理已存在", "代理保存失败")
+		return
+	}
+	if err = recordProxyCheck(tx, id, probe); err != nil {
+		writeError(w, r, storageError(err, "代理检测结果保存失败"))
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		writeError(w, r, storageError(err, "代理保存失败"))
 		return
 	}
 	a.auditFor(r, "proxy.create", "proxy", id, scheme+"://"+host)
-	write(w, http.StatusCreated, map[string]any{"id": id, "version": 1})
+	write(w, http.StatusCreated, map[string]any{"id": id, "version": 1, "latest_check": probe})
+}
+
+func (a *App) proxyHostPortTaken(ctx context.Context, host string, port int, excludeID string) (bool, error) {
+	var n int
+	err := a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxies WHERE host=? AND port=? AND id!=?`, host, port, excludeID).Scan(&n)
+	return n > 0, err
 }
 
 func (a *App) platformConnections(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ import { test } from 'vitest'
 import assert from 'node:assert/strict'
 import {
   missingAccountFields,
+  accountDateErrors,
   buildCredential,
   buildOnboardPayload,
   buildReauthorizePayload,
@@ -11,6 +12,7 @@ import {
   firstMissingAnchor,
   fieldAnchors,
   describeTokenExpiry,
+  defaultAccountDates,
 } from '../src/model/account-form.ts'
 
 const complete = {
@@ -98,10 +100,48 @@ test('OAuth cannot overwrite a different account or partially mutate on rejectio
 test('missing fields are reported by label and date order is checked', () => {
   const missing = missingAccountFields({ ...complete, password: '', register_time: '2026-12-31', access_token: '' })
   assert.ok(missing.includes('密码'))
-  assert.ok(missing.includes('注册日期早于套餐开始日期'))
+  assert.ok(missing.includes('注册日期不能晚于套餐开始日期'))
   assert.ok(missing.includes('access_token'))
   assert.throws(() => buildOnboardPayload({ ...complete, password: '' }), /密码不能为空/)
   assert.throws(() => buildOnboardPayload({ ...complete, plan_end_time: '2026-01-01' }), /套餐开始日期不能晚于结束日期/)
+})
+
+test('accountDateErrors reports empty dates, format, and ordering per field', () => {
+  assert.deepEqual(accountDateErrors({ register_time: '', plan_start_time: '', plan_end_time: '' }), {
+    register_time: '请填写注册日期',
+    plan_start_time: '请填写套餐开始日期',
+    plan_end_time: '请填写套餐结束日期',
+  })
+  assert.equal(accountDateErrors({ ...complete, plan_start_time: '' }).plan_start_time, '请填写套餐开始日期')
+  assert.equal(
+    accountDateErrors({ ...complete, plan_start_time: '2026-12-31', plan_end_time: '2026-01-01' }).plan_end_time,
+    '套餐开始日期不能晚于结束日期',
+  )
+  assert.equal(
+    accountDateErrors(
+      { register_time: '', plan_start_time: '2026-12-31', plan_end_time: '2026-01-01' },
+      { requirePresent: false },
+    ).plan_end_time,
+    '套餐开始日期不能晚于结束日期',
+  )
+  assert.deepEqual(accountDateErrors(complete), {})
+  assert.throws(() => buildOnboardPayload({ ...complete, plan_start_time: '' }), /请填写套餐开始日期/)
+})
+
+test('defaultAccountDates helper exists but blank onboard form keeps dates empty', () => {
+  const defaults = defaultAccountDates(new Date(Date.UTC(2026, 10, 18)))
+  assert.equal(defaults.register_time, '2026-11-18')
+  assert.equal(defaults.plan_start_time, '2026-11-18')
+  assert.ok(defaults.plan_end_time)
+  // Wizard blank() must not merge these defaults (plan: no prefill).
+  const empty = { register_time: '', plan_start_time: '', plan_end_time: '' }
+  assert.ok(missingAccountFields({ ...complete, ...empty }).some((m) => m.includes('请填写')))
+  assert.equal(firstMissingAnchor({ ...complete, ...empty }), fieldAnchors.registerTime)
+  assert.equal(firstMissingAnchor({ ...complete, plan_start_time: '', plan_end_time: '' }), fieldAnchors.planStart)
+  assert.equal(
+    firstMissingAnchor({ ...complete, plan_start_time: '2026-12-31', plan_end_time: '2026-01-01' }),
+    fieldAnchors.planEnd,
+  )
 })
 
 test('saved password and credential are kept when editing', () => {
@@ -304,10 +344,10 @@ test('missing credential fields surface as one checklist item and date-order err
     completionChecklist({ id: 'x', credentials_configured: true }).some((i) => i.key === 'credentials'),
     false,
   )
-  // only a date-ordering problem left → point at the plan dates, not the credential grid
+  // only a date-ordering problem left → point at the end date field, not the credential grid
   const misordered = { ...complete, plan_start_time: '2026-12-01', plan_end_time: '2026-11-15' }
-  assert.deepEqual(missingAccountFields(misordered), ['套餐开始日期早于结束日期'])
-  assert.equal(firstMissingAnchor(misordered), fieldAnchors.planStart)
+  assert.deepEqual(missingAccountFields(misordered), ['套餐开始日期不能晚于结束日期'])
+  assert.equal(firstMissingAnchor(misordered), fieldAnchors.planEnd)
 })
 
 test('a hand-written proxy_url is acknowledged in the proxy row', () => {

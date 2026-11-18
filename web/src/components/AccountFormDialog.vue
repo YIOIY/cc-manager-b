@@ -199,7 +199,7 @@
             label="注册日期"
             required
             :error="fieldErrors.register_time"
-            ><el-date-picker v-model="edit.register_time" value-format="YYYY-MM-DD" placeholder="选择实际注册日期"
+            ><el-date-picker v-model="edit.register_time" value-format="YYYY-MM-DD" placeholder="请选择注册日期"
           /></el-form-item>
         </div>
         <el-form-item
@@ -226,7 +226,7 @@
             required
             :class="fieldClass(field.anchor)"
             :error="fieldErrors[field.key]"
-            ><el-date-picker v-model="edit[field.key]" value-format="YYYY-MM-DD" placeholder="按订阅账单填写"
+            ><el-date-picker v-model="edit[field.key]" value-format="YYYY-MM-DD" placeholder="请选择"
           /></el-form-item>
         </div>
         <p class="field-hint wizard-date-hint">请按账单确认本期订阅日期，与授权凭证的有效期无关。</p>

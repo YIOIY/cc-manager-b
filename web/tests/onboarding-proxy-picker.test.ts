@@ -34,6 +34,7 @@ test('parses an authenticated address, creates once and returns a pool id withou
   const w = mount(OnboardingProxyPicker, { props: { modelValue: '', proxies: [] }, global: { stubs } })
   await w.get('input[value="new"]').setValue()
   await w.get('[data-proxy-address]').setValue('http://alice:secret@proxy.example.com:8080')
+  expect(w.get('[data-save-proxy]').text()).toContain('检测并保存')
   await w.get('[data-save-proxy]').trigger('click')
   await flushPromises()
   expect(fetch).toHaveBeenCalledTimes(1)

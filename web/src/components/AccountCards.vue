@@ -35,6 +35,12 @@
           >平台已移除</span
         >
         <span v-if="card.archived" class="mini-badge">已归档</span>
+        <span
+          v-if="card.proxy_host || card.proxy_id"
+          class="mini-badge proxy"
+          :title="card.proxy_host ? '绑定代理 ' + card.proxy_host : '已绑定代理，但代理记录不可用'"
+          >代理 {{ card.proxy_host || '不可用' }}</span
+        >
         <span v-if="card.platform?.remote_created_at" class="account-card-created"
           >创建时间 {{ card.platform.remote_created_at }}</span
         >
@@ -58,7 +64,11 @@
           <small v-if="card.platform.reason_fetched_at">{{ formatDateTime(card.platform.reason_fetched_at) }}</small>
         </div>
         <div v-if="card.needsReauth" class="platform-reauth-hint">
-          <span>Claude 登录失败，可重新授权后同步到平台。</span>
+          <span>{{
+            card.platform?.status === 'sync_failed' || card.platform_status === 'sync_failed'
+              ? '平台同步失败，可重新授权后同步到平台。'
+              : 'Claude 登录失败，可重新授权后同步到平台。'
+          }}</span>
         </div>
         <PlatformUsageBlock
           :usage="card.platform.usage"
@@ -135,7 +145,7 @@
           size="small"
           @click="emit('select', card)"
         >
-          {{ can('accounts.onboard') ? card.delivery.action : '查看详情' }} <ArrowUpRight :size="13" />
+          {{ canOnboard() ? card.delivery.action : '查看详情' }} <ArrowUpRight :size="13" />
         </el-button>
       </div>
     </article>
@@ -187,9 +197,9 @@ const emit = defineEmits<{
   reauthorize: [account: Account]
   assign: [account: Account]
 }>()
-const { can, owns, user } = useSession()
+const { can, canOnboard, owns, user } = useSession()
 const isAdmin = computed(() => !!user.value?.is_admin)
-const canReauth = computed(() => can('accounts.credentials') || can('accounts.onboard'))
+const canReauth = computed(() => can('accounts.credentials') || canOnboard())
 
 // The platform edit needs ownership, the permission, a record the platform
 // still lists, and a console channel that is configured and not suspended.
@@ -432,6 +442,12 @@ const cards = computed<Card[]>(() =>
 .mini-badge.creator {
   background: #1a2a3a;
   color: #8ec8e8;
+  text-transform: none;
+}
+
+.mini-badge.proxy {
+  background: #1b2433;
+  color: #9db4cf;
   text-transform: none;
 }
 

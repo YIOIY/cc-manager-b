@@ -37,7 +37,30 @@
         <div class="breadcrumb">
           工作台<span>/</span><strong>{{ route.meta.title || '工作台' }}</strong>
         </div>
+        <div v-if="announcementText" class="header-announcement" :title="announcementText" role="status">
+          <Megaphone class="header-announcement-icon" :size="14" :stroke-width="2" aria-hidden="true" />
+          <div class="header-announcement-viewport" :class="{ scrolling: announcementNeedsMarquee }">
+            <div
+              class="header-announcement-track"
+              :style="announcementNeedsMarquee ? { animationDuration: marqueeDuration } : undefined"
+            >
+              <span>{{ announcementText }}</span>
+              <span v-if="announcementNeedsMarquee" class="header-announcement-dup" aria-hidden="true">{{
+                announcementText
+              }}</span>
+            </div>
+          </div>
+        </div>
         <div class="header-actions">
+          <button
+            v-if="can('announcement.manage')"
+            type="button"
+            class="header-feedback"
+            title="发布公告"
+            @click="openAnnouncementEdit()"
+          >
+            <Megaphone :size="15" />公告
+          </button>
           <button type="button" class="header-feedback" @click="openFeedback()">
             <MessageSquarePlus :size="15" />反馈
           </button>
@@ -50,19 +73,27 @@
     </main>
     <ChangePasswordDialog v-model="passwordOpen" />
     <FeedbackDialog />
+    <AnnouncementDialog />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { KeyRound, LogOut, MessageSquarePlus } from 'lucide-vue-next'
+import { KeyRound, LogOut, Megaphone, MessageSquarePlus } from 'lucide-vue-next'
 import { useRoute, useRouter, type RouteRecordRaw } from 'vue-router'
 import { routes } from '../router'
 import { useSession } from '../composables/useSession'
 import { rememberedQuery } from '../composables/useListPage'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import FeedbackDialog from '../components/FeedbackDialog.vue'
+import AnnouncementDialog from '../components/AnnouncementDialog.vue'
 import { feedbackOpenCount, openFeedback, refreshFeedbackSummary } from '../composables/useFeedback'
+import {
+  announcementBody,
+  announcementNeedsMarquee,
+  loadAnnouncement,
+  openAnnouncementEdit,
+} from '../composables/useAnnouncement'
 
 const route = useRoute()
 const router = useRouter()
@@ -76,10 +107,16 @@ const navItems = computed(() =>
   ),
 )
 
+const announcementText = computed(() => announcementBody.value.trim())
+const marqueeDuration = computed(() => `${Math.max(14, announcementText.value.length * 0.28)}s`)
+
 // People who handle feedback see how much is waiting; everyone else only
 // has their own, which they sent themselves, so no number is shown.
 const feedbackBadge = computed(() => (can('feedback.manage') ? feedbackOpenCount.value : 0))
-onMounted(refreshFeedbackSummary)
+onMounted(() => {
+  void refreshFeedbackSummary()
+  void loadAnnouncement()
+})
 watch(() => route.name, refreshFeedbackSummary)
 
 function go(item: RouteRecordRaw) {
@@ -246,6 +283,65 @@ async function signOut() {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
+}
+
+.header-announcement {
+  flex: 1;
+  min-width: 0;
+  margin: 0 16px;
+  color: #263b46;
+  font-size: 14px;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-announcement-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.header-announcement-viewport {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.header-announcement-viewport.scrolling {
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 16px), transparent);
+}
+
+.header-announcement-track {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: inherit;
+}
+
+.header-announcement-viewport.scrolling .header-announcement-track {
+  display: inline-block;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: none;
+  animation-name: announcement-marquee;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.header-announcement-dup {
+  padding-left: 48px;
+}
+
+@keyframes announcement-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
 }
 
 .header-feedback {
@@ -394,7 +490,11 @@ async function signOut() {
 
 .breadcrumb {
   font-size: 12px;
+  line-height: 1.5;
   color: #84939b;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
 
 .breadcrumb span {

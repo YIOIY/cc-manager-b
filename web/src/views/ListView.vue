@@ -3,7 +3,7 @@
     <el-button v-if="listKey === 'accounts' && reconcileConnection" @click="reconcileOpen = true"
       ><ListChecks :size="16" />平台对账</el-button
     >
-    <el-button v-if="listKey === 'accounts' && can('accounts.import')" @click="importOpen = true"
+    <el-button v-if="listKey === 'accounts' && canImportAccounts" @click="openImport"
       ><FileJson :size="16" />JSON 导入</el-button
     >
     <el-button v-if="createLabel && canCreate" type="primary" @click="openCreate"
@@ -87,9 +87,12 @@
               effect="plain"
               >{{ row[column.field] ? '已配置' : '未配置' }}</el-tag
             >
-            <span v-else-if="column.field === 'proxy_id'" :class="row.proxy_id ? 'bound-proxy' : 'muted'">{{
-              row.proxy_id ? '已绑定代理' : '未绑定'
-            }}</span>
+            <span
+              v-else-if="column.field === 'proxy_id'"
+              :class="row.proxy_host || row.proxy_id ? 'bound-proxy' : 'muted'"
+              :title="row.proxy_host ? String(row.proxy_host) : row.proxy_id ? '代理记录不可用' : ''"
+              >{{ row.proxy_host || (row.proxy_id ? '代理不可用' : '未绑定') }}</span
+            >
             <span v-else>{{ cellText(row, column) }}</span>
           </template>
         </el-table-column>
@@ -306,15 +309,17 @@ import type {
 
 const route = useRoute()
 const router = useRouter()
-const { can, owns, user } = useSession()
+const { can, canOnboard, onboardAllowed, owns, user, check } = useSession()
 const isAdmin = computed(() => !!user.value?.is_admin)
 const listKey = computed(() => route.meta.list || 'accounts')
 const canCreate = computed(
   () =>
-    (listKey.value === 'accounts' && can('accounts.onboard')) ||
+    (listKey.value === 'accounts' && canOnboard()) ||
     (listKey.value === 'proxies' && can('proxies.create')) ||
     (listKey.value === 'connections' && can('connections.create')),
 )
+const canImportAccounts = computed(() => can('accounts.import') && onboardAllowed())
+const onboardBlockedMessage = '当前账号已被禁止上号，请联系管理员'
 const config = computed(() => listConfigs[listKey.value] || listConfigs.accounts!)
 
 const proxies = ref<ProxyOption[]>([])
@@ -438,7 +443,18 @@ function editPlatform(row: Account) {
   platformProfileOpen.value = true
   actionMessage.value = ''
 }
+async function ensureOnboardAllowed(): Promise<boolean> {
+  try {
+    await check()
+  } catch {
+    /* keep cached session; API still enforces */
+  }
+  if (onboardAllowed()) return true
+  feedback(onboardBlockedMessage, 'error')
+  return false
+}
 function reauthorizeAccount(row: Account) {
+  // Paste-credential reauth stays available; Claude OAuth is blocked inside the panel / API.
   deliveryOpen.value = false
   editingAccount.value = accountsAll.value.find((item) => item.id === row.id) || row
   editingConnectionId.value =
@@ -495,7 +511,8 @@ async function onDeliveryChanged() {
     selectedAccount.value = accountsAll.value.find((row) => row.id === id) || selectedAccount.value
   }
 }
-function completeAccount(row: Account, connectionId?: string) {
+async function completeAccount(row: Account, connectionId?: string) {
+  if (!(await ensureOnboardAllowed())) return
   deliveryOpen.value = false
   editingAccount.value = row
   editingConnectionId.value = connectionId || ''
@@ -616,13 +633,20 @@ async function removeConnection(row: ListRow) {
   }
 }
 
-function openCreate() {
+async function openImport() {
+  if (!(await ensureOnboardAllowed())) return
+  importOpen.value = true
+}
+async function openCreate() {
   if (listKey.value === 'accounts') {
+    if (!(await ensureOnboardAllowed())) return
     editingAccount.value = null
     editingConnectionId.value = ''
     forceReauth.value = false
     accountFormOpen.value = true
-  } else if (listKey.value === 'proxies') {
+    return
+  }
+  if (listKey.value === 'proxies') {
     editingProxy.value = null
     proxyFormOpen.value = true
   } else if (listKey.value === 'connections') {

@@ -105,12 +105,27 @@ func TestAccountsSupportServerSidePagingAndFilters(t *testing.T) {
 			t.Fatalf("%s: %v", stmt.sql, err)
 		}
 	}
+	if _, err := a.DB.Exec(`INSERT INTO proxies(id,name,scheme,host,port,enabled,created_at,updated_at) VALUES('proxy-1','exit','http','203.0.113.10',1080,1,?,?)`, now(), now()); err != nil {
+		t.Fatal(err)
+	}
 	c := newTestClient(t, a)
 	c.login("correct-horse-battery")
 	var legacy struct{ Data []map[string]any }
 	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts", ""), &legacy)
 	if len(legacy.Data) != 23 {
 		t.Fatalf("legacy array length=%d", len(legacy.Data))
+	}
+	foundHost := false
+	for _, row := range legacy.Data {
+		if row["proxy_id"] == "proxy-1" {
+			if row["proxy_host"] != "203.0.113.10" {
+				t.Fatalf("proxy_host=%v for bound account", row["proxy_host"])
+			}
+			foundHost = true
+		}
+	}
+	if !foundHost {
+		t.Fatal("expected a bound account to expose proxy_host")
 	}
 	type paged struct {
 		Data struct {

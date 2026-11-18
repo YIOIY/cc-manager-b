@@ -34,6 +34,9 @@ var migrations = []migration{
 	{13, "feedback", migrateFeedbackV13},
 	{14, "user-nickname-account-creator", migrateUserNicknameAccountCreatorV14},
 	{15, "proxy-creator", migrateProxyCreatorV15},
+	{16, "announcement", migrateAnnouncementV16},
+	{17, "user-can-onboard", migrateUserCanOnboardV17},
+	{18, "proxy-host-port-unique", migrateProxyHostPortUniqueV18},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -403,4 +406,121 @@ func migrateUserNicknameAccountCreatorV14(tx *sql.Tx) error {
 // pool can be private per operator.
 func migrateProxyCreatorV15(tx *sql.Tx) error {
 	return addColumns(tx, "proxies", []string{"created_by_user_id TEXT NOT NULL DEFAULT ''"})
+}
+
+// migrateAnnouncementV16 stores the single site-wide announcement shown in
+// the app header after login. One row (id=default); empty body means hidden.
+func migrateAnnouncementV16(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS app_announcement(
+id TEXT PRIMARY KEY,
+body TEXT NOT NULL DEFAULT '',
+updated_by TEXT NOT NULL DEFAULT '',
+updated_at TEXT NOT NULL DEFAULT ''
+)`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT OR IGNORE INTO app_announcement(id,body,updated_by,updated_at) VALUES('default','','','')`)
+	return err
+}
+
+// migrateUserCanOnboardV17 adds a per-user switch that can block onboarding
+// without removing the accounts.onboard role permission.
+func migrateUserCanOnboardV17(tx *sql.Tx) error {
+	return addColumns(tx, "users", []string{"can_onboard INTEGER NOT NULL DEFAULT 1"})
+}
+
+// migrateProxyHostPortUniqueV18 normalizes proxy hosts and enforces one pool
+// entry per host+port. Unbound duplicates are removed; bound duplicates block
+// the upgrade so operators can resolve them first.
+func migrateProxyHostPortUniqueV18(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id,host FROM proxies`)
+	if err != nil {
+		return err
+	}
+	type hostRow struct{ id, host string }
+	var list []hostRow
+	for rows.Next() {
+		var row hostRow
+		if err = rows.Scan(&row.id, &row.host); err != nil {
+			rows.Close()
+			return err
+		}
+		list = append(list, row)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for _, row := range list {
+		normalized := normalizeProxyHost(row.host)
+		if normalized == row.host {
+			continue
+		}
+		if _, err = tx.Exec(`UPDATE proxies SET host=? WHERE id=?`, normalized, row.id); err != nil {
+			return err
+		}
+	}
+	dupes, err := tx.Query(`SELECT host,port FROM proxies GROUP BY host,port HAVING COUNT(*)>1`)
+	if err != nil {
+		return err
+	}
+	type pair struct {
+		host string
+		port int
+	}
+	var groups []pair
+	for dupes.Next() {
+		var g pair
+		if err = dupes.Scan(&g.host, &g.port); err != nil {
+			dupes.Close()
+			return err
+		}
+		groups = append(groups, g)
+	}
+	dupes.Close()
+	if err = dupes.Err(); err != nil {
+		return err
+	}
+	for _, g := range groups {
+		idRows, err := tx.Query(`SELECT id,COALESCE(created_at,'') FROM proxies WHERE host=? AND port=? ORDER BY created_at ASC,rowid ASC`, g.host, g.port)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for idRows.Next() {
+			var id, created string
+			if err = idRows.Scan(&id, &created); err != nil {
+				idRows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		idRows.Close()
+		if err = idRows.Err(); err != nil {
+			return err
+		}
+		if len(ids) < 2 {
+			continue
+		}
+		for _, id := range ids[1:] {
+			var bound int
+			if err = tx.QueryRow(`SELECT COUNT(*) FROM accounts WHERE proxy_id=?`, id).Scan(&bound); err != nil {
+				return err
+			}
+			if bound > 0 {
+				return fmt.Errorf("duplicate proxy %s:%d still bound on %s; resolve before upgrade", g.host, g.port, id)
+			}
+			if _, err = tx.Exec(`DELETE FROM proxy_check_details WHERE check_id IN (SELECT id FROM proxy_checks WHERE proxy_id=?)`, id); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(`DELETE FROM proxy_checks WHERE proxy_id=?`, id); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(`DELETE FROM proxies WHERE id=?`, id); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_proxies_host_port ON proxies(host, port)`)
+	return err
 }

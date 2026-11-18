@@ -74,10 +74,12 @@ import { copyText } from '../utils/clipboard'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { CheckCircle2, Copy, ExternalLink, KeyRound } from 'lucide-vue-next'
 import { api, ApiError, errorMessage } from '../api'
+import { useSession } from '../composables/useSession'
 import type { OAuthResult, OAuthSummary } from '../model/account-form'
 
 const props = defineProps<{ proxyId?: string; disabled?: boolean; summary?: OAuthSummary | null }>()
 const emit = defineEmits<{ authorized: [result: OAuthResult]; busy: [value: boolean]; started: [] }>()
+const { check, onboardAllowed } = useSession()
 interface Pending {
   id: string
   authorization_url: string
@@ -119,6 +121,15 @@ async function start() {
   error.value = ''
   setBusy(true)
   try {
+    try {
+      await check()
+    } catch {
+      /* API still enforces */
+    }
+    if (!onboardAllowed()) {
+      error.value = '当前账号已被禁止上号，请联系管理员'
+      return
+    }
     const { data } = await api<Pending>('/claude-oauth/sessions', {
       method: 'POST',
       body: JSON.stringify({ proxy_id: props.proxyId || '' }),
