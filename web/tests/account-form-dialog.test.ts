@@ -8,7 +8,19 @@ import type { Account } from '../src/types/api'
 
 const { confirm } = vi.hoisted(() => ({ confirm: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('element-plus', () => ({ ElMessageBox: { confirm } }))
-vi.mock('../src/composables/useSession', () => ({ can: () => true }))
+vi.mock('../src/composables/useSession', () => ({
+  can: () => true,
+  canOnboard: () => true,
+  onboardAllowed: () => true,
+  useSession: () => ({
+    check: async () => {},
+    onboardAllowed: () => true,
+    canOnboard: () => true,
+    can: () => true,
+    owns: () => true,
+    user: { value: { id: 'me', is_admin: true, permissions: [], can_onboard: true } },
+  }),
+}))
 const fetchMock = vi.fn()
 const wrappers: VueWrapper[] = []
 const fixture: OAuthResult = {

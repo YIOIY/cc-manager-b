@@ -3,6 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ClaudeOAuthPanel from '../src/components/ClaudeOAuthPanel.vue'
 import { session } from '../src/api'
 
+vi.mock('../src/composables/useSession', () => ({
+  useSession: () => ({
+    check: async () => {},
+    onboardAllowed: () => true,
+  }),
+}))
+
 const fetchMock = vi.fn()
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 const pending = {
