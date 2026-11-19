@@ -250,12 +250,13 @@ func TestRemoteStatusCountsAndBillRunRespectOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range []struct {
-		id, account, status string
+		id, account, email, status string
 	}{
-		{"ra", accA, "using"},
-		{"rb", accB, "ban"},
+		{"ra", accA, "remote-a@example.test", "using"},
+		{"rb", accB, "remote-b@example.test", "ban"},
 	} {
-		if _, err := a.DB.Exec(`INSERT INTO platform_remote_accounts(connection_id,upstream_id,account_id,ext_status,missing_since,first_seen_at,last_seen_at) VALUES('own-conn',?,?,?,'',?,?)`, row.id, row.account, row.status, stamp, stamp); err != nil {
+		// Linked remotes carry an email; summary.unmatched is "no email", not "unlinked".
+		if _, err := a.DB.Exec(`INSERT INTO platform_remote_accounts(connection_id,upstream_id,account_id,account_email,ext_status,missing_since,first_seen_at,last_seen_at) VALUES('own-conn',?,?,?,?,'',?,?)`, row.id, row.account, row.email, row.status, stamp, stamp); err != nil {
 			t.Fatal(err)
 		}
 	}
