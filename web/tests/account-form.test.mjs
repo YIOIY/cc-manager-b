@@ -103,7 +103,10 @@ test('missing fields are reported by label and date order is checked', () => {
   assert.ok(missing.includes('注册日期不能晚于套餐开始日期'))
   assert.ok(missing.includes('access_token'))
   assert.throws(() => buildOnboardPayload({ ...complete, password: '' }), /密码不能为空/)
-  assert.throws(() => buildOnboardPayload({ ...complete, plan_end_time: '2026-01-01' }), /套餐开始日期不能晚于结束日期/)
+  assert.throws(
+    () => buildOnboardPayload({ ...complete, plan_end_time: '2026-01-01' }),
+    /套餐结束日期须至少晚于开始日期一天/,
+  )
 })
 
 test('accountDateErrors reports empty dates, format, and ordering per field', () => {
@@ -115,14 +118,18 @@ test('accountDateErrors reports empty dates, format, and ordering per field', ()
   assert.equal(accountDateErrors({ ...complete, plan_start_time: '' }).plan_start_time, '请填写套餐开始日期')
   assert.equal(
     accountDateErrors({ ...complete, plan_start_time: '2026-12-31', plan_end_time: '2026-01-01' }).plan_end_time,
-    '套餐开始日期不能晚于结束日期',
+    '套餐结束日期须至少晚于开始日期一天',
+  )
+  assert.equal(
+    accountDateErrors({ ...complete, plan_start_time: '2026-11-19', plan_end_time: '2026-11-19' }).plan_end_time,
+    '套餐结束日期须至少晚于开始日期一天',
   )
   assert.equal(
     accountDateErrors(
       { register_time: '', plan_start_time: '2026-12-31', plan_end_time: '2026-01-01' },
       { requirePresent: false },
     ).plan_end_time,
-    '套餐开始日期不能晚于结束日期',
+    '套餐结束日期须至少晚于开始日期一天',
   )
   assert.deepEqual(accountDateErrors(complete), {})
   assert.throws(() => buildOnboardPayload({ ...complete, plan_start_time: '' }), /请填写套餐开始日期/)
@@ -346,7 +353,7 @@ test('missing credential fields surface as one checklist item and date-order err
   )
   // only a date-ordering problem left → point at the end date field, not the credential grid
   const misordered = { ...complete, plan_start_time: '2026-12-01', plan_end_time: '2026-11-15' }
-  assert.deepEqual(missingAccountFields(misordered), ['套餐开始日期不能晚于结束日期'])
+  assert.deepEqual(missingAccountFields(misordered), ['套餐结束日期须至少晚于开始日期一天'])
   assert.equal(firstMissingAnchor(misordered), fieldAnchors.planEnd)
 })
 
