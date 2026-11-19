@@ -45,7 +45,7 @@ test('platform labels map known values and keep the rest', () => {
   expect(paymentLabel('wechat')).toBe('wechat')
   expect(normalizeAccountTag('慢蒸')).toBe('coding')
   expect(normalizeAccountTag('速刷')).toBe('速刷coding')
-  expect(formatTags(['慢蒸', '速刷'])).toBe('coding、速刷coding')
+  expect(formatTags(['慢蒸', '速刷'])).toBe('慢速 coding、快速 coding')
 })
 
 test('token counts use thousands separators', () => {

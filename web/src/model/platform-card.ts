@@ -75,21 +75,27 @@ export function paymentLabel(value: string | null | undefined): string {
   return payments[value] ?? value
 }
 
-/** Upstream still uses 速刷/慢蒸; local UI shows 速刷coding/coding. */
-const tagAliases: Record<string, string> = {
+/** Upstream: 速刷/慢蒸. Stored locally as 速刷coding/coding. */
+const tagCanonical: Record<string, string> = {
   速刷: '速刷coding',
   慢蒸: 'coding',
   速刷coding: '速刷coding',
   coding: 'coding',
 }
 
+/** Page-only labels; stored values and upstream mapping stay unchanged. */
+const tagLabels: Record<string, string> = {
+  速刷coding: '快速 coding',
+  coding: '慢速 coding',
+}
+
 export function normalizeAccountTag(tag: string): string {
-  return tagAliases[tag] ?? tag
+  return tagCanonical[tag] ?? tag
 }
 
 export function formatTags(tags: string[] | null | undefined): string {
   if (!tags?.length) return ''
-  return [...new Set(tags.map(normalizeAccountTag).filter(Boolean))].join('、')
+  return [...new Set(tags.map(normalizeAccountTag).filter(Boolean))].map((tag) => tagLabels[tag] ?? tag).join('、')
 }
 
 export function formatTokens(n: number | null | undefined): string {

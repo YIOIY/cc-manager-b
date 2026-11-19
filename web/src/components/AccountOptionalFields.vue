@@ -10,10 +10,15 @@
           ><el-input-number v-model="edit.balance" :min="0" :max="100" placeholder="0–100"
         /></el-form-item>
         <el-form-item label="标签">
-          <el-select v-model="edit.tags" multiple :multiple-limit="1" clearable placeholder="速刷coding或coding">
-            <el-option label="速刷coding" value="速刷coding" /><el-option label="coding" value="coding" />
+          <el-select
+            v-model="edit.tags"
+            multiple
+            :multiple-limit="1"
+            clearable
+            placeholder="快速 coding 或 慢速 coding"
+          >
+            <el-option label="快速 coding" value="速刷coding" /><el-option label="慢速 coding" value="coding" />
           </el-select>
-          <div class="field-hint">二者互斥；界面显示新名称，上号时仍按上游「速刷 / 慢蒸」提交。上号后不支持修改。</div>
         </el-form-item>
         <el-form-item label="支付方式">
           <el-select v-model="edit.payment_method" clearable placeholder="选填">
