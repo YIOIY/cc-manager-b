@@ -105,7 +105,7 @@ func init() {
 		Def{Code: "REGISTER_TIME_INVALID", Category: CategoryValidation, Action: ActionFixInput, Message: "注册日期格式不正确", Doc: "预检"},
 		Def{Code: "PLAN_START_TIME_INVALID", Category: CategoryValidation, Action: ActionFixInput, Message: "套餐开始日期格式不正确", Doc: "预检"},
 		Def{Code: "PLAN_END_TIME_INVALID", Category: CategoryValidation, Action: ActionFixInput, Message: "套餐结束日期格式不正确", Doc: "预检"},
-		Def{Code: "PLAN_DATE_RANGE_INVALID", Category: CategoryValidation, Action: ActionFixInput, Message: "套餐开始日期不能晚于结束日期", Doc: "预检"},
+		Def{Code: "PLAN_DATE_RANGE_INVALID", Category: CategoryValidation, Action: ActionFixInput, Message: "套餐结束日期须至少晚于开始日期一天", Doc: "预检"},
 		Def{Code: "REGISTER_DATE_RANGE_INVALID", Category: CategoryValidation, Action: ActionFixInput, Message: "注册日期不能晚于套餐开始日期", Doc: "预检"},
 		Def{Code: "PROXY_REQUIRED", Category: CategoryValidation, Action: ActionFixInput, Message: "缺少可用代理", Doc: "预检"},
 		Def{Code: "DELIVERY_STATE_UNAVAILABLE", Category: CategoryValidation, Action: ActionFixInput, Message: "无法读取交付状态", Doc: "预检"},

@@ -77,7 +77,7 @@
 | `PASSWORD_UNREADABLE` | config | — | 否 | fix_input | 已保存的密码无法读取 | 阶段 2 并入 SECRET_UNREADABLE |
 | `PAYLOAD_TOO_LARGE` | validation | 413 | 否 | fix_input | 提交的内容超过大小限制 | 请求体超过上限 |
 | `PERMISSION_DENIED` | permission | 403 | 否 | contact_admin | 当前账号没有执行此操作的权限 | details.permission 为所需权限；阶段 1 保留自定义文案；允许调用方自定义文案 |
-| `PLAN_DATE_RANGE_INVALID` | validation | — | 否 | fix_input | 套餐开始日期不能晚于结束日期 | 预检 |
+| `PLAN_DATE_RANGE_INVALID` | validation | — | 否 | fix_input | 套餐结束日期须至少晚于开始日期一天 | 预检 |
 | `PLAN_END_TIME_INVALID` | validation | — | 否 | fix_input | 套餐结束日期格式不正确 | 预检 |
 | `PLAN_INVALID` | validation | 422 | 否 | fix_input | 套餐不在允许范围内 | 导入预览行问题 |
 | `PLAN_REQUIRED` | validation | — | 否 | fix_input | 缺少有效套餐 | 预检 |

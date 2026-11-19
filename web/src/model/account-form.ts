@@ -176,8 +176,8 @@ export function accountDateErrors(
   if (values.register_time && values.plan_start_time && values.register_time > values.plan_start_time) {
     errors.register_time = '注册日期不能晚于套餐开始日期'
   }
-  if (values.plan_start_time && values.plan_end_time && values.plan_start_time > values.plan_end_time) {
-    errors.plan_end_time = '套餐开始日期不能晚于结束日期'
+  if (values.plan_start_time && values.plan_end_time && values.plan_start_time >= values.plan_end_time) {
+    errors.plan_end_time = '套餐结束日期须至少晚于开始日期一天'
   }
   return errors
 }

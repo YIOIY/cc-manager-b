@@ -604,7 +604,7 @@ func (a *App) preflight(accountID, connectionID string) map[string]any {
 				add(item.name, "error", item.field)
 			}
 		}
-		if validDate(start) && validDate(end) && start > end {
+		if validDate(start) && validDate(end) && start >= end {
 			add("PLAN_DATE_RANGE_INVALID", "error", "plan_end_time")
 		}
 		if validDate(registered) && validDate(start) && registered > start {

@@ -232,7 +232,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   PASSWORD_UNREADABLE: '已保存的密码无法读取',
   PAYLOAD_TOO_LARGE: '提交的内容超过大小限制',
   PERMISSION_DENIED: '当前账号没有执行此操作的权限',
-  PLAN_DATE_RANGE_INVALID: '套餐开始日期不能晚于结束日期',
+  PLAN_DATE_RANGE_INVALID: '套餐结束日期须至少晚于开始日期一天',
   PLAN_END_TIME_INVALID: '套餐结束日期格式不正确',
   PLAN_INVALID: '套餐不在允许范围内',
   PLAN_REQUIRED: '缺少有效套餐',

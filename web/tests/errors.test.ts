@@ -29,7 +29,7 @@ test('describeError and applyFieldErrors map an envelope onto a form', () => {
       action: 'fix_input',
       fields: [
         { field: 'auth_json.refresh_token', code: 'REQUIRED', message: '缺少刷新令牌' },
-        { field: 'plan_end_time', code: 'OUT_OF_RANGE', message: '套餐结束日期不能早于开始日期' },
+        { field: 'plan_end_time', code: 'OUT_OF_RANGE', message: '套餐结束日期须至少晚于开始日期一天' },
       ],
       requestId: 'r2',
     }),
@@ -41,7 +41,7 @@ test('describeError and applyFieldErrors map an envelope onto a form', () => {
   expect(view.code).toBe('VALIDATION_FAILED')
   expect(applyFieldErrors(view.fields, { 'auth_json.refresh_token': 'refresh_token' })).toEqual({
     refresh_token: '缺少刷新令牌',
-    plan_end_time: '套餐结束日期不能早于开始日期',
+    plan_end_time: '套餐结束日期须至少晚于开始日期一天',
   })
   expect(describeError(new Error('boom')).title).toBe('boom')
   expect(describeError('x', '操作失败').title).toBe('操作失败')

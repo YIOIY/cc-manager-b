@@ -54,7 +54,7 @@ func TestErrorBuilders(t *testing.T) {
 	}
 	var f Fields
 	f.Required("password")
-	f.Invalid("plan_end_time", "套餐结束日期不能早于开始日期")
+	f.Invalid("plan_end_time", "套餐结束日期须至少晚于开始日期一天")
 	v := f.Err()
 	if v == nil || v.Code() != "VALIDATION_FAILED" || len(v.Fields()) != 2 || v.Message() != "有 2 项资料不符合要求" {
 		t.Fatal(v)

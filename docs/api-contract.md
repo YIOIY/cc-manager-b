@@ -43,7 +43,7 @@
     "action": "fix_input",
     "fields": [
       { "field": "auth_json.refresh_token", "code": "REQUIRED", "message": "缺少刷新令牌" },
-      { "field": "plan_end_time", "code": "OUT_OF_RANGE", "message": "套餐结束日期不能早于开始日期" }
+      { "field": "plan_end_time", "code": "OUT_OF_RANGE", "message": "套餐结束日期须至少晚于开始日期一天" }
     ],
     "details": { "resource": "account" }
   },

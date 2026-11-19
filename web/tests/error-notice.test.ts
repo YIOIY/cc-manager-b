@@ -32,7 +32,7 @@ test('validation errors use the amber tone and list fields only when asked', () 
     category: 'validation',
     fields: [
       { field: 'password', code: 'REQUIRED', message: '缺少密码' },
-      { field: 'plan_end_time', code: 'OUT_OF_RANGE', message: '套餐结束日期不能早于开始日期' },
+      { field: 'plan_end_time', code: 'OUT_OF_RANGE', message: '套餐结束日期须至少晚于开始日期一天' },
     ],
   })
   const compact = mount(ErrorNotice, { props: { error: v, compact: true } })

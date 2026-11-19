@@ -329,8 +329,8 @@ func accountDateFields(registered, start, end string, required bool) []errs.Fiel
 	if valid["register_time"] && valid["plan_start_time"] && registered > start {
 		f.Add("register_time", errs.FieldOutOfRange, "注册日期不能晚于套餐开始日期")
 	}
-	if valid["plan_start_time"] && valid["plan_end_time"] && start > end {
-		f.Add("plan_end_time", errs.FieldOutOfRange, "套餐结束日期不能早于开始日期")
+	if valid["plan_start_time"] && valid["plan_end_time"] && start >= end {
+		f.Add("plan_end_time", errs.FieldOutOfRange, "套餐结束日期须至少晚于开始日期一天")
 	}
 	return f.Items()
 }
@@ -374,7 +374,7 @@ func validAccountDates(registered, start, end string, required bool) error {
 			return fmt.Errorf("%s 必须为 YYYY-MM-DD", item.key)
 		}
 	}
-	if (registered != "" && start != "" && registered > start) || (start != "" && end != "" && start > end) {
+	if (registered != "" && start != "" && registered > start) || (start != "" && end != "" && start >= end) {
 		return fmt.Errorf("账号日期顺序不正确")
 	}
 	return nil

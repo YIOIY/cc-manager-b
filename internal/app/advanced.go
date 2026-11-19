@@ -104,7 +104,7 @@ func (a *App) importPreview(w http.ResponseWriter, r *http.Request) {
 				add(strings.ToUpper(key)+"_INVALID", key)
 			}
 		}
-		if start, end := str(m, "plan_start_time"), str(m, "plan_end_time"); start != "" && end != "" && validDate(start) && validDate(end) && start > end {
+		if start, end := str(m, "plan_start_time"), str(m, "plan_end_time"); start != "" && end != "" && validDate(start) && validDate(end) && start >= end {
 			add("PLAN_DATE_RANGE_INVALID", "plan_end_time")
 		}
 		if registered, start := str(m, "register_time"), str(m, "plan_start_time"); registered != "" && start != "" && validDate(registered) && validDate(start) && registered > start {
