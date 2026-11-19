@@ -184,7 +184,7 @@ test('returning from review preserves input and an invalid date prevents review'
   await w.get('#field-plan-end input').setValue('2025-12-01')
   await next(w)
   expect(w.find('[data-review]').exists()).toBe(false)
-  expect(w.text()).toContain('套餐开始日期')
+  expect(w.text()).toContain('套餐结束日期须至少晚于开始日期一天')
   expect(fetchMock).not.toHaveBeenCalled()
 })
 test('changing proxy requires reauthorization while preserving business inputs', async () => {
