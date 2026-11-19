@@ -149,6 +149,9 @@ func (a *App) attachPlatformBlocks(ctx context.Context, out []any) error {
 var remoteProfileFields = []struct{ key, local string }{{"plan", "plan"}, {"plan_start_time", "plan_start_time"}, {"plan_end_time", "plan_end_time"}, {"register_time", "register_time"}, {"register_location", "register_location"}}
 
 // remoteAccounts answers GET /api/v1/platform-connections/{id}/remote-accounts.
+// Admins see the full remote inventory for the connection; everyone else only
+// sees remotes linked to accounts they own (unmatched / unowned auto-imports
+// stay admin-only, matching account list ownership).
 func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	connectionID := r.PathValue("id")
@@ -168,7 +171,9 @@ func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 	if !paged {
 		page, size = 1, 100
 	}
+	scope := ownershipFrom(r)
 	q := r.URL.Query()
+	from := ` FROM platform_remote_accounts r LEFT JOIN accounts a ON a.id=r.account_id`
 	where := ` WHERE r.connection_id=?`
 	web, err := a.webChannelState(ctx, connectionID)
 	if err != nil {
@@ -176,6 +181,10 @@ func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args := []any{connectionID}
+	if frag, ownerArgs := scope.sqlAnd("a.created_by_user_id"); frag != "" {
+		where += frag
+		args = append(args, ownerArgs...)
+	}
 	if status := strings.TrimSpace(q.Get("status")); status != "" {
 		where += ` AND r.ext_status=?`
 		args = append(args, status)
@@ -185,11 +194,11 @@ func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 		args = append(args, kw, kw, kw, kw)
 	}
 	var total int
-	if err := a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM platform_remote_accounts r`+where, args...).Scan(&total); err != nil {
+	if err := a.DB.QueryRowContext(ctx, `SELECT COUNT(*)`+from+where, args...).Scan(&total); err != nil {
 		writeError(w, r, storageError(err, "平台账号读取失败"))
 		return
 	}
-	rows, err := a.DB.QueryContext(ctx, `SELECT `+remoteColumns+`,COALESCE(a.plan,''),COALESCE(a.plan_start_time,''),COALESCE(a.plan_end_time,''),COALESCE(a.register_time,''),COALESCE(a.register_location,''),COALESCE(a.account,'') FROM platform_remote_accounts r LEFT JOIN accounts a ON a.id=r.account_id`+where+` ORDER BY r.remote_created_at DESC,r.upstream_id DESC LIMIT ? OFFSET ?`, append(append([]any{}, args...), size, (page-1)*size)...)
+	rows, err := a.DB.QueryContext(ctx, `SELECT `+remoteColumns+`,COALESCE(a.plan,''),COALESCE(a.plan_start_time,''),COALESCE(a.plan_end_time,''),COALESCE(a.register_time,''),COALESCE(a.register_location,''),COALESCE(a.account,'')`+from+where+` ORDER BY r.remote_created_at DESC,r.upstream_id DESC LIMIT ? OFFSET ?`, append(append([]any{}, args...), size, (page-1)*size)...)
 	if err != nil {
 		writeError(w, r, storageError(err, "平台账号读取失败"))
 		return
@@ -232,12 +241,19 @@ func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summary := map[string]int{}
-	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*),SUM(account_id<>''),SUM(auto_created),SUM(account_email=''),SUM(superseded_by<>''),SUM(missing_since<>'') FROM platform_remote_accounts WHERE connection_id=?`, connectionID).Scan(sqlInt(summary, "total"), sqlInt(summary, "linked"), sqlInt(summary, "auto_created"), sqlInt(summary, "unmatched"), sqlInt(summary, "superseded"), sqlInt(summary, "missing")); err != nil {
+	summaryFrom := ` FROM platform_remote_accounts r`
+	summaryWhere := ` WHERE r.connection_id=?`
+	summaryArgs := []any{connectionID}
+	if !scope.Admin {
+		summaryFrom += ` JOIN accounts a ON a.id=r.account_id`
+		summaryWhere += ` AND a.created_by_user_id=?`
+		summaryArgs = append(summaryArgs, scope.UserID)
+	}
+	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*),SUM(r.account_id<>''),SUM(r.auto_created),SUM(r.account_email=''),SUM(r.superseded_by<>''),SUM(r.missing_since<>'')`+summaryFrom+summaryWhere, summaryArgs...).Scan(sqlInt(summary, "total"), sqlInt(summary, "linked"), sqlInt(summary, "auto_created"), sqlInt(summary, "unmatched"), sqlInt(summary, "superseded"), sqlInt(summary, "missing")); err != nil {
 		writeError(w, r, storageError(err, "平台账号读取失败"))
 		return
 	}
-	// Connection drawer inventory stays unscoped (remoteAccounts).
-	counts, err := a.remoteStatusCounts(ctx, connectionID, ownershipScope{Admin: true})
+	counts, err := a.remoteStatusCounts(ctx, connectionID, scope)
 	if err != nil {
 		writeError(w, r, storageError(err, "平台账号读取失败"))
 		return

@@ -280,6 +280,38 @@ func TestRemoteStatusCountsAndBillRunRespectOwnership(t *testing.T) {
 		t.Fatalf("admin remote counts=%v", adminCounts)
 	}
 
+	// Remote-accounts drawer is ownership-scoped: operators only see remotes
+	// linked to their own accounts; unmatched rows stay admin-only.
+	if _, err := a.DB.Exec(`INSERT INTO platform_remote_accounts(connection_id,upstream_id,account_id,account_email,ext_status,missing_since,first_seen_at,last_seen_at) VALUES('own-conn','ru','','','using','',?,?)`, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	var remoteOut struct {
+		Data struct {
+			List []struct {
+				UpstreamID string `json:"upstream_id"`
+				AccountID  string `json:"account_id"`
+			} `json:"list"`
+			Summary       map[string]int `json:"summary"`
+			CountsByState map[string]int `json:"counts_by_status"`
+			Total         int            `json:"total"`
+		} `json:"data"`
+	}
+	_ = jsonDecode(opsA.do(http.MethodGet, "/api/v1/platform-connections/own-conn/remote-accounts?page=1&page_size=20", ""), &remoteOut)
+	if remoteOut.Data.Total != 1 || len(remoteOut.Data.List) != 1 || remoteOut.Data.List[0].UpstreamID != "ra" || remoteOut.Data.List[0].AccountID != accA {
+		t.Fatalf("opsA remote-accounts=%+v", remoteOut.Data)
+	}
+	if remoteOut.Data.Summary["total"] != 1 || remoteOut.Data.Summary["linked"] != 1 || remoteOut.Data.CountsByState["using"] != 1 || remoteOut.Data.CountsByState["ban"] != 0 {
+		t.Fatalf("opsA remote summary=%v counts=%v", remoteOut.Data.Summary, remoteOut.Data.CountsByState)
+	}
+	_ = jsonDecode(opsB.do(http.MethodGet, "/api/v1/platform-connections/own-conn/remote-accounts?page=1&page_size=20", ""), &remoteOut)
+	if remoteOut.Data.Total != 1 || len(remoteOut.Data.List) != 1 || remoteOut.Data.List[0].UpstreamID != "rb" {
+		t.Fatalf("opsB remote-accounts=%+v", remoteOut.Data)
+	}
+	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/platform-connections/own-conn/remote-accounts?page=1&page_size=20", ""), &remoteOut)
+	if remoteOut.Data.Total != 3 || remoteOut.Data.Summary["unmatched"] != 1 {
+		t.Fatalf("admin remote-accounts total=%d summary=%v", remoteOut.Data.Total, remoteOut.Data.Summary)
+	}
+
 	payload := `{"connection_id":"own-conn","scope":"selected","from":"2026-11-01","to":"2026-11-01","timezone":"UTC","account_ids":["` + accA + `","` + accB + `"]}`
 	if _, err := a.DB.Exec(`INSERT INTO sync_runs(id,connection_id,kind,state,started_at,finished_at,request_json,total_items,created_at,updated_at) VALUES('bill-own','own-conn','bill','partial','`+stamp+`','`+stamp+`',?,2,?,?)`, payload, stamp, stamp); err != nil {
 		t.Fatal(err)
