@@ -457,8 +457,6 @@ test('saved credential errors return to reauthorization while retaining business
   authorization = { ...fixture, auth_json: { ...fixture.auth_json, email: 'old@example.com' } }
   await w.get('.fake-oauth').trigger('click')
   await next(w)
-  await w.get('#field-device-ids input, #field-device-ids textarea').setValue('dev-1')
-  await next(w)
   expect(w.get('[data-review]').text()).toContain('2026-01-01')
 })
 
@@ -538,7 +536,7 @@ test('reauthorizing a saved account uses fresh tokens without asking for saved d
   await w.get('.fake-oauth').trigger('click')
   await next(w)
   expect(w.get('[data-review]').isVisible()).toBe(true)
-  expect(w.text()).toContain('沿用已保存设备标识')
+  expect(w.text()).toMatch(/沿用已保存或自动生成/)
   fetchMock.mockResolvedValueOnce(response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1' }))
   await w.get('[data-submit]').trigger('click')
   await flushPromises()
@@ -618,11 +616,7 @@ test('reauth 502 keeps the same token for retry; startReauthorize requires a new
   }
   await authorize(w)
   await next(w)
-  expect(w.find('[data-reauth-devices]').exists()).toBe(true)
-  await w
-    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
-    .setValue('dev-keep')
-  await next(w)
+  expect(w.find('[data-review]').exists()).toBe(true)
   fetchMock.mockResolvedValueOnce(
     new Response(
       JSON.stringify({
@@ -656,10 +650,6 @@ test('reauth 502 keeps the same token for retry; startReauthorize requires a new
   }
   await authorize(w)
   await next(w)
-  await w
-    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
-    .setValue('dev-keep')
-  await next(w)
   fetchMock.mockResolvedValueOnce(
     new Response(
       JSON.stringify({
@@ -680,13 +670,6 @@ test('reauth 502 keeps the same token for retry; startReauthorize requires a new
   await authorize(w)
   await next(w)
   expect(w.find('[data-review]').exists()).toBe(true)
-  await w.get('[data-back]').trigger('click')
-  await flushPromises()
-  expect((w.get('[data-reauth-devices] #field-device-ids input').element as HTMLInputElement).value).toBe('dev-keep')
-  await w
-    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
-    .setValue('dev-new')
-  await next(w)
   fetchMock.mockResolvedValueOnce(
     response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'replaced' } }),
   )
@@ -695,25 +678,32 @@ test('reauth 502 keeps the same token for retry; startReauthorize requires a new
   expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body).auth_json.access_token).toBe('token-c')
 })
 
-test('linked reauth OAuth without device ids can fill them on the dedicated step', async () => {
+test('linked reauth OAuth without device ids mints a UUID and skips the device step', async () => {
   const w = setupReauth(linkedAccount({ credentials_configured: false }))
   authorization = { ...fixture, auth_json: { ...fixture.auth_json, email: 'old@example.com' } }
   await authorize(w)
   await next(w)
-  expect(w.find('[data-reauth-devices]').exists()).toBe(true)
-  expect(w.find('#field-password').exists()).toBe(false)
-  expect(w.find('#field-plan').exists()).toBe(false)
-  await w
-    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
-    .setValue('device-from-step')
-  await next(w)
   expect(w.find('[data-review]').exists()).toBe(true)
+  expect(w.text()).toContain('已填写')
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        error: { code: 'PLATFORM_UNAVAILABLE', message: '平台暂时无法访问', retryable: true, action: 'retry' },
+      }),
+      { status: 502 },
+    ),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  const first = JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json.claude_device_ids
+  expect(first).toHaveLength(1)
+  expect(first[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
   fetchMock.mockResolvedValueOnce(
     response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'replaced' } }),
   )
   await w.get('[data-submit]').trigger('click')
   await flushPromises()
-  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json.claude_device_ids).toEqual(['device-from-step'])
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body).auth_json.claude_device_ids).toEqual(first)
 })
 
 test('changing proxy while keeping saved reauth credentials does not clear the saved marker', async () => {

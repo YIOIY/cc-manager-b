@@ -517,8 +517,6 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         fieldErrors.value[key] = `请填写${label}`
     }
     Object.assign(fieldErrors.value, dateErrors)
-    if (!parseDeviceIds(edit.value.claude_device_ids_text).length && !keepsSavedCredential(edit.value))
-      fieldErrors.value.claude_device_ids_text = '请填写设备资料'
     if (gapCount.value || Object.keys(dateErrors).length) {
       const firstDate = (['register_time', 'plan_start_time', 'plan_end_time'] as const).find((key) => dateErrors[key])
       notice.value = new Error(

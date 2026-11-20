@@ -115,7 +115,7 @@
               placeholder="填写设备 ID，多个 ID 用逗号或换行分隔"
             />
             <div class="field-hint">
-              库内缺少或无效时在此补填，无需重新授权。已有有效设备可留空沿用。
+              选填。有真实设备标识时填写；留空则沿用库内标识，库内也没有时提交会自动生成 UUID。
               <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
                 >如何获取？</a
               >
@@ -206,7 +206,7 @@
               {{
                 canReuseCredentialFields
                   ? '已保存的设备和代理资料会自动沿用，需要更换时可在此填写。'
-                  : '授权不返回设备标识，请补充设备资料后再同步到平台。'
+                  : '授权不返回设备标识；可在此选填，未填时提交会自动生成 UUID。'
               }}
             </p>
           </div>
@@ -214,7 +214,6 @@
         <el-form-item
           :id="fieldAnchors.deviceIds"
           label="设备资料"
-          :required="!canReuseCredentialFields || !!fieldErrors.claude_device_ids_text"
           :class="fieldClass(fieldAnchors.deviceIds)"
           :error="fieldErrors.claude_device_ids_text"
           ><el-input
@@ -226,8 +225,8 @@
           <div class="field-hint">
             {{
               canReuseCredentialFields
-                ? '留空沿用已保存设备标识；没有可用标识时会提示补填。'
-                : '必填。从已有有效凭证获取真实设备 ID。'
+                ? '选填。留空沿用已保存设备标识；库内也没有时提交会自动生成 UUID。'
+                : '选填。有真实设备标识时填写；未填时提交会自动生成 UUID。'
             }}
             <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
               >如何获取？</a
@@ -365,7 +364,6 @@
           v-if="!savedCredentials"
           :id="fieldAnchors.deviceIds"
           label="设备资料"
-          required
           :class="fieldClass(fieldAnchors.deviceIds)"
           :error="fieldErrors.claude_device_ids_text"
           ><el-input
@@ -375,7 +373,7 @@
             placeholder="填写设备 ID，多个 ID 用逗号或换行分隔"
           />
           <div class="field-hint">
-            必填。从已有有效凭证获取真实设备 ID，授权不返回此项。
+            选填。有真实设备标识时填写；未填时提交会自动生成 UUID。
             <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
               >如何获取？</a
             >
@@ -483,15 +481,13 @@
           <dt>设备资料</dt>
           <dd>
             {{
-              savedCredentials
-                ? edit.claude_device_ids_text?.trim()
+              edit.claude_device_ids_text?.trim()
+                ? savedCredentials
                   ? '本次补填'
-                  : '沿用已保存设备标识'
-                : edit.claude_device_ids_text?.trim()
-                  ? '已填写'
-                  : canReuseCredentialFields
-                    ? '沿用已保存设备标识'
-                    : '未填写'
+                  : '已填写'
+                : savedCredentials || canReuseCredentialFields
+                  ? '沿用已保存或自动生成'
+                  : '未填写，提交时自动生成'
             }}
           </dd>
         </dl>

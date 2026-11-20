@@ -64,7 +64,7 @@ export const credentialInputs: CredentialInput[] = [
     placeholder: '填写设备 ID，多个 ID 用逗号或换行分隔',
     textarea: true,
     wide: true,
-    required: true,
-    hint: '必填。真实设备标识 OAuth 不返回；请从已有有效凭证中获取，不要随机生成。',
+    required: false,
+    hint: '选填。有真实设备标识时填写；未填时提交会自动生成 UUID。',
   },
 ]

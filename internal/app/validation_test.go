@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -50,12 +51,19 @@ func TestClaudeAuthValidation(t *testing.T) {
 		t.Fatalf("valid auth rejected: %v", problems)
 	}
 	auth["claude_device_ids"] = []any{}
-	if problems := validateAuth(auth); len(problems) == 0 {
-		t.Fatal("empty device ids should be required")
+	if problems := validateAuth(auth); len(problems) != 0 {
+		t.Fatalf("empty device ids should be auto-filled: %v", problems)
+	}
+	ids, _ := auth["claude_device_ids"].([]any)
+	if len(ids) != 1 || strings.TrimSpace(fmt.Sprint(ids[0])) == "" || ids[0] == "device" {
+		t.Fatalf("expected generated device id, got %v", auth["claude_device_ids"])
 	}
 	delete(auth, "claude_device_ids")
-	if problems := validateAuth(auth); len(problems) == 0 {
-		t.Fatal("missing device ids should be required")
+	if problems := validateAuth(auth); len(problems) != 0 {
+		t.Fatalf("missing device ids should be auto-filled: %v", problems)
+	}
+	if ids, _ = auth["claude_device_ids"].([]any); len(ids) != 1 {
+		t.Fatalf("expected generated device id after delete, got %v", auth["claude_device_ids"])
 	}
 	auth["claude_device_ids"] = []any{"device"}
 	auth["proxy_url"] = "ftp://1.2.3.4"

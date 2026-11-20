@@ -220,7 +220,7 @@ test('已有账号重新授权沿用保存资料，设备缺失时有可见补�
   await dialog.getByRole('button', { name: '确认授权结果' }).click()
   await dialog.locator('[data-next]').click()
   await expect(dialog.locator('[data-review]')).toBeVisible()
-  await expect(dialog.locator('[data-review]')).toContainText('沿用已保存设备标识')
+  await expect(dialog.locator('[data-review]')).toContainText('沿用已保存或自动生成')
   await dialog.locator('[data-submit]').click()
   const deviceInput = dialog.locator('[data-reauth-devices] textarea').first()
   await expect(deviceInput).toBeVisible()

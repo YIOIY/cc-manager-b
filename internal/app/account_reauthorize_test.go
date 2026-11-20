@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -248,17 +249,9 @@ func TestReauthorizeOmitAuthOverlaysDeviceIDs(t *testing.T) {
 	delete(saved, "claude_device_ids")
 	sealAccountAuth(t, a, id, saved)
 
-	assertEnvelope(t, postReauth(t, admin, id, map[string]any{"proxy_id": "pool"}), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
-	if len(stub.updates) != 0 {
-		t.Fatalf("unexpected push without devices: %d", len(stub.updates))
-	}
-
-	res := postReauth(t, admin, id, map[string]any{
-		"proxy_id":          "pool",
-		"claude_device_ids": []any{"overlay-device"},
-	})
+	res := postReauth(t, admin, id, map[string]any{"proxy_id": "pool"})
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("overlay status=%d body=%s", res.StatusCode, readBody(res))
+		t.Fatalf("auto device status=%d body=%s", res.StatusCode, readBody(res))
 	}
 	authJSON, _ := stub.updates[0]["cpa_auth_json"].(string)
 	var pushed map[string]any
@@ -269,8 +262,28 @@ func TestReauthorizeOmitAuthOverlaysDeviceIDs(t *testing.T) {
 		t.Fatalf("access_token=%v", pushed["access_token"])
 	}
 	ids, _ := pushed["claude_device_ids"].([]any)
+	if len(ids) != 1 || strings.TrimSpace(fmt.Sprint(ids[0])) == "" {
+		t.Fatalf("expected auto-generated device id, got %v", pushed["claude_device_ids"])
+	}
+	generated := ids[0]
+
+	res = postReauth(t, admin, id, map[string]any{
+		"proxy_id":          "pool",
+		"claude_device_ids": []any{"overlay-device"},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("overlay status=%d body=%s", res.StatusCode, readBody(res))
+	}
+	authJSON, _ = stub.updates[1]["cpa_auth_json"].(string)
+	if err := json.Unmarshal([]byte(authJSON), &pushed); err != nil {
+		t.Fatal(err)
+	}
+	ids, _ = pushed["claude_device_ids"].([]any)
 	if len(ids) != 1 || ids[0] != "overlay-device" {
 		t.Fatalf("claude_device_ids=%v", pushed["claude_device_ids"])
+	}
+	if ids[0] == generated {
+		t.Fatal("overlay should replace the generated device id")
 	}
 	loaded, err := a.loadCredential(id)
 	if err != nil {
@@ -431,7 +444,26 @@ func TestReauthorizeNeverInheritsTokensOrUnconfirmedIdentity(t *testing.T) {
 				delete(fresh, scenario)
 			}
 			sealAccountAuth(t, a, id, saved)
-			assertEnvelope(t, postReauth(t, admin, id, map[string]any{"auth_json": fresh}), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
+			res := postReauth(t, admin, id, map[string]any{"auth_json": fresh})
+			// Missing devices alone are auto-filled; identity mismatch only blocks inheritance.
+			if scenario == "different-account" || scenario == "foreign-saved-email" {
+				if res.StatusCode != http.StatusOK {
+					t.Fatalf("status=%d body=%s", res.StatusCode, readBody(res))
+				}
+				var pushed map[string]any
+				if err := json.Unmarshal([]byte(stub.updates[0]["cpa_auth_json"].(string)), &pushed); err != nil {
+					t.Fatal(err)
+				}
+				if pushed["proxy_url"] != "http://fresh.example:8080" {
+					t.Fatalf("saved proxy was inherited under unconfirmed identity: %v", pushed["proxy_url"])
+				}
+				ids, _ := pushed["claude_device_ids"].([]any)
+				if len(ids) != 1 || ids[0] == "device-id" {
+					t.Fatalf("expected generated device id without inheriting saved devices, got %v", ids)
+				}
+				return
+			}
+			assertEnvelope(t, res, http.StatusUnprocessableEntity, "VALIDATION_FAILED")
 			if len(stub.updates) != 0 {
 				t.Fatal("incomplete or mismatched credentials reached platform")
 			}

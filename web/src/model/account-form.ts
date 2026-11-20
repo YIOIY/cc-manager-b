@@ -2,6 +2,8 @@
 // path, so both agree on what "complete" means. No Vue imports here so the
 // file can be unit-tested with node --test.
 
+import { randomId } from '../utils/id'
+
 export interface CredentialPayload {
   id_token: string
   access_token: string
@@ -199,7 +201,6 @@ export function missingAccountFields(edit: AccountForm): string[] {
   }
   if (!keepsSavedCredential(edit)) {
     for (const [key] of credentialFields) if (credentialMissing(edit, key)) missing.push(credentialLabels[key]!)
-    if (!parseDeviceIds(edit.claude_device_ids_text).length) missing.push(credentialLabels.claude_device_ids_text!)
   }
   return missing
 }
@@ -236,8 +237,15 @@ export function buildCredential(
   const proxy = edit.proxy_id ? '' : String(edit.credential_proxy_url ?? '').trim()
   if (!edit.proxy_id && (proxy || !options.reuseSavedFields) && !PROXY_URL_PATTERN.test(proxy))
     throw new Error('proxy_url 必须以 http://、https://、socks5:// 或 socks5h:// 开头')
-  const deviceIds = parseDeviceIds(edit.claude_device_ids_text)
-  if (!deviceIds.length && !options.reuseSavedFields) throw new Error('设备资料不能为空，请填写至少一个设备标识')
+  // Leave empty when reusing sealed fields so the API can inherit; otherwise
+  // mint once and write back so retries keep a stable idempotent payload.
+  const parsed = parseDeviceIds(edit.claude_device_ids_text)
+  let deviceIds = parsed
+  if (!deviceIds.length && !options.reuseSavedFields) {
+    const minted = randomId()
+    edit.claude_device_ids_text = minted
+    deviceIds = [minted]
+  }
   return {
     id_token: String(edit.id_token ?? ''),
     access_token: String(edit.access_token),
@@ -374,7 +382,6 @@ export function applyCredentialJson(edit: AccountForm, text: string, now = new D
   const missing = credentialFields
     .filter(([key]) => credentialMissing(edit, key))
     .map(([key]) => credentialLabels[key]!)
-  if (!parseDeviceIds(edit.claude_device_ids_text).length) missing.push(credentialLabels.claude_device_ids_text!)
   return { filled, missing, accountFilled }
 }
 
@@ -492,8 +499,12 @@ export function completionChecklist(
     {
       key: 'device_ids',
       label: '设备资料',
-      hint: saved ? '沿用已保存资料' : deviceCount ? `已填写 ${deviceCount} 个` : '授权不返回，从有效凭证中获取',
-      done: saved || deviceCount > 0,
+      hint: saved
+        ? '沿用已保存资料；未填可留空'
+        : deviceCount
+          ? `已填写 ${deviceCount} 个`
+          : '选填；未填时提交会自动生成 UUID',
+      done: true,
       anchor: fieldAnchors.deviceIds,
     },
     {

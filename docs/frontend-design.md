@@ -181,7 +181,7 @@
 | `account_uuid` | 文本框 | 非空；未经平台确认不施加自造的 UUID 版本限制 |
 | `organization_uuid` | 文本框 | 非空 |
 | `organization_name` | 文本框 | 非空 |
-| `claude_device_ids` | 可编辑字符串数组 | 非空数组，元素非空；生成规则待平台确认，不随机伪造 |
+| `claude_device_ids` | 可编辑字符串数组 | 选填；未填时提交由服务端（及上号表单）自动生成 UUID |
 | `type` | 文本框/未来能力驱动选择 | 非空；合法枚举待确认，不提供虚构默认值 |
 | `expired` | 带时区时间文本/辅助选择 | 合法 RFC3339 时间；到期凭证不能提交 |
 | `proxy_url` | 由绑定代理展示脱敏摘要 | 支持 `http://`、`https://`、`socks5://`、`socks5h://`；必须与确认的绑定一致 |

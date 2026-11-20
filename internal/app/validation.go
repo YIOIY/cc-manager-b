@@ -185,10 +185,8 @@ func validateAuthFields(auth map[string]any) []errs.FieldError {
 	if _, ok := auth["id_token"].(string); !ok {
 		f.Add("auth_json.id_token", errs.FieldRequired, "缺少身份令牌字段（允许为空）")
 	}
+	ensureClaudeDeviceIDs(auth)
 	if ids, ok := auth["claude_device_ids"].([]any); ok {
-		if len(ids) == 0 {
-			f.Required("auth_json.claude_device_ids")
-		}
 		for _, id := range ids {
 			value, ok := id.(string)
 			if !ok || strings.TrimSpace(value) == "" {
@@ -197,7 +195,7 @@ func validateAuthFields(auth map[string]any) []errs.FieldError {
 			}
 		}
 	} else {
-		f.Required("auth_json.claude_device_ids")
+		f.Invalid("auth_json.claude_device_ids", "设备标识必须是非空文本")
 	}
 	for _, key := range []string{"last_refresh", "expired"} {
 		if value, ok := auth[key].(string); ok && value != "" {
@@ -218,6 +216,36 @@ func validateAuthFields(auth map[string]any) []errs.FieldError {
 		}
 	}
 	return f.Items()
+}
+
+// ensureClaudeDeviceIDs fills a random UUID when the caller left devices blank.
+// Explicit but invalid values are left for validateAuthFields to reject.
+func ensureClaudeDeviceIDs(auth map[string]any) {
+	raw, ok := auth["claude_device_ids"]
+	if !ok || raw == nil {
+		auth["claude_device_ids"] = []any{randomDeviceID()}
+		return
+	}
+	switch v := raw.(type) {
+	case []any:
+		if len(v) == 0 {
+			auth["claude_device_ids"] = []any{randomDeviceID()}
+		}
+	case []string:
+		if len(v) == 0 {
+			auth["claude_device_ids"] = []any{randomDeviceID()}
+		} else {
+			out := make([]any, 0, len(v))
+			for _, item := range v {
+				out = append(out, item)
+			}
+			auth["claude_device_ids"] = out
+		}
+	case string:
+		if strings.TrimSpace(v) == "" {
+			auth["claude_device_ids"] = []any{randomDeviceID()}
+		}
+	}
 }
 
 // validateAuth keeps the legacy code list for callers not yet converted.
