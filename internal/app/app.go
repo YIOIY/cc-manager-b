@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -375,6 +376,21 @@ const unpagedAccountLimit = 2000
 
 var accountOnboardingStates = map[string]bool{"pending": true, "submitting": true, "linked": true, "failed": true, "unknown": true}
 
+// accountAbnormalPredicate matches delivery failures, platform failure statuses,
+// and remote rows the console has marked missing.
+func accountAbnormalPredicate() string {
+	statuses := make([]string, 0, len(webFailureStatuses))
+	for status := range webFailureStatuses {
+		statuses = append(statuses, "'"+status+"'")
+	}
+	sort.Strings(statuses)
+	return `(t.onboarding_state IN ('failed','unknown') OR lower(t.platform_status) IN (` + strings.Join(statuses, ",") + `) OR EXISTS (
+		SELECT 1 FROM platform_links l
+		JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id
+		WHERE l.account_id=t.id AND COALESCE(r.missing_since,'')<>''
+	))`
+}
+
 // accountListFilter maps the list query parameters onto the derived columns
 // of accountListBase. Keys match the frontend filter keys one to one.
 func accountListFilter(w http.ResponseWriter, q url.Values) (listFilter, bool) {
@@ -407,7 +423,18 @@ func accountListFilter(w http.ResponseWriter, q url.Values) (listFilter, bool) {
 		writeError(w, nil, queryInvalid("proxy", "代理绑定筛选值无效"))
 		return f, false
 	}
-	f.contains("t.platform_status", q.Get("platform_status"))
+	switch v := strings.TrimSpace(q.Get("abnormal")); v {
+	case "":
+		// omitted: no abnormal filter (API/legacy callers see every row)
+	case "false", "0":
+		f.where = append(f.where, "NOT "+accountAbnormalPredicate())
+	case "true", "1":
+		f.where = append(f.where, accountAbnormalPredicate())
+	default:
+		writeError(w, nil, queryInvalid("abnormal", "异常账号筛选值无效"))
+		return f, false
+	}
+	f.equals("t.platform_status", q.Get("platform_status"))
 	if v := strings.TrimSpace(q.Get("five_hour_min")); v != "" {
 		n, err := strconv.ParseFloat(v, 64)
 		if err != nil || n < 0 || n > 100 {

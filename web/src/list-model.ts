@@ -22,6 +22,8 @@ export interface ListConfig {
   endpoint: string
   /** paginate and filter on the server; filter keys map 1:1 to query params */
   serverPaged?: boolean
+  /** accounts list: toggle beside search to show only abnormal rows (default hides them) */
+  abnormalToggle?: boolean
   description: string
   search: string[]
   placeholder: string
@@ -60,6 +62,7 @@ export const listConfigs: Record<string, ListConfig> = {
     name: '账号库存',
     endpoint: '/accounts',
     serverPaged: true,
+    abnormalToggle: true,
     description: '管理账号资料、代理绑定与平台交付；消耗字段来自供应商观测快照。',
     search: [
       'account',
@@ -117,7 +120,35 @@ export const listConfigs: Record<string, ListConfig> = {
           { label: '未绑定', value: 'absent' },
         ],
       },
-      { key: 'platform_status', label: '平台状态包含', field: 'platform_status', type: 'text' },
+      {
+        key: 'platform_status',
+        label: '平台状态',
+        field: 'platform_status',
+        type: 'select',
+        options: [
+          { label: '在线', value: 'online' },
+          { label: '使用中', value: 'using' },
+          { label: '待登录', value: 'ready' },
+          { label: '已下线', value: 'offline' },
+          { label: '已封禁', value: 'ban' },
+          { label: '已封禁(banned)', value: 'banned' },
+          { label: '初始化', value: 'init' },
+          { label: '已绑定', value: 'bound' },
+          { label: '养号中', value: 'cooking' },
+          { label: '养号失败', value: 'cooking_failed' },
+          { label: '登录失败', value: 'login_failed' },
+          { label: '待重新登录', value: 're_login' },
+          { label: '重新登录失败', value: 're_login_failed' },
+          { label: '待激活', value: 'pending_activation' },
+          { label: '绑定失败', value: 'bound_failed' },
+          { label: '同步失败', value: 'sync_failed' },
+          { label: '待验证', value: 'wait_check' },
+          { label: '验证失败', value: 'check_fail' },
+          { label: '故障', value: 'fault' },
+          { label: '已暂停', value: 'suspended' },
+          { label: '欠费', value: 'arrearage' },
+        ],
+      },
       { key: 'end_from', label: '套餐到期日起', field: 'plan_end_time', type: 'date', operator: 'min' },
       { key: 'end_to', label: '套餐到期日止', field: 'plan_end_time', type: 'date', operator: 'max' },
       ...created,

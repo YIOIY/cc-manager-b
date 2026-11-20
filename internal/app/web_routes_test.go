@@ -82,6 +82,19 @@ func TestAccountListExposesPlatformBlock(t *testing.T) {
 	if banned == nil || banned["usage"] != nil || !strings.Contains(fmt.Sprint(banned["reason_text"]), "385753") || banned["reason_kind"] == "" {
 		t.Fatalf("banned platform=%v", banned)
 	}
+	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=20&abnormal=0", ""), &list)
+	if len(list.Data.Items) != 2 {
+		t.Fatalf("abnormal=0 items=%d", len(list.Data.Items))
+	}
+	for _, item := range list.Data.Items {
+		if item.Account == "banned@example.test" {
+			t.Fatal("abnormal=0 leaked banned account")
+		}
+	}
+	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=20&abnormal=1", ""), &list)
+	if len(list.Data.Items) != 1 || list.Data.Items[0].Account != "banned@example.test" {
+		t.Fatalf("abnormal=1 items=%+v", list.Data.Items)
+	}
 	// Filter and sort by the 5-hour window.
 	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=20&five_hour_min=80", ""), &list)
 	if len(list.Data.Items) != 1 || list.Data.Items[0].Account != "hot@example.test" {

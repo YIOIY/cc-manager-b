@@ -40,15 +40,19 @@ export function useListPage<T extends ListRow = ListRow>(
   const draftConditions = ref<Conditions>({})
   const conditions = ref<Conditions>({})
   const filtersOpen = ref(false)
+  const abnormalOnly = ref(false)
   const currentPage = ref(1)
   const pageSize = ref(20)
   const serverTotal = ref(0)
   let sequence = 0
   const serverPaged = computed(() => !!config.value?.serverPaged)
+  const abnormalToggle = computed(() => !!config.value?.abnormalToggle)
 
   const activeFields = computed(() => config.value?.filters.filter((f) => hasValue(conditions.value[f.key])) || [])
   const activeFilterCount = computed(() => activeFields.value.length)
-  const hasConditions = computed(() => !!query.value || !!activeFilterCount.value)
+  const hasConditions = computed(
+    () => !!query.value || !!activeFilterCount.value || (abnormalToggle.value && abnormalOnly.value),
+  )
   const filteredItems = computed(() => {
     if (serverPaged.value) return items.value
     return config.value ? (filterRows(items.value, config.value, query.value, conditions.value) as T[]) : []
@@ -64,6 +68,7 @@ export function useListPage<T extends ListRow = ListRow>(
     const params = new URLSearchParams({ page: String(currentPage.value), page_size: String(pageSize.value) })
     if (query.value) params.set('q', query.value)
     for (const [key, value] of Object.entries(conditions.value)) if (hasValue(value)) params.set(key, String(value))
+    if (abnormalToggle.value) params.set('abnormal', abnormalOnly.value ? '1' : '0')
     return '?' + params.toString()
   }
 
@@ -77,6 +82,7 @@ export function useListPage<T extends ListRow = ListRow>(
     }
     conditions.value = parsed
     draftConditions.value = { ...parsed }
+    abnormalOnly.value = abnormalToggle.value && (q.abnormal === '1' || q.abnormal === 'true')
     filtersOpen.value = activeFilterCount.value > 0
   }
 
@@ -84,6 +90,7 @@ export function useListPage<T extends ListRow = ListRow>(
     const next: LocationQueryRaw = {}
     if (query.value) next.q = query.value
     for (const [key, value] of Object.entries(conditions.value)) if (hasValue(value)) next['f_' + key] = String(value)
+    if (abnormalToggle.value && abnormalOnly.value) next.abnormal = '1'
     if (route.name) lastQueries.set(String(route.name), next)
     router.replace({ query: next }).catch(() => undefined)
   }
@@ -130,6 +137,7 @@ export function useListPage<T extends ListRow = ListRow>(
     query.value = ''
     draftConditions.value = {}
     conditions.value = {}
+    abnormalOnly.value = false
     currentPage.value = 1
     writeRouteQuery()
     if (serverPaged.value) void load()
@@ -144,6 +152,20 @@ export function useListPage<T extends ListRow = ListRow>(
   function removeCondition(key: string) {
     delete conditions.value[key]
     delete draftConditions.value[key]
+    currentPage.value = 1
+    writeRouteQuery()
+    if (serverPaged.value) void load()
+  }
+  function toggleAbnormal() {
+    if (!abnormalToggle.value) return
+    abnormalOnly.value = !abnormalOnly.value
+    currentPage.value = 1
+    writeRouteQuery()
+    if (serverPaged.value) void load()
+  }
+  function clearAbnormal() {
+    if (!abnormalOnly.value) return
+    abnormalOnly.value = false
     currentPage.value = 1
     writeRouteQuery()
     if (serverPaged.value) void load()
@@ -173,6 +195,8 @@ export function useListPage<T extends ListRow = ListRow>(
     draftConditions,
     conditions,
     filtersOpen,
+    abnormalOnly,
+    abnormalToggle,
     currentPage,
     pageSize,
     activeFields,
@@ -187,6 +211,8 @@ export function useListPage<T extends ListRow = ListRow>(
     resetFilters,
     removeQuery,
     removeCondition,
+    toggleAbnormal,
+    clearAbnormal,
     polling,
     invalidate: () => sequence++,
   }

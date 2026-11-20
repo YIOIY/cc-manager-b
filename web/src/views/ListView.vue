@@ -31,10 +31,13 @@
       :active-fields="page.activeFields.value"
       :active-filter-count="page.activeFilterCount.value"
       :has-conditions="page.hasConditions.value"
+      :abnormal-only="page.abnormalOnly.value"
       @apply="applySearch"
       @reset="page.resetFilters"
       @remove-query="page.removeQuery"
       @remove-condition="page.removeCondition"
+      @toggle-abnormal="page.toggleAbnormal"
+      @clear-abnormal="page.clearAbnormal"
     />
     <el-alert
       v-if="actionMessage"

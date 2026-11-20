@@ -464,7 +464,7 @@ Token受控轮换、允许套餐和启停修改仍增加版本，已排队上传
 
 ## 附录：列表分页与写限速（2026-11-08）
 
-- `GET /accounts` 支持服务端分页与筛选：`page`、`page_size`（10/20/50/100）、`q`（匹配账号、ID、套餐、注册地区、代理 ID、平台账号 ID/别名/状态）、`onboarding_state`（pending/submitting/linked/failed/unknown）、`plan`、`archived`（true/false）、`proxy`（present/absent）、`platform_status`（包含）、`end_from`/`end_to`（套餐到期日）、`created_from`/`created_to`。带分页参数时返回 `{items, pagination}`；不带时沿用数组响应，最多 2000 条。非法筛选值返回 `422 FILTER_INVALID`。`onboarding_state` 在 SQL 中派生，规则与返回字段一致。
+- `GET /accounts` 支持服务端分页与筛选：`page`、`page_size`（10/20/50/100）、`q`（匹配账号、ID、套餐、注册地区、代理 ID、平台账号 ID/别名/状态）、`onboarding_state`（pending/submitting/linked/failed/unknown）、`plan`、`archived`（true/false）、`proxy`（present/absent）、`abnormal`（省略不过滤；`0`/`false` 排除异常账号；`1`/`true` 仅异常账号；账号列表页默认传 `0`）、`platform_status`（精确匹配）、`end_from`/`end_to`（套餐到期日）、`created_from`/`created_to`。异常账号指上号 `failed`/`unknown`、平台失败态（ban/banned/check_fail/login_failed/bound_failed/cooking_failed/re_login_failed/sync_failed/fault/suspended/arrearage），或远端 `missing_since` 非空。带分页参数时返回 `{items, pagination}`；不带时沿用数组响应，最多 2000 条。非法筛选值返回 `422 FILTER_INVALID`。`onboarding_state` 在 SQL 中派生，规则与返回字段一致。
 - 所有写请求（POST/PUT/PATCH/DELETE，登录除外）按用户令牌桶限速：默认 120/分钟、突发 30，超限返回 `429 RATE_LIMITED` 并带 `Retry-After`（秒）。读请求不受限。
 - 已移除：`GET /usage`、`GET /billing/ledger`、`POST /sync/metrics`、`POST /sync/bills`、`POST /platform-usage/sync`。账单同步统一走 `POST /platform-usage/bills/sync`，运行记录走 `GET /platform-usage/sync-runs`。
 - `GET /metrics`：Prometheus 文本格式，不鉴权，仅计数类指标；详见 operations.md 6.1。

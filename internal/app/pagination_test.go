@@ -110,10 +110,12 @@ func TestAccountsSupportServerSidePagingAndFilters(t *testing.T) {
 	}
 	c := newTestClient(t, a)
 	c.login("correct-horse-battery")
+	const allTotal = 23
+	const normalTotal = 21 // excludes failed/unknown onboarding acc-b/acc-d
 	var legacy struct{ Data []map[string]any }
 	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts", ""), &legacy)
-	if len(legacy.Data) != 23 {
-		t.Fatalf("legacy array length=%d", len(legacy.Data))
+	if len(legacy.Data) != allTotal {
+		t.Fatalf("legacy array length=%d want %d", len(legacy.Data), allTotal)
 	}
 	foundHost := false
 	for _, row := range legacy.Data {
@@ -135,8 +137,17 @@ func TestAccountsSupportServerSidePagingAndFilters(t *testing.T) {
 	}
 	var p paged
 	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=2&page_size=10", ""), &p)
-	if p.Data.Pagination.Total != 23 || len(p.Data.Items) != 10 || p.Data.Pagination.Page != 2 {
+	if p.Data.Pagination.Total != allTotal || len(p.Data.Items) != 10 || p.Data.Pagination.Page != 2 {
 		t.Fatalf("paged=%+v items=%d", p.Data.Pagination, len(p.Data.Items))
+	}
+	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=100&abnormal=0", ""), &p)
+	if p.Data.Pagination.Total != normalTotal {
+		t.Fatalf("abnormal=0 total=%d want %d", p.Data.Pagination.Total, normalTotal)
+	}
+	for _, item := range p.Data.Items {
+		if id, _ := item["id"].(string); id == "acc-b" || id == "acc-d" {
+			t.Fatalf("abnormal=0 leaked %s", id)
+		}
 	}
 	cases := map[string]func(map[string]any) bool{
 		"archived=true":                func(m map[string]any) bool { return m["archived"] == true },
@@ -166,16 +177,62 @@ func TestAccountsSupportServerSidePagingAndFilters(t *testing.T) {
 			}
 		}
 	}
-	// The SQL-derived state must agree with the Go decoration for every row.
-	var all paged
-	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=100", ""), &all)
-	want := map[string]string{"acc-a": "linked", "acc-b": "failed", "acc-c": "submitting", "acc-d": "unknown"}
-	for _, item := range all.Data.Items {
-		if expected, ok := want[item["id"].(string)]; ok && item["onboarding_state"] != expected {
-			t.Fatalf("%s state=%v want %s", item["id"], item["onboarding_state"], expected)
+	var abnormal paged
+	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=100&abnormal=1", ""), &abnormal)
+	if abnormal.Data.Pagination.Total != 2 {
+		t.Fatalf("abnormal total=%d want 2", abnormal.Data.Pagination.Total)
+	}
+	for _, item := range abnormal.Data.Items {
+		id, _ := item["id"].(string)
+		if id != "acc-b" && id != "acc-d" {
+			t.Fatalf("abnormal leaked %s", id)
 		}
 	}
-	for _, bad := range []string{"archived=maybe", "proxy=x", "onboarding_state=nope"} {
+	// Seed a linked account with a failure platform status and a missing remote row.
+	stamp := now()
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO platform_links(id,account_id,connection_id,upstream_id,runtime_status,last_observed_at,ingestion_state,created_at,updated_at) VALUES('l-fail','acc-e','conn','up-fail','login_failed',?,'accepted',?,?)`, []any{stamp, stamp, stamp}},
+		{`INSERT INTO platform_remote_accounts(connection_id,upstream_id,account_id,account_email,ext_status,a1_status,missing_since,first_seen_at,last_seen_at) VALUES('conn','up-fail','acc-e','usere@example.com','login_failed','','',?,?)`, []any{stamp, stamp}},
+		{`INSERT INTO platform_links(id,account_id,connection_id,upstream_id,runtime_status,last_observed_at,ingestion_state,created_at,updated_at) VALUES('l-miss','acc-f','conn','up-miss','using',?,'accepted',?,?)`, []any{stamp, stamp, stamp}},
+		{`INSERT INTO platform_remote_accounts(connection_id,upstream_id,account_id,account_email,ext_status,a1_status,missing_since,first_seen_at,last_seen_at) VALUES('conn','up-miss','acc-f','userf@example.com','using','',?,?,?)`, []any{stamp, stamp, stamp}},
+	} {
+		if _, err := a.DB.Exec(stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("%s: %v", stmt.sql, err)
+		}
+	}
+	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=100&abnormal=1", ""), &abnormal)
+	ids := map[string]bool{}
+	for _, item := range abnormal.Data.Items {
+		ids[item["id"].(string)] = true
+	}
+	for _, wantID := range []string{"acc-b", "acc-d", "acc-e", "acc-f"} {
+		if !ids[wantID] {
+			t.Fatalf("abnormal missing %s in %v", wantID, ids)
+		}
+	}
+	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=100&abnormal=0&platform_status=login_failed", ""), &abnormal)
+	if len(abnormal.Data.Items) != 0 {
+		t.Fatalf("default mode should hide login_failed rows, got %d", len(abnormal.Data.Items))
+	}
+	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=100&abnormal=1&platform_status=login_failed", ""), &abnormal)
+	if len(abnormal.Data.Items) != 1 || abnormal.Data.Items[0]["id"] != "acc-e" {
+		t.Fatalf("platform_status=login_failed got %#v", abnormal.Data.Items)
+	}
+	// The SQL-derived state must agree with the Go decoration across both modes.
+	want := map[string]string{"acc-a": "linked", "acc-b": "failed", "acc-c": "submitting", "acc-d": "unknown"}
+	for _, mode := range []string{"abnormal=0", "abnormal=1"} {
+		var all paged
+		_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=100&"+mode, ""), &all)
+		for _, item := range all.Data.Items {
+			if expected, ok := want[item["id"].(string)]; ok && item["onboarding_state"] != expected {
+				t.Fatalf("%s %s state=%v want %s", mode, item["id"], item["onboarding_state"], expected)
+			}
+		}
+	}
+	for _, bad := range []string{"archived=maybe", "proxy=x", "onboarding_state=nope", "abnormal=maybe"} {
 		if res := c.do(http.MethodGet, "/api/v1/accounts?"+bad, ""); res.StatusCode != http.StatusUnprocessableEntity {
 			t.Fatalf("%s status=%d", bad, res.StatusCode)
 		}

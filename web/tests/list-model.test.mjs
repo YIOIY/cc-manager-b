@@ -64,7 +64,15 @@ test('select, presence, date and number filters combine with AND semantics', () 
 test('empty conditions are ignored and missing values never match a set filter', () => {
   assert.equal(filterRows(rows, accounts, '', { plan: '', platform_status: null, archived: undefined }).length, 2)
   assert.deepEqual(
-    filterRows(rows, accounts, '', { platform_status: 'on' }).map((r) => r.id),
+    filterRows(rows, accounts, '', { platform_status: 'online' }).map((r) => r.id),
     ['a1'],
   )
+  assert.deepEqual(filterRows(rows, accounts, '', { platform_status: 'on' }), [])
+})
+
+test('accounts list exposes abnormal toggle and platform status select', () => {
+  assert.equal(accounts.abnormalToggle, true)
+  const status = accounts.filters.find((f) => f.key === 'platform_status')
+  assert.equal(status?.type, 'select')
+  assert.ok(status?.options?.some((o) => o.value === 'login_failed'))
 })
