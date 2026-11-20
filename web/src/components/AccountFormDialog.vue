@@ -92,20 +92,57 @@
         <p v-if="proxyChanged" class="wizard-inline-notice" role="status">
           代理已变更，请重新授权；其他已填写资料已保留。
         </p>
-        <div v-if="savedCredentials" class="wizard-connected">
-          <CheckCircle2 :size="22" />
-          <div>
-            <strong>{{ edit.account }}</strong>
-            <p>{{ linkedReauth ? '将使用库内已保存凭证同步到平台。' : '账号凭证已保存，无需重复授权。' }}</p>
+        <template v-if="savedCredentials">
+          <div class="wizard-connected">
+            <CheckCircle2 :size="22" />
+            <div>
+              <strong>{{ edit.account }}</strong>
+              <p>{{ linkedReauth ? '将使用库内已保存凭证同步到平台。' : '账号凭证已保存，无需重复授权。' }}</p>
+            </div>
+            <el-button text @click="startReauthorize">重新授权</el-button>
           </div>
-          <el-button text @click="startReauthorize">重新授权</el-button>
-        </div>
+          <el-form-item
+            v-if="linkedReauth"
+            :id="fieldAnchors.deviceIds"
+            data-saved-devices
+            label="设备资料"
+            :class="fieldClass(fieldAnchors.deviceIds)"
+            :error="fieldErrors.claude_device_ids_text"
+            ><el-input
+              v-model="edit.claude_device_ids_text"
+              type="textarea"
+              :rows="2"
+              placeholder="填写设备 ID，多个 ID 用逗号或换行分隔"
+            />
+            <div class="field-hint">
+              库内缺少或无效时在此补填，无需重新授权。已有有效设备可留空沿用。
+              <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
+                >如何获取？</a
+              >
+            </div>
+            <el-button text type="primary" @click="deviceImportOpen = !deviceImportOpen"
+              >从已有凭证导入设备资料</el-button
+            >
+            <div v-if="deviceImportOpen" class="wizard-device-import">
+              <el-input
+                v-model="devicePaste"
+                type="textarea"
+                :rows="2"
+                placeholder="仅提取 JSON 中的 claude_device_ids，不更换账号凭证"
+              /><el-button :disabled="!devicePaste.trim()" @click="importDevices">提取设备资料</el-button>
+            </div></el-form-item
+          >
+        </template>
         <template v-else>
           <ClaudeOAuthPanel
             v-if="modelValue && source !== 'import' && source !== 'manual'"
             :key="oauthGeneration"
             :proxy-id="edit.proxy_id"
-            :disabled="saving || proxyBusy || proxyPending || !connectionReady || !poolProxyReady"
+            :reauthorizing="canReuseCredentialFields"
+            :saved-account-id="savedProxyAccountId"
+            :disabled="
+              saving || proxyBusy || proxyPending || !connectionReady || (!poolProxyReady && !savedProxyAccountId)
+            "
             :summary="oauthSummary"
             @started="onAuthorizationStarted"
             @busy="oauthBusy = $event"
@@ -123,7 +160,7 @@
           </div>
           <div class="wizard-connection-actions">
             <span class="field-hint">{{
-              !connectionReady || !poolProxyReady
+              !connectionReady || (!poolProxyReady && !savedProxyAccountId)
                 ? '先选择平台和代理，再开始浏览器授权。'
                 : '服务端授权使用所选代理；浏览器登录使用浏览器自身网络。'
             }}</span
@@ -165,13 +202,19 @@
           <CheckCircle2 :size="22" />
           <div>
             <strong>{{ edit.account || edit.credential_email || '凭证已连接' }}</strong>
-            <p>授权不返回设备标识，请补充设备资料后再同步到平台。</p>
+            <p>
+              {{
+                canReuseCredentialFields
+                  ? '已保存的设备和代理资料会自动沿用，需要更换时可在此填写。'
+                  : '授权不返回设备标识，请补充设备资料后再同步到平台。'
+              }}
+            </p>
           </div>
         </div>
         <el-form-item
           :id="fieldAnchors.deviceIds"
           label="设备资料"
-          required
+          :required="!canReuseCredentialFields || !!fieldErrors.claude_device_ids_text"
           :class="fieldClass(fieldAnchors.deviceIds)"
           :error="fieldErrors.claude_device_ids_text"
           ><el-input
@@ -181,7 +224,11 @@
             placeholder="填写设备 ID，多个 ID 用逗号或换行分隔"
           />
           <div class="field-hint">
-            必填。从已有有效凭证获取真实设备 ID。
+            {{
+              canReuseCredentialFields
+                ? '留空沿用已保存设备标识；没有可用标识时会提示补填。'
+                : '必填。从已有有效凭证获取真实设备 ID。'
+            }}
             <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
               >如何获取？</a
             >
@@ -205,12 +252,21 @@
           @toggle="credentialDetailsOpen = ($event.target as HTMLDetailsElement).open"
         >
           <summary><ShieldCheck :size="15" />高级凭证字段<span class="field-hint">默认隐藏敏感值</span></summary>
+          <p v-if="canReuseCredentialFields" class="field-hint">
+            账号资料会在核对身份后自动沿用，无法确认的字段仍需补填。
+          </p>
           <div v-if="credentialDetailsOpen" class="form-grid two credential-grid">
             <el-form-item
               v-for="field in visibleCredentialInputs"
               :id="'credential-field-' + field.key"
               :key="field.key"
-              :required="field.required"
+              :required="
+                field.required &&
+                !(
+                  canReuseCredentialFields &&
+                  ['account_uuid', 'organization_name', 'credential_proxy_url'].includes(field.key)
+                )
+              "
               :error="fieldErrors[field.key]"
               ><template #label
                 ><span class="credential-field-label"
@@ -426,7 +482,17 @@
           <dd>{{ savedCredentials ? '沿用已保存凭证' : '已填写 · 内容已隐藏' }}</dd>
           <dt>设备资料</dt>
           <dd>
-            {{ savedCredentials ? '沿用已保存资料' : edit.claude_device_ids_text?.trim() ? '已填写' : '未填写' }}
+            {{
+              savedCredentials
+                ? edit.claude_device_ids_text?.trim()
+                  ? '本次补填'
+                  : '沿用已保存设备标识'
+                : edit.claude_device_ids_text?.trim()
+                  ? '已填写'
+                  : canReuseCredentialFields
+                    ? '沿用已保存设备标识'
+                    : '未填写'
+            }}
           </dd>
         </dl>
         <p class="field-hint">
@@ -520,6 +586,8 @@ const {
   connected,
   connectionReady,
   poolProxyReady,
+  canReuseCredentialFields,
+  savedProxyAccountId,
   selectedConnectionName,
   selectedProxyName,
   planLabel,

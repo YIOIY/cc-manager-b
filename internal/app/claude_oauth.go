@@ -16,10 +16,11 @@ import (
 const oauthSessionTTL = 30 * time.Minute
 
 type oauthPending struct {
-	owner   [32]byte
-	expires time.Time
-	proxyID string
-	flow    claudeoauth.Pending
+	owner     [32]byte
+	expires   time.Time
+	proxyID   string
+	accountID string
+	flow      claudeoauth.Pending
 }
 type oauthPendingStore struct {
 	mu    sync.Mutex
@@ -49,10 +50,22 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		ProxyID string `json:"proxy_id"`
+		ProxyID   string `json:"proxy_id"`
+		AccountID string `json:"account_id"`
 	}
 	if !decodeJSON(w, r, &in, 8192) {
 		return
+	}
+	if in.AccountID != "" {
+		if !a.requireMutable(w, r, "accounts", in.AccountID, "账号不存在") {
+			return
+		}
+		if in.ProxyID == "" {
+			if _, err := a.savedCredentialProxy(in.AccountID); err != nil {
+				fail(w, 422, "OAUTH_PROXY_INVALID", "已保存代理不可用，请选择代理后重新授权")
+				return
+			}
+		}
 	}
 	if in.ProxyID != "" {
 		if _, err := a.resolveProxyURL(in.ProxyID, ""); err != nil {
@@ -88,7 +101,7 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	id := randomString()
 	expires := stamp.Add(oauthSessionTTL)
-	a.oauth.items[id] = oauthPending{owner: owner, expires: expires, proxyID: in.ProxyID, flow: flow}
+	a.oauth.items[id] = oauthPending{owner: owner, expires: expires, proxyID: in.ProxyID, accountID: in.AccountID, flow: flow}
 	a.oauth.mu.Unlock()
 	write(w, 201, map[string]any{"id": id, "authorization_url": flow.URL, "expires_at": expires.UTC().Format(time.RFC3339)})
 }
@@ -126,7 +139,20 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	// One-shot consumption happens before network IO, including failed exchanges.
 	delete(a.oauth.items, id)
 	a.oauth.mu.Unlock()
-	client, closeClient, err := a.claudeOAuthHTTPClient(p.proxyID)
+	proxyURL := ""
+	if p.accountID != "" {
+		if !a.requireMutable(w, r, "accounts", p.accountID, "账号不存在") {
+			return
+		}
+		if p.proxyID == "" {
+			proxyURL, err = a.savedCredentialProxy(p.accountID)
+			if err != nil {
+				fail(w, 422, "OAUTH_PROXY_INVALID", "已保存代理不可用，请选择代理后重新授权")
+				return
+			}
+		}
+	}
+	client, closeClient, err := a.claudeOAuthHTTPClient(p.proxyID, proxyURL)
 	if err != nil {
 		fail(w, 422, "OAUTH_PROXY_INVALID", err.Error())
 		return
@@ -145,15 +171,24 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, result)
 }
 
-func (a *App) claudeOAuthHTTPClient(proxyID string) (*http.Client, func(), error) {
+func (a *App) savedCredentialProxy(accountID string) (string, error) {
+	auth, err := a.loadCredential(accountID)
+	if err != nil {
+		return "", err
+	}
+	proxyURL, _ := auth["proxy_url"].(string)
+	return normalizeProxyURL(proxyURL)
+}
+
+func (a *App) claudeOAuthHTTPClient(proxyID, fallbackProxyURL string) (*http.Client, func(), error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.TLSHandshakeTimeout = 10 * time.Second
 	transport.ResponseHeaderTimeout = 15 * time.Second
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport.DialContext = dialer.DialContext
-	if proxyID != "" {
-		raw, err := a.resolveProxyURL(proxyID, "")
+	if proxyID != "" || fallbackProxyURL != "" {
+		raw, err := a.resolveProxyURL(proxyID, fallbackProxyURL)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -183,7 +218,7 @@ func (a *App) claudeOAuthHTTPClient(proxyID string) (*http.Client, func(), error
 			}
 			u.User = url.UserPassword(s.Username, password)
 		}
-		if proxyID == "" {
+		if proxyID == "" && fallbackProxyURL == "" {
 			transport.Proxy = http.ProxyURL(u)
 		} else {
 			transport.DialContext, err = upstreamDialer(u, transport.TLSClientConfig)

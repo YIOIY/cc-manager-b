@@ -237,6 +237,51 @@ func TestReauthorizeNullAuthJSONUsesSavedCredential(t *testing.T) {
 	}
 }
 
+func TestReauthorizeOmitAuthOverlaysDeviceIDs(t *testing.T) {
+	a, stub, admin := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	if _, err := a.DB.Exec(`INSERT INTO proxies(id,name,scheme,host,port,enabled,created_at,updated_at) VALUES('pool','exit','http','127.0.0.1',9090,1,?,?)`, now(), now()); err != nil {
+		t.Fatal(err)
+	}
+	saved := reauthAuth("one@example.test")
+	saved["access_token"] = "saved-access"
+	delete(saved, "claude_device_ids")
+	sealAccountAuth(t, a, id, saved)
+
+	assertEnvelope(t, postReauth(t, admin, id, map[string]any{"proxy_id": "pool"}), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
+	if len(stub.updates) != 0 {
+		t.Fatalf("unexpected push without devices: %d", len(stub.updates))
+	}
+
+	res := postReauth(t, admin, id, map[string]any{
+		"proxy_id":          "pool",
+		"claude_device_ids": []any{"overlay-device"},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("overlay status=%d body=%s", res.StatusCode, readBody(res))
+	}
+	authJSON, _ := stub.updates[0]["cpa_auth_json"].(string)
+	var pushed map[string]any
+	if err := json.Unmarshal([]byte(authJSON), &pushed); err != nil {
+		t.Fatal(err)
+	}
+	if pushed["access_token"] != "saved-access" {
+		t.Fatalf("access_token=%v", pushed["access_token"])
+	}
+	ids, _ := pushed["claude_device_ids"].([]any)
+	if len(ids) != 1 || ids[0] != "overlay-device" {
+		t.Fatalf("claude_device_ids=%v", pushed["claude_device_ids"])
+	}
+	loaded, err := a.loadCredential(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := loaded["claude_device_ids"].([]any)
+	if len(stored) != 1 || stored[0] != "overlay-device" {
+		t.Fatalf("stored devices=%v", loaded["claude_device_ids"])
+	}
+}
+
 func TestReauthorizeInvalidAuthJSONDistinctFromOmit(t *testing.T) {
 	a, _, admin := routesFixture(t)
 	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
@@ -327,4 +372,141 @@ func readBody(res *http.Response) string {
 	var buf [4096]byte
 	n, _ := res.Body.Read(buf[:])
 	return string(buf[:n])
+}
+
+func TestReauthorizeFreshTokensInheritSavedFields(t *testing.T) {
+	a, stub, admin := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	saved := reauthAuth("one@example.test")
+	saved["access_token"] = "old-access"
+	saved["refresh_token"] = "old-refresh"
+	saved["proxy_url"] = "http://saved.example:8080"
+	sealAccountAuth(t, a, id, saved)
+	fresh := reauthAuth("one@example.test")
+	for _, key := range []string{"account_uuid", "organization_name", "claude_device_ids", "proxy_url"} {
+		delete(fresh, key)
+	}
+	res := postReauth(t, admin, id, map[string]any{"auth_json": fresh})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", res.StatusCode, readBody(res))
+	}
+	authJSON, _ := stub.updates[0]["cpa_auth_json"].(string)
+	var pushed map[string]any
+	if err := json.Unmarshal([]byte(authJSON), &pushed); err != nil {
+		t.Fatal(err)
+	}
+	if pushed["access_token"] != "new-access" || pushed["refresh_token"] != "new-refresh" || pushed["account_uuid"] != "u" || pushed["organization_name"] != "Org" || pushed["proxy_url"] != "http://saved.example:8080" {
+		t.Fatal("fresh tokens or inherited fields do not match")
+	}
+	ids, _ := pushed["claude_device_ids"].([]any)
+	if len(ids) != 1 || ids[0] != "device-id" {
+		t.Fatal("saved devices were not inherited")
+	}
+	loaded, err := a.loadCredential(id)
+	if err != nil || loaded["access_token"] != "new-access" || loaded["proxy_url"] != "http://saved.example:8080" {
+		t.Fatal("merged credential was not persisted")
+	}
+}
+
+func TestReauthorizeNeverInheritsTokensOrUnconfirmedIdentity(t *testing.T) {
+	for _, scenario := range []string{"access_token", "refresh_token", "last_refresh", "expired", "organization_uuid", "different-account", "different-organization", "foreign-saved-email"} {
+		t.Run(scenario, func(t *testing.T) {
+			a, stub, admin := routesFixture(t)
+			id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+			saved := reauthAuth("one@example.test")
+			saved["proxy_url"] = "http://saved.example:8080"
+			fresh := reauthAuth("one@example.test")
+			fresh["proxy_url"] = "http://fresh.example:8080"
+			switch scenario {
+			case "different-account":
+				fresh["account_uuid"] = "different"
+				delete(fresh, "claude_device_ids")
+			case "different-organization":
+				fresh["organization_uuid"] = "different"
+				delete(fresh, "organization_name")
+			case "foreign-saved-email":
+				saved["email"] = "other@example.test"
+				delete(fresh, "claude_device_ids")
+			default:
+				delete(fresh, scenario)
+			}
+			sealAccountAuth(t, a, id, saved)
+			assertEnvelope(t, postReauth(t, admin, id, map[string]any{"auth_json": fresh}), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
+			if len(stub.updates) != 0 {
+				t.Fatal("incomplete or mismatched credentials reached platform")
+			}
+		})
+	}
+}
+
+func TestReauthorizeDeviceOverlayRejectsNonStrings(t *testing.T) {
+	for _, ids := range []any{[]any{123}, []any{true}, []any{map[string]any{"id": "invalid"}}, []any{nil}, 123} {
+		a, stub, admin := routesFixture(t)
+		id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+		saved := reauthAuth("one@example.test")
+		saved["proxy_url"] = "http://saved.example:8080"
+		sealAccountAuth(t, a, id, saved)
+		assertEnvelope(t, postReauth(t, admin, id, map[string]any{"claude_device_ids": ids}), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
+		if len(stub.updates) != 0 {
+			t.Fatal("invalid device IDs reached platform")
+		}
+	}
+}
+
+func TestReauthorizeExplicitFreshFieldsTakePrecedence(t *testing.T) {
+	a, stub, admin := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	saved := reauthAuth("one@example.test")
+	saved["proxy_url"] = "http://old.example:8080"
+	sealAccountAuth(t, a, id, saved)
+	fresh := reauthAuth("one@example.test")
+	fresh["organization_name"] = "New name"
+	fresh["proxy_url"] = "http://new.example:8080"
+	fresh["claude_device_ids"] = []any{"new-device"}
+	res := postReauth(t, admin, id, map[string]any{"auth_json": fresh})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", res.StatusCode, readBody(res))
+	}
+	var pushed map[string]any
+	if err := json.Unmarshal([]byte(stub.updates[0]["cpa_auth_json"].(string)), &pushed); err != nil {
+		t.Fatal(err)
+	}
+	if pushed["organization_name"] != "New name" || pushed["proxy_url"] != "http://new.example:8080" || pushed["claude_device_ids"].([]any)[0] != "new-device" {
+		t.Fatal("explicit fresh fields were overwritten")
+	}
+}
+
+func TestReauthorizeReloadsOmittedProxyUnderLock(t *testing.T) {
+	a, stub, admin := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	if _, err := a.DB.Exec(`INSERT INTO proxies(id,name,scheme,host,port,enabled,created_at,updated_at) VALUES('new-pool','exit','http','127.0.0.1',9090,1,?,?)`, now(), now()); err != nil {
+		t.Fatal(err)
+	}
+	saved := reauthAuth("one@example.test")
+	saved["proxy_url"] = "http://old.example:8080"
+	sealAccountAuth(t, a, id, saved)
+	lock := a.webSyncLock("conn")
+	lock.Lock()
+	done := make(chan *http.Response, 1)
+	go func() { done <- postReauth(t, admin, id, map[string]any{}) }()
+	time.Sleep(300 * time.Millisecond)
+	if _, err := a.DB.Exec(`UPDATE accounts SET proxy_id='new-pool',version=version+1 WHERE id=?`, id); err != nil {
+		lock.Unlock()
+		t.Fatal(err)
+	}
+	lock.Unlock()
+	res := <-done
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", res.StatusCode, readBody(res))
+	}
+	if queryString(t, a, `SELECT proxy_id FROM accounts WHERE id=?`, id) != "new-pool" {
+		t.Fatal("concurrently changed pool binding was lost")
+	}
+	var pushed map[string]any
+	if err := json.Unmarshal([]byte(stub.updates[0]["cpa_auth_json"].(string)), &pushed); err != nil {
+		t.Fatal(err)
+	}
+	if pushed["proxy_url"] != "http://127.0.0.1:9090" {
+		t.Fatal("latest pool proxy was not pushed")
+	}
 }

@@ -4,7 +4,13 @@
       <span class="oauth-mark"><KeyRound :size="20" /></span>
       <div>
         <strong>连接你的 Claude 账号</strong>
-        <p>授权后填入账号与凭证；交付密码、订阅日期与设备资料将在下一步补充。</p>
+        <p>
+          {{
+            reauthorizing || savedAccountId
+              ? '重新授权后更新凭证；设备与代理资料默认沿用，需要更换时可修改。'
+              : '授权后填入账号与凭证；交付密码、订阅日期与设备资料将在下一步补充。'
+          }}
+        </p>
       </div>
     </div>
     <ol v-if="pending" class="oauth-steps">
@@ -77,7 +83,13 @@ import { api, ApiError, errorMessage } from '../api'
 import { useSession } from '../composables/useSession'
 import type { OAuthResult, OAuthSummary } from '../model/account-form'
 
-const props = defineProps<{ proxyId?: string; disabled?: boolean; summary?: OAuthSummary | null }>()
+const props = defineProps<{
+  proxyId?: string
+  savedAccountId?: string
+  reauthorizing?: boolean
+  disabled?: boolean
+  summary?: OAuthSummary | null
+}>()
 const emit = defineEmits<{ authorized: [result: OAuthResult]; busy: [value: boolean]; started: [] }>()
 const { check, onboardAllowed } = useSession()
 interface Pending {
@@ -132,7 +144,10 @@ async function start() {
     }
     const { data } = await api<Pending>('/claude-oauth/sessions', {
       method: 'POST',
-      body: JSON.stringify({ proxy_id: props.proxyId || '' }),
+      body: JSON.stringify({
+        proxy_id: props.proxyId || '',
+        ...(props.savedAccountId ? { account_id: props.savedAccountId } : {}),
+      }),
     })
     if (current !== generation) {
       void cancel(data.id)
@@ -182,7 +197,7 @@ async function copyLink() {
   }
 }
 watch(
-  () => props.proxyId,
+  () => [props.proxyId, props.savedAccountId],
   () => {
     // Only a link that is still waiting to be used is invalidated by a proxy
     // change; after authorization the credentials are already in the form.

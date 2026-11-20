@@ -64,12 +64,41 @@ test('reauthorize payload only carries credentials and always sends proxy_id', (
   })
   assert.equal(saved.proxy_id, 'pool-proxy')
   assert.equal('auth_json' in saved, false)
+  assert.equal('claude_device_ids' in saved, false)
+  const withDevices = buildReauthorizePayload({
+    id: 'acc-1',
+    credentials_configured: true,
+    proxy_id: 'pool-proxy',
+    claude_device_ids_text: 'overlay-a, overlay-b',
+  })
+  assert.equal('auth_json' in withDevices, false)
+  assert.deepEqual(withDevices.claude_device_ids, ['overlay-a', 'overlay-b'])
 })
 
 test('a selected pool proxy satisfies the form without disclosing its password', () => {
   const edit = { ...complete, proxy_id: 'pool-proxy', credential_proxy_url: '' }
   assert.deepEqual(missingAccountFields(edit), [])
   assert.equal(buildOnboardPayload(edit).auth_json.proxy_url, '')
+})
+
+test('reauthorization can inherit saved device, account and proxy fields but still requires fresh tokens', () => {
+  const edit = {
+    ...complete,
+    id: 'existing',
+    credentials_configured: true,
+    replace_credentials: true,
+    account_uuid: '',
+    organization_name: '',
+    credential_proxy_url: '',
+    claude_device_ids_text: '',
+  }
+  const payload = buildReauthorizePayload(edit)
+  assert.equal(payload.auth_json.access_token, complete.access_token)
+  assert.deepEqual(payload.auth_json.claude_device_ids, [])
+  assert.throws(() => buildReauthorizePayload({ ...edit, access_token: '' }), /access_token/)
+  assert.throws(() => buildReauthorizePayload({ ...edit, organization_uuid: '' }), /organization_uuid/)
+  assert.throws(() => buildOnboardPayload(edit), /凭证缺少/)
+  assert.throws(() => buildReauthorizePayload({ ...edit, credentials_configured: false }), /凭证缺少/)
 })
 
 test('OAuth fills identity and confirmed profile data without retaining another credential', () => {

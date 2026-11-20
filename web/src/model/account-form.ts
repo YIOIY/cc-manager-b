@@ -209,14 +209,22 @@ export function missingAccountFields(edit: AccountForm): string[] {
  * credential is kept or nothing was entered; throws with a user-facing
  * message when the entered credential is incomplete or malformed.
  */
-export function buildCredential(edit: AccountForm): CredentialPayload | null {
+export function buildCredential(
+  edit: AccountForm,
+  options: { reuseSavedFields?: boolean } = {},
+): CredentialPayload | null {
   if (keepsSavedCredential(edit)) return null
+  const reusableFields = new Set<CredentialKey>(
+    options.reuseSavedFields ? ['account_uuid', 'organization_name', 'credential_proxy_url'] : [],
+  )
   const entered =
     credentialFields.some(([key]) => hasValue(edit[key])) ||
     hasValue(edit.id_token) ||
     hasValue(edit.claude_device_ids_text)
   if (!entered) return null
-  const missing = credentialFields.filter(([key]) => credentialMissing(edit, key)).map(([, field]) => field as string)
+  const missing = credentialFields
+    .filter(([key]) => !reusableFields.has(key) && credentialMissing(edit, key))
+    .map(([, field]) => field as string)
   if (missing.length) throw new Error('Claude 凭证缺少：' + missing.join('、'))
   const email = String(edit.credential_email).trim()
   if (!EMAIL_PATTERN.test(email)) throw new Error('凭证 email 格式不正确')
@@ -226,19 +234,19 @@ export function buildCredential(edit: AccountForm): CredentialPayload | null {
     if (!RFC3339_PATTERN.test(String(edit[key]))) throw new Error(`${key} 必须是有效的 RFC3339 时间`)
   }
   const proxy = edit.proxy_id ? '' : String(edit.credential_proxy_url ?? '').trim()
-  if (!edit.proxy_id && !PROXY_URL_PATTERN.test(proxy))
+  if (!edit.proxy_id && (proxy || !options.reuseSavedFields) && !PROXY_URL_PATTERN.test(proxy))
     throw new Error('proxy_url 必须以 http://、https://、socks5:// 或 socks5h:// 开头')
   const deviceIds = parseDeviceIds(edit.claude_device_ids_text)
-  if (!deviceIds.length) throw new Error('设备资料不能为空，请填写至少一个设备标识')
+  if (!deviceIds.length && !options.reuseSavedFields) throw new Error('设备资料不能为空，请填写至少一个设备标识')
   return {
     id_token: String(edit.id_token ?? ''),
     access_token: String(edit.access_token),
     refresh_token: String(edit.refresh_token),
     last_refresh: String(edit.last_refresh),
     email,
-    account_uuid: String(edit.account_uuid),
+    account_uuid: String(edit.account_uuid ?? ''),
     organization_uuid: String(edit.organization_uuid),
-    organization_name: String(edit.organization_name),
+    organization_name: String(edit.organization_name ?? ''),
     claude_device_ids: deviceIds,
     type: String(edit.credential_type),
     expired: String(edit.expired),
@@ -271,14 +279,20 @@ export function buildOnboardPayload(edit: AccountForm): Record<string, unknown> 
 /**
  * Credential refresh for an already-linked account: proxy_id always, auth_json
  * only when replacing. Omitting auth_json tells the API to reuse the sealed copy.
+ * Optional claude_device_ids overlay lets a no-OAuth retry patch device ids onto
+ * the sealed credential.
  */
 export function buildReauthorizePayload(edit: AccountForm): {
   auth_json?: CredentialPayload
   proxy_id: string
+  claude_device_ids?: string[]
 } {
   const proxy_id = String(edit.proxy_id ?? '')
-  if (keepsSavedCredential(edit)) return { proxy_id }
-  const credential = buildCredential(edit)
+  if (keepsSavedCredential(edit)) {
+    const ids = parseDeviceIds(edit.claude_device_ids_text)
+    return ids.length ? { proxy_id, claude_device_ids: ids } : { proxy_id }
+  }
+  const credential = buildCredential(edit, { reuseSavedFields: !!edit.id && !!edit.credentials_configured })
   if (!credential) throw new Error('请先完成 Claude 授权或导入凭证')
   return { auth_json: credential, proxy_id }
 }

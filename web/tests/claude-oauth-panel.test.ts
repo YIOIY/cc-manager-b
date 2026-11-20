@@ -78,6 +78,18 @@ test('invalid state permits correction; failed exchange requires a fresh link', 
   wrapper.unmount()
 })
 
+test('an existing account can authorize through its saved proxy without exposing the proxy URL', async () => {
+  fetchMock.mockResolvedValueOnce(json({ data: pending }))
+  const wrapper = mount(ClaudeOAuthPanel, {
+    props: { savedAccountId: 'existing' },
+    global: { stubs },
+  })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ proxy_id: '', account_id: 'existing' })
+  wrapper.unmount()
+})
+
 test('closing during link generation cancels the late session and never fills the next form', async () => {
   let resolve!: (response: Response) => void
   fetchMock

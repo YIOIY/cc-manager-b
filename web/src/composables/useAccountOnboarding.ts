@@ -35,7 +35,7 @@ export interface AccountOnboardingProps {
   modelValue: boolean
   account: Account | null
   connectionId?: string
-  /** Open the wizard already asking for a fresh Claude authorization. */
+  /** Open credential synchronization for an already-linked account. */
   forceReauth?: boolean
   proxies: ProxyOption[]
   connections: ConnectionOption[]
@@ -80,10 +80,16 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     props.connections.some((c) => c.id === edit.value.platform_connection_id && c.enabled),
   )
   const poolProxyReady = computed(() => availableProxies.value.some((p) => p.id === edit.value.proxy_id && p.enabled))
+  const canReuseCredentialFields = computed(() => linkedReauth.value && !!edit.value.credentials_configured)
+  const savedProxyAccountId = computed(() =>
+    canReuseCredentialFields.value && !edit.value.proxy_id ? edit.value.id : undefined,
+  )
   const proxyReady = computed(
     () =>
       !proxyPending.value &&
-      (poolProxyReady.value || (!edit.value.proxy_id && (savedCredentials.value || !!edit.value.credential_proxy_url))),
+      (poolProxyReady.value ||
+        (!edit.value.proxy_id &&
+          (savedCredentials.value || canReuseCredentialFields.value || !!edit.value.credential_proxy_url))),
   )
   const selectedConnectionName = computed(
     () =>
@@ -97,10 +103,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       ? `${p.name || p.host} · ${p.scheme.toUpperCase()} · ${p.host}:${p.port}`
       : edit.value.proxy_id
         ? '所选代理不可用'
-        : savedCredentials.value
-          ? '沿用已保存凭证中的代理'
-          : edit.value.credential_proxy_url
-            ? '使用导入凭证中的代理（认证信息已隐藏）'
+        : edit.value.credential_proxy_url
+          ? '使用凭证中的代理（认证信息已隐藏）'
+          : savedCredentials.value || canReuseCredentialFields.value
+            ? '沿用已保存凭证中的代理'
             : '未选择'
   })
   const planLabel = computed(() => plans.find((p) => p.value === edit.value.plan)?.label || edit.value.plan || '')
@@ -310,6 +316,14 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   }
   /** User-initiated reauth: clear saved/form credentials and return to step 1. */
   function startReauthorize() {
+    if (linkedReauth.value && edit.value.claude_device_ids_text) {
+      retainedDevices = {
+        email: String(edit.value.account || '')
+          .trim()
+          .toLowerCase(),
+        ids: edit.value.claude_device_ids_text,
+      }
+    }
     replaceSavedCredential()
     pushFailed.value = false
     step.value = 1
@@ -418,8 +432,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     if ([fieldAnchors.proxy, fieldAnchors.connection].includes(anchor as typeof fieldAnchors.proxy)) {
       step.value = 1
     } else if (linkedReauth.value) {
-      // Fresh credentials / device fields live on step 2; proxy+platform on step 1.
-      step.value = isReauthCredentialAnchor(anchor) ? 2 : 1
+      // Saved-credential retry keeps devices on step 1; replace-credential path uses step 2.
+      step.value = savedCredentials.value ? 1 : isReauthCredentialAnchor(anchor) ? 2 : 1
       if (anchor === fieldAnchors.credentials || anchor.startsWith('credential-field-'))
         credentialDetailsOpen.value = true
     } else {
@@ -590,6 +604,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
           expected_version: props.account?.version,
         }
         if (payload.auth_json) body.auth_json = payload.auth_json
+        if (payload.claude_device_ids?.length) body.claude_device_ids = payload.claude_device_ids
         const result = await api<ReauthorizeResult>('/accounts/' + edit.value.id + '/reauthorize', {
           method: 'POST',
           body: JSON.stringify(body),
@@ -647,13 +662,23 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
           return
         }
         pushFailed.value = false
-        // Saved-credential reauth cannot patch sealed fields from the form; keep
-        // the marker and stay put so the user can retry or startReauthorize().
+        // Saved-credential retry: device gaps overlay without Claude OAuth.
+        // Other sealed-field errors keep the marker; user may retry or re-auth.
         if (
           linkedReauth.value &&
           savedCredentials.value &&
           e.fields.some((field) => field.field === 'auth_json' || field.field.startsWith('auth_json.'))
         ) {
+          const deviceError = e.fields.some(
+            (field) => field.field === 'auth_json.claude_device_ids' || field.field.includes('claude_device_ids'),
+          )
+          if (deviceError) {
+            fieldErrors.value.claude_device_ids_text =
+              e.fields.find((field) => field.field.includes('claude_device_ids'))?.message || '请填写设备资料'
+            step.value = 1
+            await jumpTo(fieldAnchors.deviceIds)
+            return
+          }
           scrollTop()
           return
         }
@@ -851,6 +876,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     connected,
     connectionReady,
     poolProxyReady,
+    canReuseCredentialFields,
+    savedProxyAccountId,
     selectedConnectionName,
     selectedProxyName,
     planLabel,

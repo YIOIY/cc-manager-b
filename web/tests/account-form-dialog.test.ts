@@ -522,6 +522,74 @@ function setupReauth(account: Account = linkedAccount()) {
   return w
 }
 
+test('reauthorizing a saved account uses fresh tokens without asking for saved device and proxy fields again', async () => {
+  const w = setupReauth(linkedAccount({ proxy_id: '' }))
+  await w.get('[data-reauthorize]').trigger('click')
+  expect(w.get('.fake-oauth').attributes('disabled')).toBeUndefined()
+  authorization = {
+    ...fixture,
+    auth_json: {
+      ...fixture.auth_json,
+      email: 'old@example.com',
+      account_uuid: undefined,
+      organization_name: undefined,
+    },
+  }
+  await w.get('.fake-oauth').trigger('click')
+  await next(w)
+  expect(w.get('[data-review]').isVisible()).toBe(true)
+  expect(w.text()).toContain('沿用已保存设备标识')
+  fetchMock.mockResolvedValueOnce(response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1' }))
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  const body = JSON.parse(fetchMock.mock.calls[0]![1].body)
+  expect(body.auth_json.access_token).toBe(fixture.auth_json.access_token)
+  expect(body.auth_json.account_uuid).not.toBe('undefined')
+  expect(body.auth_json.claude_device_ids).toEqual([])
+})
+
+test('unusable saved device fields can still be filled after fresh authorization', async () => {
+  const w = setupReauth()
+  await w.get('[data-reauthorize]').trigger('click')
+  authorization = { ...fixture, auth_json: { ...fixture.auth_json, email: 'old@example.com' } }
+  await authorize(w)
+  await next(w)
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: '设备资料缺失',
+          fields: [{ field: 'auth_json.claude_device_ids', code: 'REQUIRED', message: '请补填设备标识' }],
+        },
+      }),
+      { status: 422 },
+    ),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(w.get('[data-reauth-devices]').isVisible()).toBe(true)
+  await w.get('[data-reauth-devices] #field-device-ids input').setValue('replacement-device')
+  await next(w)
+  fetchMock.mockResolvedValueOnce(response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1' }))
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body).auth_json.claude_device_ids).toEqual(['replacement-device'])
+})
+
+test('device overrides already entered for the same account survive starting fresh authorization', async () => {
+  const w = setupReauth()
+  await w.get('[data-saved-devices] input').setValue('chosen-device')
+  await w.get('[data-reauthorize]').trigger('click')
+  authorization = { ...fixture, auth_json: { ...fixture.auth_json, email: 'old@example.com' } }
+  await authorize(w)
+  await next(w)
+  fetchMock.mockResolvedValueOnce(response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1' }))
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json.claude_device_ids).toEqual(['chosen-device'])
+})
+
 test('sync_failed reauth keeps sealed credentials and omits auth_json on submit', async () => {
   const w = setupReauth()
   expect(w.text()).toContain('可直接用已保存凭证同步到平台')
@@ -611,6 +679,10 @@ test('reauth 502 keeps the same token for retry; startReauthorize requires a new
   }
   await authorize(w)
   await next(w)
+  expect(w.find('[data-review]').exists()).toBe(true)
+  await w.get('[data-back]').trigger('click')
+  await flushPromises()
+  expect((w.get('[data-reauth-devices] #field-device-ids input').element as HTMLInputElement).value).toBe('dev-keep')
   await w
     .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
     .setValue('dev-new')
@@ -688,8 +760,10 @@ test('linked reauth credential gaps open step 2 and review can return there to e
   ).toContain('dev-1')
 })
 
-test('saved-credential auth_json errors stay on review without sending edited device ids', async () => {
+test('saved-credential device errors return to step 1 for overlay without OAuth', async () => {
   const w = setupReauth()
+  expect(w.find('[data-saved-devices]').exists()).toBe(true)
+  expect(w.find('.fake-oauth').exists()).toBe(false)
   await next(w)
   fetchMock.mockResolvedValueOnce(
     new Response(
@@ -706,15 +780,21 @@ test('saved-credential auth_json errors stay on review without sending edited de
   )
   await w.get('[data-submit]').trigger('click')
   await flushPromises()
-  expect(w.find('[data-review]').isVisible()).toBe(true)
-  expect(w.text()).toContain('设备资料无效')
+  expect(w.find('[data-review]').exists()).toBe(false)
+  expect(w.find('[data-saved-devices]').exists()).toBe(true)
+  expect(w.text()).toMatch(/无需重新授权|设备/)
   expect(w.text()).toContain('req-saved-device')
-  expect(w.find('[data-reauthorize]').exists()).toBe(true)
-  expect(w.find('[data-reauth-devices]').exists()).toBe(false)
+  expect(w.find('.fake-oauth').exists()).toBe(false)
+  await w.get('[data-saved-devices] input, [data-saved-devices] textarea').setValue('device-overlay')
+  await next(w)
+  expect(w.find('[data-review]').exists()).toBe(true)
+  expect(w.text()).toContain('本次补填')
   fetchMock.mockResolvedValueOnce(
     response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'saved' } }),
   )
   await w.get('[data-submit]').trigger('click')
   await flushPromises()
-  expect(JSON.parse(fetchMock.mock.calls[1]![1].body).auth_json).toBeUndefined()
+  const body = JSON.parse(fetchMock.mock.calls[1]![1].body)
+  expect(body.auth_json).toBeUndefined()
+  expect(body.claude_device_ids).toEqual(['device-overlay'])
 })

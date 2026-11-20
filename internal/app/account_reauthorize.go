@@ -66,10 +66,6 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 		proxyID, _ = rawProxy.(string)
 		proxyID = strings.TrimSpace(proxyID)
 	}
-	if !a.requireProxyBindable(w, r, proxyID) {
-		return
-	}
-
 	first, err := a.linkedSnapshot(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		fail(w, http.StatusConflict, errs.CodeValidationFailed, "账号尚未完成上号，请先完善资料并提交")
@@ -101,7 +97,7 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var lockedVersion int
-	if a.DB.QueryRowContext(ctx, `SELECT version FROM accounts WHERE id=? AND archived=0`, id).Scan(&lockedVersion) != nil {
+	if a.DB.QueryRowContext(ctx, `SELECT account,COALESCE(proxy_id,''),version FROM accounts WHERE id=? AND archived=0`, id).Scan(&accountEmail, &storedProxyID, &lockedVersion) != nil {
 		fail(w, http.StatusNotFound, "NOT_FOUND", "账号不存在")
 		return
 	}
@@ -115,16 +111,36 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	if writeExpected == 0 {
 		writeExpected = lockedVersion
 	}
+	if !proxyProvided {
+		proxyID = storedProxyID
+	}
+	if !a.requireProxyBindable(w, r, proxyID) {
+		return
+	}
 
 	// Load sealed credentials only after the lock so a concurrent reauthorize
 	// that stored a fresher token cannot be overwritten by a stale reuse.
+	saved, loadErr := a.loadCredential(id)
 	if reused {
-		loaded, e := a.loadCredential(id)
-		if e != nil || loaded == nil || len(loaded) == 0 {
+		if loadErr != nil || len(saved) == 0 {
 			writeError(w, r, errs.New(errs.CodeCredentialsRequired))
 			return
 		}
-		auth = loaded
+		auth = saved
+		// Optional device overlay: reuse tokens without a full Claude re-auth when
+		// the sealed copy is missing or has invalid claude_device_ids.
+		ids, valid := deviceIDsFromRequest(in["claude_device_ids"])
+		if !valid {
+			writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
+				Field: "auth_json.claude_device_ids", Code: errs.FieldInvalidFormat, Message: "设备标识必须是非空文本",
+			}))
+			return
+		}
+		if len(ids) > 0 {
+			auth["claude_device_ids"] = ids
+		}
+	} else if loadErr == nil {
+		inheritReauthorizeFields(auth, saved, accountEmail)
 	}
 	if email, _ := auth["email"].(string); email != "" && !strings.EqualFold(strings.TrimSpace(email), accountEmail) {
 		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
@@ -221,6 +237,89 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 }
 
 var errReauthorizeLocalConflict = errors.New("reauthorize local version conflict")
+
+// Inherit only non-token fields for the same account. Organization metadata is
+// reused only when the new authorization explicitly identifies the same org.
+func inheritReauthorizeFields(auth, saved map[string]any, accountEmail string) {
+	text := func(m map[string]any, key string) string {
+		value, _ := m[key].(string)
+		return strings.TrimSpace(value)
+	}
+	missing := func(key string) bool {
+		value := auth[key]
+		if value == nil {
+			return true
+		}
+		s, ok := value.(string)
+		return ok && strings.TrimSpace(s) == ""
+	}
+	if missing("email") {
+		auth["email"] = accountEmail
+	}
+	if !strings.EqualFold(text(auth, "email"), strings.TrimSpace(accountEmail)) ||
+		!strings.EqualFold(text(saved, "email"), strings.TrimSpace(accountEmail)) {
+		return
+	}
+	accountUUID := text(auth, "account_uuid")
+	savedAccountUUID := text(saved, "account_uuid")
+	if accountUUID != "" && savedAccountUUID != "" && accountUUID != savedAccountUUID {
+		return
+	}
+	for _, key := range []string{"account_uuid", "proxy_url"} {
+		if missing(key) && text(saved, key) != "" {
+			auth[key] = saved[key]
+		}
+	}
+	ids, valid := deviceIDsFromRequest(auth["claude_device_ids"])
+	if valid && len(ids) == 0 {
+		if oldIDs, ok := deviceIDsFromRequest(saved["claude_device_ids"]); ok && len(oldIDs) > 0 {
+			auth["claude_device_ids"] = oldIDs
+		}
+	}
+	orgUUID := text(auth, "organization_uuid")
+	if orgUUID != "" && orgUUID == text(saved, "organization_uuid") && missing("organization_name") && text(saved, "organization_name") != "" {
+		auth["organization_name"] = saved["organization_name"]
+	}
+}
+
+// deviceIDsFromRequest accepts ["id"] or a comma/newline-separated string.
+func deviceIDsFromRequest(raw any) ([]any, bool) {
+	switch v := raw.(type) {
+	case nil:
+		return nil, true
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok || strings.TrimSpace(s) == "" {
+				return nil, false
+			}
+			out = append(out, strings.TrimSpace(s))
+		}
+		return out, true
+	case []string:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(item); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out, true
+	case string:
+		parts := strings.FieldsFunc(v, func(r rune) bool {
+			return r == ',' || r == '，' || r == '\n' || r == '\r'
+		})
+		out := make([]any, 0, len(parts))
+		for _, p := range parts {
+			if s := strings.TrimSpace(p); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
 
 // completeReauthorize audits and writes the sealed credential locally after
 // the platform accepted the change. Detached from request cancellation.

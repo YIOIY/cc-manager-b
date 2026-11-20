@@ -157,3 +157,54 @@ func TestClaudeOAuthRequiresOnboardPermission(t *testing.T) {
 		res.Body.Close()
 	}
 }
+
+func TestClaudeOAuthCanUseExistingAccountProxy(t *testing.T) {
+	a, _, admin := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	saved := reauthAuth("one@example.test")
+	saved["proxy_url"] = "http://saved-user:saved-password@proxy.example:8080"
+	sealAccountAuth(t, a, id, saved)
+	res := admin.do("POST", "/api/v1/claude-oauth/sessions", `{"account_id":"`+id+`"}`)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("start=%d body=%s", res.StatusCode, readBody(res))
+	}
+	body := readBody(res)
+	if strings.Contains(body, "saved-password") || strings.Contains(body, "proxy.example") || strings.Contains(body, "access_token") {
+		t.Fatal("saved credential leaked")
+	}
+	var env struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &env); err != nil {
+		t.Fatal(err)
+	}
+	a.oauth.mu.Lock()
+	accountID := a.oauth.items[env.Data.ID].accountID
+	a.oauth.mu.Unlock()
+	if accountID != id {
+		t.Fatal("OAuth session did not bind the saved proxy account")
+	}
+	proxyURL, err := a.savedCredentialProxy(id)
+	if err != nil {
+		t.Fatal("cannot read saved proxy")
+	}
+	client, closeClient, err := a.claudeOAuthHTTPClient("", proxyURL)
+	if err != nil {
+		t.Fatal("cannot construct proxy client")
+	}
+	defer closeClient()
+	req, _ := http.NewRequest(http.MethodGet, "https://claude.example", nil)
+	selected, err := client.Transport.(*http.Transport).Proxy(req)
+	if err != nil || selected == nil || selected.Host != "proxy.example:8080" || selected.User.Username() != "saved-user" {
+		t.Fatal("OAuth client did not select the saved proxy")
+	}
+	// Reassignment after creating the link revokes use of the saved proxy.
+	if _, err := a.DB.Exec(`UPDATE accounts SET created_by_user_id='another-owner' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	assertEnvelope(t, admin.do("POST", "/api/v1/claude-oauth/sessions/"+env.Data.ID+"/exchange", `{"result":"code"}`), http.StatusForbidden, "PERMISSION_DENIED")
+	assertEnvelope(t, admin.do("POST", "/api/v1/claude-oauth/sessions", `{"account_id":"`+id+`"}`), http.StatusForbidden, "PERMISSION_DENIED")
+	assertEnvelope(t, admin.do("POST", "/api/v1/claude-oauth/sessions", `{"account_id":"missing"}`), http.StatusNotFound, "NOT_FOUND")
+}

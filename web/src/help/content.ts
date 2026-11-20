@@ -134,6 +134,10 @@ export const helpTopics: HelpTopic[] = [
         type: 'p',
         text: '设备标识为必填，授权不返回此项。它来自该账号实际登录 Claude Code 的那台电脑：Claude Code 首次运行时会在用户目录的 .claude.json 文件里保存一个 64 位的标识，字段名是 userID。',
       },
+      {
+        type: 'p',
+        text: '同一账号重新授权时，默认沿用已保存的设备标识和代理，无需重复填写。需要更换设备时可在确认页点「上一步」修改；没有可用的设备标识时，页面会显示补填入口。',
+      },
       { type: 'p', text: '在那台电脑上执行下面的命令，把输出的一整行填到「设备资料」里。' },
       {
         type: 'code',
