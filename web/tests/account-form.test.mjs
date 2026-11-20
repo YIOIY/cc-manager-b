@@ -57,6 +57,13 @@ test('reauthorize payload only carries credentials and always sends proxy_id', (
   assert.equal(cleared.proxy_id, '')
   assert.equal(cleared.auth_json.proxy_url, 'socks5h://user:pwd@1.2.3.4:1080')
   assert.throws(() => buildReauthorizePayload({ account: 'a@b.co' }), /授权|凭证/)
+  const saved = buildReauthorizePayload({
+    id: 'acc-1',
+    credentials_configured: true,
+    proxy_id: 'pool-proxy',
+  })
+  assert.equal(saved.proxy_id, 'pool-proxy')
+  assert.equal('auth_json' in saved, false)
 })
 
 test('a selected pool proxy satisfies the form without disclosing its password', () => {

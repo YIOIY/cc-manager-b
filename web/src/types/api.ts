@@ -596,6 +596,7 @@ export interface ReauthorizeResult {
   account_id: string
   platform_pushed: boolean
   upstream_id: string
+  credential?: { source: 'saved' | 'replaced' }
 }
 
 export type ListRow = Record<string, unknown> & { id?: string }

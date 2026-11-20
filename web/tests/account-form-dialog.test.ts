@@ -485,3 +485,236 @@ test('the manual and the device-id guide open in a new tab so the form is not lo
   expect(guide.attributes('target')).toBe('_blank')
   expect(guide.attributes('rel')).toContain('noopener')
 })
+
+function linkedAccount(overrides: Partial<Account> = {}): Account {
+  return {
+    id: 'acc-1',
+    account: 'old@example.com',
+    plan: 'claude/cc-pro',
+    register_location: 'US',
+    register_time: '2025-01-01',
+    plan_start_time: '2026-01-01',
+    plan_end_time: '2026-02-01',
+    proxy_id: 'px',
+    version: 2,
+    credentials_configured: true,
+    password_configured: true,
+    platform_status: 'sync_failed',
+    platform_links: [{ ingestion_state: 'accepted', connection_id: 'c' }],
+    ...overrides,
+  } as Account
+}
+
+function setupReauth(account: Account = linkedAccount()) {
+  const w = mount(AccountFormDialog, {
+    attachTo: document.body,
+    props: {
+      modelValue: true,
+      account,
+      proxies,
+      connections,
+      forceReauth: true,
+      connectionId: 'c',
+    },
+    global: { stubs },
+  })
+  wrappers.push(w)
+  return w
+}
+
+test('sync_failed reauth keeps sealed credentials and omits auth_json on submit', async () => {
+  const w = setupReauth()
+  expect(w.text()).toContain('可直接用已保存凭证同步到平台')
+  expect(w.find('.fake-oauth').exists()).toBe(false)
+  await next(w)
+  expect(w.find('[data-review]').exists()).toBe(true)
+  expect(w.get('[data-submit]').text()).toContain('同步到平台')
+  fetchMock.mockResolvedValueOnce(
+    response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'saved' } }),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  const [url, init] = fetchMock.mock.calls[0]!
+  expect(url).toContain('/accounts/acc-1/reauthorize')
+  const payload = JSON.parse(init.body)
+  expect(payload.auth_json).toBeUndefined()
+  expect(payload.proxy_id).toBe('px')
+  expect(payload.expected_version).toBe(2)
+})
+
+test('reauth 502 keeps the same token for retry; startReauthorize requires a new token', async () => {
+  const w = setupReauth(linkedAccount({ credentials_configured: false }))
+  authorization = {
+    ...fixture,
+    auth_json: { ...fixture.auth_json, email: 'old@example.com', access_token: 'token-a' },
+  }
+  await authorize(w)
+  await next(w)
+  expect(w.find('[data-reauth-devices]').exists()).toBe(true)
+  await w
+    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
+    .setValue('dev-keep')
+  await next(w)
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        error: { code: 'PLATFORM_UNAVAILABLE', message: '平台暂时无法访问', retryable: true, action: 'retry' },
+        request_id: 'req-502',
+      }),
+      { status: 502 },
+    ),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(w.find('[data-review]').exists()).toBe(true)
+  expect(w.get('[data-submit]').text()).toContain('重试同步')
+  expect(w.text()).toContain('req-502')
+  fetchMock.mockResolvedValueOnce(
+    response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'replaced' } }),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body).auth_json.access_token).toBe('token-a')
+
+  await w.setProps({ modelValue: false })
+  await w.setProps({
+    modelValue: true,
+    account: linkedAccount({ credentials_configured: false }),
+    forceReauth: true,
+  })
+  authorization = {
+    ...fixture,
+    auth_json: { ...fixture.auth_json, email: 'old@example.com', access_token: 'token-b' },
+  }
+  await authorize(w)
+  await next(w)
+  await w
+    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
+    .setValue('dev-keep')
+  await next(w)
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        error: { code: 'PLATFORM_UNAVAILABLE', message: '平台暂时无法访问', retryable: true, action: 'retry' },
+        request_id: 'req-502b',
+      }),
+      { status: 502 },
+    ),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  await w.get('[data-reauthorize]').trigger('click')
+  expect(w.find('.fake-oauth').exists()).toBe(true)
+  authorization = {
+    ...fixture,
+    auth_json: { ...fixture.auth_json, email: 'old@example.com', access_token: 'token-c' },
+  }
+  await authorize(w)
+  await next(w)
+  await w
+    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
+    .setValue('dev-new')
+  await next(w)
+  fetchMock.mockResolvedValueOnce(
+    response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'replaced' } }),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body).auth_json.access_token).toBe('token-c')
+})
+
+test('linked reauth OAuth without device ids can fill them on the dedicated step', async () => {
+  const w = setupReauth(linkedAccount({ credentials_configured: false }))
+  authorization = { ...fixture, auth_json: { ...fixture.auth_json, email: 'old@example.com' } }
+  await authorize(w)
+  await next(w)
+  expect(w.find('[data-reauth-devices]').exists()).toBe(true)
+  expect(w.find('#field-password').exists()).toBe(false)
+  expect(w.find('#field-plan').exists()).toBe(false)
+  await w
+    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
+    .setValue('device-from-step')
+  await next(w)
+  expect(w.find('[data-review]').exists()).toBe(true)
+  fetchMock.mockResolvedValueOnce(
+    response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'replaced' } }),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json.claude_device_ids).toEqual(['device-from-step'])
+})
+
+test('changing proxy while keeping saved reauth credentials does not clear the saved marker', async () => {
+  const w = setupReauth()
+  await w.get('#field-proxy select').setValue('px2')
+  await flushPromises()
+  expect(w.text()).toContain('将使用库内已保存凭证同步到平台')
+  await next(w)
+  fetchMock.mockResolvedValueOnce(
+    response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'saved' } }),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toMatchObject({ proxy_id: 'px2' })
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json).toBeUndefined()
+})
+
+test('linked reauth credential gaps open step 2 and review can return there to edit', async () => {
+  const w = setupReauth(linkedAccount({ credentials_configured: false }))
+  authorization = {
+    ...fixture,
+    auth_json: { ...fixture.auth_json, email: 'old@example.com', organization_uuid: undefined },
+  }
+  await authorize(w)
+  await next(w)
+  expect(w.find('[data-reauth-devices]').isVisible()).toBe(true)
+  expect(w.get('.credential-manual').attributes('open')).toBeDefined()
+  expect(w.text()).toMatch(/凭证缺少|organization_uuid/)
+  await w
+    .get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
+    .setValue('dev-1')
+  await w.get('#credential-field-organization_uuid input').setValue('org-fixed')
+  await next(w)
+  expect(w.find('[data-review]').isVisible()).toBe(true)
+  await w.get('[data-back]').trigger('click')
+  await flushPromises()
+  expect(w.find('[data-reauth-devices]').isVisible()).toBe(true)
+  expect(w.find('[data-review]').exists()).toBe(false)
+  expect(
+    (
+      w.get('[data-reauth-devices] #field-device-ids input, [data-reauth-devices] #field-device-ids textarea')
+        .element as HTMLInputElement
+    ).value,
+  ).toContain('dev-1')
+})
+
+test('saved-credential auth_json errors stay on review without sending edited device ids', async () => {
+  const w = setupReauth()
+  await next(w)
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: '设备资料无效',
+          fields: [{ field: 'auth_json.claude_device_ids', code: 'INVALID_FORMAT', message: '设备标识无效' }],
+        },
+        request_id: 'req-saved-device',
+      }),
+      { status: 422 },
+    ),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(w.find('[data-review]').isVisible()).toBe(true)
+  expect(w.text()).toContain('设备资料无效')
+  expect(w.text()).toContain('req-saved-device')
+  expect(w.find('[data-reauthorize]').exists()).toBe(true)
+  expect(w.find('[data-reauth-devices]').exists()).toBe(false)
+  fetchMock.mockResolvedValueOnce(
+    response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'saved' } }),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body).auth_json).toBeUndefined()
+})

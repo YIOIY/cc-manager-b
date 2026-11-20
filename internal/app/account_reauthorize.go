@@ -13,9 +13,9 @@ import (
 	"cc-manager/internal/errs"
 )
 
-// accountReauthorize replaces Claude credentials on a linked account and
-// pushes them to the supplier console so login_failed / re_login states can
-// recover without creating a duplicate delivery.
+// accountReauthorize pushes Claude credentials to the supplier console for a
+// linked account. Callers may send a fresh auth_json, or omit/null it to reuse
+// the sealed credential already stored locally.
 func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !a.requireMutable(w, r, "accounts", id, "账号不存在") {
@@ -27,11 +27,6 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	var in map[string]any
 	if !decodeJSON(w, r, &in, defaultBodyLimit) {
-		return
-	}
-	auth, err := decodeAuthInput(in["auth_json"])
-	if err != nil {
-		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{Field: "auth_json", Code: errs.FieldInvalidFormat, Message: err.Error()}))
 		return
 	}
 
@@ -47,46 +42,31 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "VERSION_CONFLICT", "账号资料已更新，请刷新后重试")
 		return
 	}
-	if email, _ := auth["email"].(string); email != "" && !strings.EqualFold(strings.TrimSpace(email), accountEmail) {
-		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
-			Field: "auth_json.email", Code: errs.FieldMismatch, Message: "凭证邮箱必须与账号一致",
-		}))
-		return
-	}
 
-	// Explicit proxy_id (including "") replaces the stored binding; omitted keeps it.
-	proxyID := storedProxyID
-	proxyProvided := false
-	if raw, ok := in["proxy_id"]; ok {
-		proxyProvided = true
-		proxyID, _ = raw.(string)
-		proxyID = strings.TrimSpace(proxyID)
-	}
-	if !a.requireProxyBindable(w, r, proxyID) {
-		return
-	}
-	// Fill proxy_url from the pool before credential validation — the browser
-	// leaves auth_json.proxy_url empty when a pool entry is selected.
-	if proxyID != "" {
-		proxyURL, e := a.resolveProxyURL(proxyID, "")
-		if e != nil {
+	raw, authPresent := in["auth_json"]
+	reused := !authPresent || raw == nil
+	var auth map[string]any
+	if !reused {
+		decoded, err := decodeAuthInput(raw)
+		if err != nil {
 			writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
-				Field: "proxy_id", Code: errs.FieldInvalidFormat, Message: e.Error(),
+				Field: "auth_json", Code: errs.FieldInvalidFormat, Message: err.Error(),
 			}))
 			return
 		}
-		auth["proxy_url"] = proxyURL
-	} else if proxyProvided {
-		// Cleared pool selection: keep whatever proxy_url the credential carries.
+		auth = decoded
 	}
-	if problems := validateAuthFields(auth); len(problems) > 0 {
-		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(problems...))
-		return
+
+	// Explicit proxy_id (including "") replaces the stored binding; omitted keeps it.
+	// proxy_id "" clears the pool binding and keeps the credential's proxy_url — not "direct".
+	proxyID := storedProxyID
+	proxyProvided := false
+	if rawProxy, ok := in["proxy_id"]; ok {
+		proxyProvided = true
+		proxyID, _ = rawProxy.(string)
+		proxyID = strings.TrimSpace(proxyID)
 	}
-	if url, _ := auth["proxy_url"].(string); strings.TrimSpace(url) == "" {
-		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
-			Field: "auth_json.proxy_url", Code: errs.FieldRequired, Message: "请选择代理或填写 proxy_url",
-		}))
+	if !a.requireProxyBindable(w, r, proxyID) {
 		return
 	}
 
@@ -97,17 +77,6 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, r, storageError(err, "平台账号读取失败"))
-		return
-	}
-
-	authBytes, err := json.Marshal(auth)
-	if err != nil {
-		writeError(w, r, storageError(err, "凭证编码失败"))
-		return
-	}
-	sealed, err := a.keys.Seal(authBytes, []byte(id))
-	if err != nil {
-		writeError(w, r, secretError("account_credentials", "凭证加密失败", err))
 		return
 	}
 
@@ -131,8 +100,6 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, errs.CodeVersionConflict, "平台记录已变化，请刷新后重试")
 		return
 	}
-	// Re-check account version under the same lock so a concurrent reauthorize
-	// cannot push to the platform and then fail the local write.
 	var lockedVersion int
 	if a.DB.QueryRowContext(ctx, `SELECT version FROM accounts WHERE id=? AND archived=0`, id).Scan(&lockedVersion) != nil {
 		fail(w, http.StatusNotFound, "NOT_FOUND", "账号不存在")
@@ -140,6 +107,64 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if expected != 0 && expected != lockedVersion {
 		fail(w, http.StatusConflict, "VERSION_CONFLICT", "账号资料已更新，请刷新后重试")
+		return
+	}
+	// Pin the local write to the version observed under the lock so a request
+	// that omitted expected_version cannot overwrite a newer credential.
+	writeExpected := expected
+	if writeExpected == 0 {
+		writeExpected = lockedVersion
+	}
+
+	// Load sealed credentials only after the lock so a concurrent reauthorize
+	// that stored a fresher token cannot be overwritten by a stale reuse.
+	if reused {
+		loaded, e := a.loadCredential(id)
+		if e != nil || loaded == nil || len(loaded) == 0 {
+			writeError(w, r, errs.New(errs.CodeCredentialsRequired))
+			return
+		}
+		auth = loaded
+	}
+	if email, _ := auth["email"].(string); email != "" && !strings.EqualFold(strings.TrimSpace(email), accountEmail) {
+		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
+			Field: "auth_json.email", Code: errs.FieldMismatch, Message: "凭证邮箱必须与账号一致",
+		}))
+		return
+	}
+	if proxyID != "" {
+		proxyURL, e := a.resolveProxyURL(proxyID, "")
+		if e != nil {
+			writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
+				Field: "proxy_id", Code: errs.FieldInvalidFormat, Message: e.Error(),
+			}))
+			return
+		}
+		auth["proxy_url"] = proxyURL
+	} else if proxyProvided {
+		// Cleared pool selection: keep whatever proxy_url the credential carries.
+	}
+	if problems := validateAuthFields(auth); len(problems) > 0 {
+		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(problems...))
+		return
+	}
+	if url, _ := auth["proxy_url"].(string); strings.TrimSpace(url) == "" {
+		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
+			Field: "auth_json.proxy_url", Code: errs.FieldRequired, Message: "请选择代理或填写 proxy_url",
+		}))
+		return
+	}
+
+	// Always seal the auth that will be pushed (including merged proxy_url) so
+	// the local copy cannot drift from what the platform received.
+	authBytes, err := json.Marshal(auth)
+	if err != nil {
+		writeError(w, r, storageError(err, "凭证编码失败"))
+		return
+	}
+	sealed, err := a.keys.Seal(authBytes, []byte(id))
+	if err != nil {
+		writeError(w, r, secretError("account_credentials", "凭证加密失败", err))
 		return
 	}
 
@@ -169,9 +194,13 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	if actor == "" {
 		actor = "anonymous"
 	}
+	detail := snapshot.UpstreamID + " replaced"
+	if reused {
+		detail = snapshot.UpstreamID + " saved"
+	}
 	// Platform already has the new credential: audit and local persist must
 	// finish even if the client cancelled, matching completeProfileUpdate.
-	if err = a.completeReauthorize(ctx, id, actor, snapshot.UpstreamID, sealed, proxyID, expected); err != nil {
+	if err = a.completeReauthorize(ctx, id, actor, detail, sealed, proxyID, writeExpected); err != nil {
 		if errors.Is(err, errReauthorizeLocalConflict) {
 			fail(w, http.StatusConflict, errs.CodeVersionConflict, "平台已更新凭证，但本地版本冲突，请刷新后重试")
 			return
@@ -179,10 +208,15 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "平台已更新凭证，但本地保存失败，请刷新后重试"))
 		return
 	}
+	source := "replaced"
+	if reused {
+		source = "saved"
+	}
 	write(w, http.StatusOK, map[string]any{
 		"account_id":      id,
 		"platform_pushed": true,
 		"upstream_id":     snapshot.UpstreamID,
+		"credential":      map[string]any{"source": source},
 	})
 }
 

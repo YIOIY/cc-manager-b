@@ -64,6 +64,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   const authorizationStarted = ref(false)
   const oauthGeneration = ref(0)
   const proxyChanged = ref(false)
+  /** Set after a retryable platform push failure while credentials stay in the form. */
+  const pushFailed = ref(false)
   const addedProxies = ref<ProxyOption[]>([])
   const availableProxies = computed(() => [
     ...props.proxies,
@@ -273,6 +275,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   }
   function changeProxy(id: string) {
     if (id === (edit.value.proxy_id || '')) return
+    const keepSaved = linkedReauth.value && keepsSavedCredential(edit.value)
     const wasConnected = connected.value
     if (edit.value.claude_device_ids_text)
       retainedDevices = {
@@ -282,6 +285,12 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         ids: edit.value.claude_device_ids_text,
       }
     edit.value.proxy_id = id
+    if (keepSaved) {
+      // Reauth with sealed credentials: only the pool binding changes.
+      proxyChanged.value = false
+      resetNotices()
+      return
+    }
     if (wasConnected && source.value !== 'manual') {
       clearCredential(edit.value)
       if (edit.value.id) edit.value.replace_credentials = true
@@ -298,6 +307,19 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     source.value = ''
     oauthIdentity.value = null
     clearCredential(edit.value)
+  }
+  /** User-initiated reauth: clear saved/form credentials and return to step 1. */
+  function startReauthorize() {
+    replaceSavedCredential()
+    pushFailed.value = false
+    step.value = 1
+    oauthGeneration.value++
+    authorizationStarted.value = false
+    proxyChanged.value = false
+    credentialPaste.value = ''
+    oauthWarnings.value = []
+    resetNotices()
+    scrollTop()
   }
   async function changeAccount() {
     if (busy.value || edit.value.id) return
@@ -387,13 +409,20 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     source.value = 'manual'
     await advance()
   }
-  async function jumpTo(anchor: string) {
-    if (
-      [fieldAnchors.proxy, fieldAnchors.connection].includes(anchor as typeof fieldAnchors.proxy) ||
-      (linkedReauth.value && anchor !== fieldAnchors.deviceIds)
+  function isReauthCredentialAnchor(anchor: string) {
+    return (
+      anchor === fieldAnchors.deviceIds || anchor === fieldAnchors.credentials || anchor.startsWith('credential-field-')
     )
+  }
+  async function jumpTo(anchor: string) {
+    if ([fieldAnchors.proxy, fieldAnchors.connection].includes(anchor as typeof fieldAnchors.proxy)) {
       step.value = 1
-    else {
+    } else if (linkedReauth.value) {
+      // Fresh credentials / device fields live on step 2; proxy+platform on step 1.
+      step.value = isReauthCredentialAnchor(anchor) ? 2 : 1
+      if (anchor === fieldAnchors.credentials || anchor.startsWith('credential-field-'))
+        credentialDetailsOpen.value = true
+    } else {
       step.value = 2
       if (anchor === fieldAnchors.credentials || anchor.startsWith('credential-field-'))
         credentialDetailsOpen.value = true
@@ -417,11 +446,11 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   }
   function goBack() {
     if (busy.value) return
-    // Reauth only uses step 2 for device ids; back from review goes there when
-    // devices are still empty, otherwise back to auth.
-    if (linkedReauth.value && step.value === 3)
-      step.value = parseDeviceIds(edit.value.claude_device_ids_text).length ? 1 : 2
-    else step.value = Math.max(1, step.value - 1)
+    // Replacing credentials: review → step 2 so device/credential fields stay editable.
+    // Saved-credential sync has no step-2 form; review → step 1.
+    if (linkedReauth.value && step.value === 3) {
+      step.value = savedCredentials.value ? 1 : 2
+    } else step.value = Math.max(1, step.value - 1)
     notice.value = null
     scrollTop()
   }
@@ -556,15 +585,16 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       if (!checkConnectionAndProxy() || !(await validateDetails())) return
       if (linkedReauth.value) {
         const payload = buildReauthorizePayload(edit.value)
-        const body = {
-          auth_json: payload.auth_json,
+        const body: Record<string, unknown> = {
           proxy_id: payload.proxy_id,
           expected_version: props.account?.version,
         }
+        if (payload.auth_json) body.auth_json = payload.auth_json
         const result = await api<ReauthorizeResult>('/accounts/' + edit.value.id + '/reauthorize', {
           method: 'POST',
           body: JSON.stringify(body),
         })
+        pushFailed.value = false
         edit.value = {}
         credentialPaste.value = ''
         emit('update:modelValue', false)
@@ -603,7 +633,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       if (e instanceof ApiError && e.fields.length) {
         fieldErrors.value = applyFieldErrors(e.fields, accountFieldMap)
         const keys = Object.keys(fieldErrors.value)
+        // Onboarding may force re-entry of a rejected saved credential; linked
+        // reauth keeps the saved marker so re-authorization stays optional.
         if (
+          !linkedReauth.value &&
           savedCredentials.value &&
           e.fields.some((field) => field.field === 'auth_json' || field.field.startsWith('auth_json.'))
         ) {
@@ -613,8 +646,45 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
           scrollTop()
           return
         }
+        pushFailed.value = false
+        // Saved-credential reauth cannot patch sealed fields from the form; keep
+        // the marker and stay put so the user can retry or startReauthorize().
+        if (
+          linkedReauth.value &&
+          savedCredentials.value &&
+          e.fields.some((field) => field.field === 'auth_json' || field.field.startsWith('auth_json.'))
+        ) {
+          scrollTop()
+          return
+        }
         if (keys.some((k) => credentialInputs.some((f) => f.key === k))) credentialDetailsOpen.value = true
         await jumpTo(anchorForKey(keys[0]!))
+        return
+      }
+      if (e instanceof ApiError && e.status === 409) {
+        pushFailed.value = false
+        return
+      }
+      if (
+        e instanceof ApiError &&
+        (e.message.includes('平台已更新凭证') || e.code === 'STORAGE_UNAVAILABLE') &&
+        linkedReauth.value
+      ) {
+        // Platform accepted the push but local persist failed — not a plain retry.
+        pushFailed.value = false
+        return
+      }
+      if (
+        e instanceof ApiError &&
+        (e.retryable || e.status >= 500 || e.status === 0 || e.action === 'retry' || e.action === 'check_platform')
+      ) {
+        pushFailed.value = true
+        step.value = 3
+        return
+      }
+      if (!(e instanceof ApiError)) {
+        pushFailed.value = true
+        step.value = 3
       }
     } finally {
       saving.value = false
@@ -631,8 +701,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       return true
     try {
       await ElMessageBox.confirm(
-        '资料尚未提交，退出会清空本次填写的账号资料和授权凭证。已保存的新代理会保留在代理池。',
-        '退出上号？',
+        linkedReauth.value
+          ? '退出会清空本次未成功同步的新凭证。下次打开将使用库内已保存的凭证；若本次推送未成功，刚兑换的令牌不会保留。已保存的新代理会保留在代理池。'
+          : '资料尚未提交，退出会清空本次填写的账号资料和授权凭证。已保存的新代理会保留在代理池。',
+        linkedReauth.value ? '退出重新授权？' : '退出上号？',
         { confirmButtonText: '退出', cancelButtonText: '继续填写', type: 'warning' },
       )
       return true
@@ -672,6 +744,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       knownKeys.value = new Set()
       authorizationStarted.value = false
       proxyChanged.value = false
+      pushFailed.value = false
       addedProxies.value = []
       retainedDevices = null
       lastAttempt = ''
@@ -696,10 +769,13 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         captureKnown()
       }
       if (props.forceReauth && edit.value.id) {
-        replaceSavedCredential()
-        source.value = ''
+        // Keep sealed credentials by default; user may startReauthorize().
         const bound = linkedConnectionId.value
         if (bound) edit.value.platform_connection_id = bound
+        if (!keepsSavedCredential(edit.value)) {
+          replaceSavedCredential()
+          source.value = ''
+        }
       }
       initialForm = JSON.stringify(edit.value)
       idempotencyKey = randomId()
@@ -729,12 +805,24 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     lastAttempt = ''
     retainedDevices = null
   })
-  const stepLabels = computed(() =>
-    linkedReauth.value ? ['重新授权', '确认更新'] : ['连接账号', '补充资料', '确认上号'],
-  )
+  const stepLabels = computed(() => {
+    if (!linkedReauth.value) return ['连接账号', '补充资料', '确认上号']
+    if (savedCredentials.value) return ['同步凭证', '确认更新']
+    return ['重新授权', '补充设备', '确认更新']
+  })
   const displayStep = computed(() => {
     if (!linkedReauth.value) return step.value
-    return step.value >= 3 ? 2 : 1
+    if (savedCredentials.value) return step.value >= 3 ? 2 : 1
+    return step.value
+  })
+  const submitLabel = computed(() => {
+    if (saving.value) return linkedReauth.value ? '正在同步…' : '正在保存并提交…'
+    if (linkedReauth.value) {
+      if (pushFailed.value) return '重试同步'
+      if (savedCredentials.value) return '同步到平台'
+      return '确认并更新凭证'
+    }
+    return pushFailed.value ? '重试提交' : '确认并上号'
   })
   return {
     stepLabels,
@@ -756,6 +844,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     authorizationStarted,
     oauthGeneration,
     proxyChanged,
+    pushFailed,
+    submitLabel,
     availableProxies,
     savedCredentials,
     connected,
@@ -787,6 +877,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     proxyCreated,
     changeProxy,
     replaceSavedCredential,
+    startReauthorize,
     changeAccount,
     fillFromPaste,
     importDevices,

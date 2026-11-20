@@ -15,7 +15,13 @@
         <div>
           <h2>{{ forceReauth ? '重新授权' : edit.id ? '完善资料并上号' : '添加 Claude 账号' }}</h2>
           <p>
-            {{ forceReauth ? '重新登录 Claude，更新凭证并同步到平台。' : '连接账号，补充上号资料，确认后提交。' }}
+            {{
+              forceReauth
+                ? savedCredentials
+                  ? '可直接用已保存凭证同步到平台，也可重新授权。'
+                  : '重新登录 Claude，更新凭证并同步到平台。'
+                : '连接账号，补充上号资料，确认后提交。'
+            }}
             <a class="dialog-help-link" href="/help?topic=onboard" target="_blank" rel="noopener noreferrer"
               ><BookOpen :size="13" />上号手册</a
             >
@@ -76,8 +82,11 @@
             @pending="proxyPending = $event"
           />
           <div v-if="savedCredentials && !edit.proxy_id" class="field-hint">未更换代理时沿用已保存凭证中的代理。</div>
-          <div v-if="edit.proxy_id && connected" class="field-hint">
+          <div v-if="edit.proxy_id && connected && !(linkedReauth && savedCredentials)" class="field-hint">
             更换代理后需要重新授权，已填写的交付资料会保留。
+          </div>
+          <div v-if="linkedReauth && savedCredentials" class="field-hint">
+            沿用已保存凭证时可更换代理后直接同步；清空代理表示解除池绑定并沿用凭证内的代理地址。
           </div>
         </el-form-item>
         <p v-if="proxyChanged" class="wizard-inline-notice" role="status">
@@ -87,9 +96,9 @@
           <CheckCircle2 :size="22" />
           <div>
             <strong>{{ edit.account }}</strong>
-            <p>账号凭证已保存，无需重复授权。</p>
+            <p>{{ linkedReauth ? '将使用库内已保存凭证同步到平台。' : '账号凭证已保存，无需重复授权。' }}</p>
           </div>
-          <el-button text @click="replaceSavedCredential">重新授权</el-button>
+          <el-button text @click="startReauthorize">重新授权</el-button>
         </div>
         <template v-else>
           <ClaudeOAuthPanel
@@ -110,7 +119,7 @@
                 {{ source === 'import' ? '导入完成，下一步检查并补充缺失资料。' : '下一步填写账号资料与完整凭证。' }}
               </p>
             </div>
-            <el-button text :disabled="busy" @click="replaceSavedCredential">改用浏览器授权</el-button>
+            <el-button text :disabled="busy" @click="startReauthorize">改用浏览器授权</el-button>
           </div>
           <div class="wizard-connection-actions">
             <span class="field-hint">{{
@@ -150,6 +159,72 @@
             </div>
           </details>
         </template>
+      </section>
+      <section v-if="step === 2 && linkedReauth" class="wizard-page" aria-label="补充设备与凭证" data-reauth-devices>
+        <div class="wizard-connected">
+          <CheckCircle2 :size="22" />
+          <div>
+            <strong>{{ edit.account || edit.credential_email || '凭证已连接' }}</strong>
+            <p>授权不返回设备标识，请补充设备资料后再同步到平台。</p>
+          </div>
+        </div>
+        <el-form-item
+          :id="fieldAnchors.deviceIds"
+          label="设备资料"
+          required
+          :class="fieldClass(fieldAnchors.deviceIds)"
+          :error="fieldErrors.claude_device_ids_text"
+          ><el-input
+            v-model="edit.claude_device_ids_text"
+            type="textarea"
+            :rows="2"
+            placeholder="填写设备 ID，多个 ID 用逗号或换行分隔"
+          />
+          <div class="field-hint">
+            必填。从已有有效凭证获取真实设备 ID。
+            <a class="dialog-help-link" href="/help?topic=device-id" target="_blank" rel="noopener noreferrer"
+              >如何获取？</a
+            >
+          </div>
+          <el-button text type="primary" @click="deviceImportOpen = !deviceImportOpen"
+            >从已有凭证导入设备资料</el-button
+          >
+          <div v-if="deviceImportOpen" class="wizard-device-import">
+            <el-input
+              v-model="devicePaste"
+              type="textarea"
+              :rows="2"
+              placeholder="仅提取 JSON 中的 claude_device_ids，不更换账号凭证"
+            /><el-button :disabled="!devicePaste.trim()" @click="importDevices">提取设备资料</el-button>
+          </div></el-form-item
+        >
+        <details
+          :id="fieldAnchors.credentials"
+          class="credential-manual"
+          :open="credentialDetailsOpen"
+          @toggle="credentialDetailsOpen = ($event.target as HTMLDetailsElement).open"
+        >
+          <summary><ShieldCheck :size="15" />高级凭证字段<span class="field-hint">默认隐藏敏感值</span></summary>
+          <div v-if="credentialDetailsOpen" class="form-grid two credential-grid">
+            <el-form-item
+              v-for="field in visibleCredentialInputs"
+              :id="'credential-field-' + field.key"
+              :key="field.key"
+              :required="field.required"
+              :error="fieldErrors[field.key]"
+              ><template #label
+                ><span class="credential-field-label"
+                  >{{ field.label }}<code>{{ field.code }}</code></span
+                ></template
+              ><el-input
+                v-model="edit[field.key]"
+                :type="field.secret ? 'password' : 'text'"
+                :show-password="field.secret"
+                :placeholder="field.placeholder"
+                autocomplete="off"
+            /></el-form-item>
+          </div>
+        </details>
       </section>
       <section v-if="step === 2 && !linkedReauth" class="wizard-page" aria-label="补充资料">
         <div class="wizard-identity">
@@ -316,40 +391,66 @@
         <div class="wizard-connected">
           <CheckCircle2 :size="24" />
           <div>
-            <strong>{{ forceReauth ? '凭证已就绪' : '资料已齐全' }}</strong>
-            <p>{{ forceReauth ? '核对后将更新本地凭证并推送到平台。' : '核对信息后，提交到所选平台。' }}</p>
+            <strong>{{ linkedReauth ? (pushFailed ? '同步未成功，凭证仍保留' : '凭证已就绪') : '资料已齐全' }}</strong>
+            <p>
+              {{
+                linkedReauth
+                  ? pushFailed
+                    ? '可修改代理后重试同步，或主动重新授权。关闭窗口不会保存本次未成功推送的新令牌。'
+                    : savedCredentials
+                      ? '核对后将使用库内已保存凭证推送到平台。'
+                      : '核对后将更新本地凭证并推送到平台。'
+                  : '核对信息后，提交到所选平台。'
+              }}
+            </p>
           </div>
         </div>
         <dl class="wizard-facts wizard-review">
           <dt>账号</dt>
           <dd>{{ edit.account }}</dd>
-          <dt>套餐</dt>
-          <dd>{{ planLabel }}</dd>
-          <dt>本期订阅</dt>
-          <dd>{{ edit.plan_start_time }} 至 {{ edit.plan_end_time }}</dd>
-          <dt>注册日期</dt>
-          <dd>{{ edit.register_time }}</dd>
-          <dt>注册地区</dt>
-          <dd>{{ edit.register_location === 'US' ? '美国（US）' : edit.register_location }}</dd>
+          <template v-if="!linkedReauth">
+            <dt>套餐</dt>
+            <dd>{{ planLabel }}</dd>
+            <dt>本期订阅</dt>
+            <dd>{{ edit.plan_start_time }} 至 {{ edit.plan_end_time }}</dd>
+            <dt>注册日期</dt>
+            <dd>{{ edit.register_time }}</dd>
+            <dt>注册地区</dt>
+            <dd>{{ edit.register_location === 'US' ? '美国（US）' : edit.register_location }}</dd>
+          </template>
           <dt>上号平台</dt>
           <dd>{{ linkedReauth ? linkedConnectionName : selectedConnectionName }}</dd>
           <dt>所选代理</dt>
           <dd>{{ selectedProxyName }}</dd>
-          <dt>凭证与密码</dt>
-          <dd>已填写 · 内容已隐藏</dd>
+          <dt>{{ linkedReauth ? '凭证' : '凭证与密码' }}</dt>
+          <dd>{{ savedCredentials ? '沿用已保存凭证' : '已填写 · 内容已隐藏' }}</dd>
           <dt>设备资料</dt>
           <dd>
             {{ savedCredentials ? '沿用已保存资料' : edit.claude_device_ids_text?.trim() ? '已填写' : '未填写' }}
           </dd>
         </dl>
-        <p class="field-hint">提交后可查看平台处理进度；平台确认接收后才算上号成功。</p>
+        <p class="field-hint">
+          {{
+            linkedReauth
+              ? '仅平台确认接收后才算同步成功；失败时本次新兑换凭证不会写入本地。'
+              : '提交后可查看平台处理进度；平台确认接收后才算上号成功。'
+          }}
+        </p>
       </section>
     </el-form>
     <template #footer
       ><div class="wizard-footer">
         <div class="create-dialog-actions">
           <el-button data-cancel :disabled="busy" @click="requestClose">取消</el-button
-          ><el-button v-if="step > 1" data-back :disabled="busy" @click="goBack">上一步</el-button>
+          ><el-button v-if="step > 1" data-back :disabled="busy" @click="goBack">上一步</el-button
+          ><el-button
+            v-if="linkedReauth && (step === 3 || savedCredentials)"
+            data-reauthorize
+            text
+            :disabled="busy"
+            @click="startReauthorize"
+            >重新授权</el-button
+          >
         </div>
         <el-button
           v-if="step < 3"
@@ -369,9 +470,7 @@
           :loading="saving"
           :disabled="oauthBusy || proxyBusy"
           @click="save"
-          >{{
-            saving ? (forceReauth ? '正在更新凭证…' : '正在保存并提交…') : forceReauth ? '确认并更新凭证' : '确认并上号'
-          }}</el-button
+          >{{ submitLabel }}</el-button
         >
       </div></template
     >
@@ -414,6 +513,8 @@ const {
   busy,
   oauthGeneration,
   proxyChanged,
+  pushFailed,
+  submitLabel,
   availableProxies,
   savedCredentials,
   connected,
@@ -444,7 +545,7 @@ const {
   onAuthorizationStarted,
   proxyCreated,
   changeProxy,
-  replaceSavedCredential,
+  startReauthorize,
   changeAccount,
   fillFromPaste,
   importDevices,

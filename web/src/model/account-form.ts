@@ -269,16 +269,18 @@ export function buildOnboardPayload(edit: AccountForm): Record<string, unknown> 
 }
 
 /**
- * Credential refresh for an already-linked account: only auth_json + proxy_id.
- * Always sends proxy_id (possibly "") so clearing the pool binding is explicit.
+ * Credential refresh for an already-linked account: proxy_id always, auth_json
+ * only when replacing. Omitting auth_json tells the API to reuse the sealed copy.
  */
 export function buildReauthorizePayload(edit: AccountForm): {
-  auth_json: CredentialPayload
+  auth_json?: CredentialPayload
   proxy_id: string
 } {
+  const proxy_id = String(edit.proxy_id ?? '')
+  if (keepsSavedCredential(edit)) return { proxy_id }
   const credential = buildCredential(edit)
   if (!credential) throw new Error('请先完成 Claude 授权或导入凭证')
-  return { auth_json: credential, proxy_id: String(edit.proxy_id ?? '') }
+  return { auth_json: credential, proxy_id }
 }
 
 /** Default dates for a brand-new account: registered today, plan starts today and runs one month. */
