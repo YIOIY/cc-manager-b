@@ -174,7 +174,14 @@ func validOptionalMetadata(in map[string]any) error {
 
 // validateAuthFields reports every problem in a Claude credential object.
 // Field paths are prefixed with auth_json so they match the request body.
+// Rejecting an expired local copy does not prove the platform still holds the
+// same token; a not-yet-expired but platform-replaced credential can still be
+// pushed by "sync saved credentials".
 func validateAuthFields(auth map[string]any) []errs.FieldError {
+	return validateAuthFieldsAt(auth, time.Now().UTC())
+}
+
+func validateAuthFieldsAt(auth map[string]any, now time.Time) []errs.FieldError {
 	var f errs.Fields
 	for _, field := range requiredAuth {
 		value, ok := auth[field].(string)
@@ -199,8 +206,13 @@ func validateAuthFields(auth map[string]any) []errs.FieldError {
 	}
 	for _, key := range []string{"last_refresh", "expired"} {
 		if value, ok := auth[key].(string); ok && value != "" {
-			if _, err := time.Parse(time.RFC3339, value); err != nil {
+			at, err := time.Parse(time.RFC3339, value)
+			if err != nil {
 				f.Invalid("auth_json."+key, errs.Label("auth_json."+key)+"必须是 RFC3339 格式的时间")
+				continue
+			}
+			if key == "expired" && !at.After(now) {
+				f.Invalid("auth_json.expired", "访问令牌已过期，请重新授权")
 			}
 		}
 	}

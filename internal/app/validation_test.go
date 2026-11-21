@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOptionalFieldsValidation(t *testing.T) {
@@ -46,7 +47,8 @@ func TestUpstreamAccountTags(t *testing.T) {
 }
 
 func TestClaudeAuthValidation(t *testing.T) {
-	auth := map[string]any{"id_token": "", "access_token": "a", "refresh_token": "r", "last_refresh": "2026-09-20T00:17:44-07:00", "email": "user@example.com", "account_uuid": "u", "organization_uuid": "o", "organization_name": "name", "claude_device_ids": []any{"device"}, "type": "t", "expired": "2026-10-20T00:17:44-07:00", "proxy_url": "socks5h://user:pwd@1.2.3.4:8080", "verification_status": "v"}
+	future := time.Now().UTC().Add(30 * 24 * time.Hour).Format(time.RFC3339)
+	auth := map[string]any{"id_token": "", "access_token": "a", "refresh_token": "r", "last_refresh": "2026-09-20T00:17:44-07:00", "email": "user@example.com", "account_uuid": "u", "organization_uuid": "o", "organization_name": "name", "claude_device_ids": []any{"device"}, "type": "t", "expired": future, "proxy_url": "socks5h://user:pwd@1.2.3.4:8080", "verification_status": "v"}
 	if problems := validateAuth(auth); len(problems) != 0 {
 		t.Fatalf("valid auth rejected: %v", problems)
 	}
@@ -71,5 +73,40 @@ func TestClaudeAuthValidation(t *testing.T) {
 	problems := strings.Join(validateAuth(auth), ",")
 	if !strings.Contains(problems, "AUTH_PROXY_URL_INVALID") || !strings.Contains(problems, "AUTH_EXPIRED_INVALID") {
 		t.Fatalf("missing checks: %s", problems)
+	}
+}
+
+func TestValidateAuthFieldsExpiredAt(t *testing.T) {
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	base := map[string]any{
+		"id_token": "", "access_token": "a", "refresh_token": "r", "last_refresh": now.Add(-time.Hour).Format(time.RFC3339),
+		"email": "user@example.com", "account_uuid": "u", "organization_uuid": "o", "organization_name": "name",
+		"claude_device_ids": []any{"device"}, "type": "t", "proxy_url": "http://127.0.0.1:1", "verification_status": "v",
+	}
+	copyAuth := func(expired string) map[string]any {
+		out := map[string]any{}
+		for k, v := range base {
+			out[k] = v
+		}
+		out["expired"] = expired
+		return out
+	}
+	if problems := validateAuthFieldsAt(copyAuth(now.Add(-time.Second).Format(time.RFC3339)), now); len(problems) == 0 || problems[0].Field != "auth_json.expired" {
+		t.Fatalf("past: %v", problems)
+	}
+	if problems := validateAuthFieldsAt(copyAuth(now.Format(time.RFC3339)), now); len(problems) == 0 {
+		t.Fatal("exact expiry should fail")
+	}
+	if problems := validateAuthFieldsAt(copyAuth(now.Add(time.Second).Format(time.RFC3339)), now); len(problems) != 0 {
+		t.Fatalf("future: %v", problems)
+	}
+	// Offset timezone still compares in absolute time.
+	offset := now.Add(-2 * time.Hour).In(time.FixedZone("UTC-8", -8*3600)).Format(time.RFC3339)
+	if problems := validateAuthFieldsAt(copyAuth(offset), now); len(problems) == 0 {
+		t.Fatalf("timezone past: %v", problems)
+	}
+	futureOffset := now.Add(2 * time.Hour).In(time.FixedZone("UTC+9", 9*3600)).Format(time.RFC3339)
+	if problems := validateAuthFieldsAt(copyAuth(futureOffset), now); len(problems) != 0 {
+		t.Fatalf("timezone future: %v", problems)
 	}
 }

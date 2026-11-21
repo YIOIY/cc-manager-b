@@ -80,8 +80,9 @@ func TestWriteErrorAddsRetryAfterForRateLimits(t *testing.T) {
 
 func TestIdempotentReplayStillReturns202WithRequestID(t *testing.T) {
 	a, _, _, _ := deliveryFixture(t)
-	first := onboardRequest(a, deliveryBody(), "replay-envelope")
-	second := onboardRequest(a, deliveryBody(), "replay-envelope")
+	body := deliveryBody()
+	first := onboardRequest(a, body, "replay-envelope")
+	second := onboardRequest(a, body, "replay-envelope")
 	if first.Code != 202 || second.Code != 202 {
 		t.Fatalf("codes %d %d: %s", first.Code, second.Code, second.Body.String())
 	}

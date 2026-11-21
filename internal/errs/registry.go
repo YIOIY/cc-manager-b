@@ -35,6 +35,7 @@ func init() {
 		Def{Code: "PLAN_REQUIRED", Category: CategoryValidation, Action: ActionFixInput, Message: "缺少有效套餐", Doc: "预检"},
 		Def{Code: "AUTH_JSON_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "Claude 凭证格式不正确", Doc: "导入预览行问题"},
 		Def{Code: "CREDENTIALS_INCOMPLETE", Category: CategoryValidation, Action: ActionFixInput, Message: "Claude 凭证字段不完整", Hint: "请补充或修正标出的凭证字段", Doc: "预检：每个有问题的凭证字段一条，field 为路径，message 为字段文案"},
+		Def{Code: "CREDENTIAL_EXPIRED", Category: CategoryValidation, Action: ActionReauthorize, Message: "访问令牌已过期", Hint: "请重新授权后再提交", Doc: "异步提交：排队或执行时发现凭证已过期；勿用未注册的 AUTH_EXPIRED_INVALID"},
 		Def{Code: "CREDENTIALS_REQUIRED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "缺少 Claude 凭证", Hint: "请先完成授权或粘贴已有凭证", Doc: "上号前必须有凭证"},
 		Def{Code: "PLATFORM_CONNECTION_REQUIRED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "缺少平台连接", Hint: "请选择要提交的供应商平台", Doc: "HTTP 层阶段 2 并入 fields；预检保留"},
 		Def{Code: "PREFLIGHT_BLOCKED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "资料或凭证未完善", Hint: "请按预检提示补充后再提交", Doc: "预检有 error 项时拒绝提交"},
@@ -77,6 +78,7 @@ func init() {
 		Def{Code: "SELF_DISABLE", Category: CategoryConflict, Status: 422, Action: ActionNone, Message: "不能停用自己", Doc: "—"},
 		Def{Code: "RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Action: ActionWait, Message: "操作过于频繁", Hint: "请稍后再试", Doc: "details.retry_after_seconds 与 Retry-After 头一致"},
 		Def{Code: "OAUTH_BUSY", Category: CategoryRateLimit, Status: 429, Action: ActionWait, Message: "授权会话较多", Hint: "请稍后重试", Doc: "待授权链接数达到上限"},
+		Def{Code: "OAUTH_RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Retryable: true, Action: ActionWait, Message: "Claude 授权暂时限流", Hint: "请稍后再试，勿连续重新授权", Doc: "details.retry_after_seconds 与 Retry-After 头一致；本地按 accountID 冷却有封顶，不等于完整遵守上游 Retry-After", AllowCustomMessage: true},
 		Def{Code: "OAUTH_EXCHANGE_FAILED", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionReauthorize, Message: "Claude 授权服务未能完成兑换", Hint: "请重新生成授权链接后再试", Doc: "文案由客户端给出；不含上游响应", AllowCustomMessage: true},
 		Def{Code: "ENCRYPTION_KEY_REQUIRED", Category: CategoryConfig, Status: 503, Action: ActionContactAdmin, Message: "服务尚未配置凭证加密密钥", Hint: "请联系管理员完成配置", Doc: "HTTP 与任务共用", AllowCustomMessage: true},
 		Def{Code: "OAUTH_START_FAILED", Category: CategoryInternal, Status: 500, Retryable: true, Action: ActionRetry, Message: "无法生成授权链接", Hint: "请稍后重试", Doc: "随机数生成失败"},
@@ -189,6 +191,7 @@ const (
 	CodeAuthJsonInvalid             = "AUTH_JSON_INVALID"
 	CodeCredentialsRequired         = "CREDENTIALS_REQUIRED"
 	CodeCredentialsIncomplete       = "CREDENTIALS_INCOMPLETE"
+	CodeCredentialExpired           = "CREDENTIAL_EXPIRED"
 	CodePlatformConnectionRequired  = "PLATFORM_CONNECTION_REQUIRED"
 	CodePreflightBlocked            = "PREFLIGHT_BLOCKED"
 	CodeProxyInvalid                = "PROXY_INVALID"
@@ -234,6 +237,7 @@ const (
 	CodeSelfDisable                 = "SELF_DISABLE"
 	CodeRateLimited                 = "RATE_LIMITED"
 	CodeOauthBusy                   = "OAUTH_BUSY"
+	CodeOauthRateLimited            = "OAUTH_RATE_LIMITED"
 	CodeOauthExchangeFailed         = "OAUTH_EXCHANGE_FAILED"
 	CodeEncryptionKeyRequired       = "ENCRYPTION_KEY_REQUIRED"
 	CodeOauthStartFailed            = "OAUTH_START_FAILED"

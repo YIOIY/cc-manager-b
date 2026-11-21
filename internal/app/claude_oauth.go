@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -11,9 +13,20 @@ import (
 	"time"
 
 	"cc-manager/internal/claudeoauth"
+	"cc-manager/internal/errs"
 )
 
 const oauthSessionTTL = 30 * time.Minute
+
+// Local cooldown policy for Claude OAuth against a known accountID.
+// Wait is clamped to max(Retry-After, 60s) then capped at 15 minutes. Cap is a
+// local bound, not full compliance with upstream Retry-After. Covers one
+// process only: no accountID (new onboard), multi-instance, restart, and
+// in-flight requests started before the cooldown is set are out of scope.
+const (
+	oauthCooldownDefault = time.Minute
+	oauthCooldownCap     = 15 * time.Minute
+)
 
 type oauthPending struct {
 	owner     [32]byte
@@ -36,12 +49,91 @@ func (s *oauthPendingStore) sweep(stamp time.Time) {
 		}
 	}
 }
+
+type oauthAccountCooldown struct {
+	mu    sync.Mutex
+	until map[string]time.Time
+}
+
+func (s *oauthAccountCooldown) sweepLocked(now time.Time) {
+	for id, at := range s.until {
+		if !now.Before(at) {
+			delete(s.until, id)
+		}
+	}
+}
+
+func (s *oauthAccountCooldown) remaining(accountID string, now time.Time) time.Duration {
+	if accountID == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.until == nil {
+		return 0
+	}
+	s.sweepLocked(now)
+	at, ok := s.until[accountID]
+	if !ok || !now.Before(at) {
+		return 0
+	}
+	return at.Sub(now)
+}
+
+// extend keeps the later of the existing and new deadlines so concurrent
+// responses cannot shorten the cooldown.
+func (s *oauthAccountCooldown) extend(accountID string, now time.Time, wait time.Duration) time.Duration {
+	// max(Retry-After, 60s), then 15m cap.
+	if wait < oauthCooldownDefault {
+		wait = oauthCooldownDefault
+	}
+	if wait > oauthCooldownCap {
+		wait = oauthCooldownCap
+	}
+	if accountID == "" {
+		return oauthRetryAfterSeconds(wait)
+	}
+	deadline := now.Add(wait)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.until == nil {
+		s.until = make(map[string]time.Time)
+	}
+	s.sweepLocked(now)
+	if existing, ok := s.until[accountID]; ok && existing.After(deadline) {
+		deadline = existing
+	}
+	s.until[accountID] = deadline
+	return oauthRetryAfterSeconds(deadline.Sub(now))
+}
+
+func oauthRetryAfterSeconds(wait time.Duration) time.Duration {
+	if wait <= 0 {
+		return time.Second
+	}
+	secs := int(math.Ceil(wait.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	return time.Duration(secs) * time.Second
+}
+
 func oauthOwner(r *http.Request) [32]byte {
 	c, _ := r.Cookie(sessionCookie)
 	if c == nil {
 		return [32]byte{}
 	}
 	return sha256.Sum256([]byte(sessionUser(r).ID + ":" + c.Value))
+}
+
+func (a *App) writeOAuthRateLimited(w http.ResponseWriter, r *http.Request, wait time.Duration) {
+	secs := int(oauthRetryAfterSeconds(wait) / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+	writeError(w, r, errs.New(errs.CodeOauthRateLimited).
+		WithDetail("retry_after_seconds", secs).
+		WithMessage(fmt.Sprintf("Claude 授权暂时限流，请约 %d 秒后再试", secs)))
 }
 
 func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +167,10 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 		if !a.requireProxyBindable(w, r, in.ProxyID) {
 			return
 		}
+	}
+	if wait := a.oauthCooldown.remaining(in.AccountID, time.Now()); wait > 0 {
+		a.writeOAuthRateLimited(w, r, wait)
+		return
 	}
 	flow, err := claudeoauth.NewPending()
 	if err != nil {
@@ -123,9 +219,10 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	now := time.Now()
 	a.oauth.mu.Lock()
 	p, ok := a.oauth.items[id]
-	if !ok || p.owner != oauthOwner(r) || !time.Now().Before(p.expires) {
+	if !ok || p.owner != oauthOwner(r) || !now.Before(p.expires) {
 		a.oauth.mu.Unlock()
 		fail(w, 404, "OAUTH_SESSION_EXPIRED", "授权链接已失效，请重新获取链接")
 		return
@@ -134,6 +231,13 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.oauth.mu.Unlock()
 		fail(w, 422, "OAUTH_RESULT_INVALID", err.Error())
+		return
+	}
+	if wait := a.oauthCooldown.remaining(p.accountID, now); wait > 0 {
+		// Drop pending so the client must start again after the wait.
+		delete(a.oauth.items, id)
+		a.oauth.mu.Unlock()
+		a.writeOAuthRateLimited(w, r, wait)
 		return
 	}
 	// One-shot consumption happens before network IO, including failed exchanges.
@@ -162,13 +266,32 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	result, err := claudeoauth.Exchange(ctx, client, code, p.flow.State, p.flow.Verifier)
 	if err != nil {
-		fail(w, 502, "OAUTH_EXCHANGE_FAILED", err.Error())
+		a.writeOAuthExchangeError(w, r, p.accountID, err)
 		return
 	}
 	a.auditFor(r, "account.oauth", "", "", "authorization completed")
 	// Fresh credentials only, never previously stored credentials. No database
 	// writes or supplier submissions occur until the user submits the form.
 	write(w, 200, result)
+}
+
+func (a *App) writeOAuthExchangeError(w http.ResponseWriter, r *http.Request, accountID string, err error) {
+	if se, ok := claudeoauth.AsStatusError(err); ok {
+		switch se.Status {
+		case http.StatusTooManyRequests:
+			wait := se.RetryAfter
+			if wait <= 0 {
+				wait = oauthCooldownDefault
+			}
+			secs := a.oauthCooldown.extend(accountID, time.Now(), wait)
+			a.writeOAuthRateLimited(w, r, secs)
+			return
+		case http.StatusUnauthorized, http.StatusForbidden:
+			writeError(w, r, errs.New(errs.CodeOauthExchangeFailed).WithMessage("令牌无效或访问被拒绝，请重新授权"))
+			return
+		}
+	}
+	writeError(w, r, errs.New(errs.CodeOauthExchangeFailed).WithMessage(err.Error()))
 }
 
 func (a *App) savedCredentialProxy(accountID string) (string, error) {

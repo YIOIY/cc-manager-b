@@ -47,6 +47,7 @@
 | `CONNECTION_UNREADABLE` | config | — | 否 | contact_admin | 平台令牌无法读取 | 异步结果：令牌解密失败（密钥更换或数据损坏） |
 | `CREDENTIALS_INCOMPLETE` | validation | — | 否 | fix_input | Claude 凭证字段不完整 | 预检：每个有问题的凭证字段一条，field 为路径，message 为字段文案 |
 | `CREDENTIALS_REQUIRED` | validation | 422 | 否 | fix_input | 缺少 Claude 凭证 | 上号前必须有凭证 |
+| `CREDENTIAL_EXPIRED` | validation | — | 否 | reauthorize | 访问令牌已过期 | 异步提交：排队或执行时发现凭证已过期；勿用未注册的 AUTH_EXPIRED_INVALID |
 | `CREDENTIAL_UNREADABLE` | config | — | 否 | fix_input | 已保存的凭证无法读取 | 阶段 2 并入 SECRET_UNREADABLE |
 | `CSRF_FAILED` | auth | 403 | 否 | retry | 页面会话已过期 | 缺少或不匹配的 X-CSRF-Token |
 | `DELIVERY_STATE_UNAVAILABLE` | validation | — | 否 | fix_input | 无法读取交付状态 | 预检 |
@@ -66,6 +67,7 @@
 | `OAUTH_BUSY` | rate_limit | 429 | 否 | wait | 授权会话较多 | 待授权链接数达到上限 |
 | `OAUTH_EXCHANGE_FAILED` | upstream | 502 | 是 | reauthorize | Claude 授权服务未能完成兑换 | 文案由客户端给出；不含上游响应；允许调用方自定义文案 |
 | `OAUTH_PROXY_INVALID` | validation | 422 | 否 | fix_input | 授权使用的代理不可用 | ；允许调用方自定义文案 |
+| `OAUTH_RATE_LIMITED` | rate_limit | 429 | 是 | wait | Claude 授权暂时限流 | details.retry_after_seconds 与 Retry-After 头一致；本地按 accountID 冷却有封顶，不等于完整遵守上游 Retry-After；允许调用方自定义文案 |
 | `OAUTH_RESULT_INVALID` | validation | 422 | 否 | fix_input | 授权结果无法识别 | 本地解析错误，文案由解析器给出；允许调用方自定义文案 |
 | `OAUTH_SESSION_EXPIRED` | not_found | 404 | 否 | reauthorize | 授权链接已失效 | 链接过期、被替换、已使用或不属于当前会话 |
 | `OAUTH_START_FAILED` | internal | 500 | 是 | retry | 无法生成授权链接 | 随机数生成失败 |

@@ -11,12 +11,15 @@ import (
 )
 
 func reauthAuth(email string) map[string]any {
+	now := time.Now().UTC()
 	return map[string]any{
 		"id_token": "", "access_token": "new-access", "refresh_token": "new-refresh",
-		"last_refresh": "2026-11-17T00:00:00Z", "email": email,
+		"last_refresh": now.Add(-time.Hour).Format(time.RFC3339), "email": email,
 		"account_uuid": "u", "organization_uuid": "o", "organization_name": "Org",
-		"claude_device_ids": []any{"device-id"}, "type": "claude", "expired": "2026-12-17T00:00:00Z",
-		"proxy_url": "", "verification_status": "not_required",
+		"claude_device_ids": []any{"device-id"}, "type": "claude",
+		"expired":              now.Add(30 * 24 * time.Hour).Format(time.RFC3339),
+		"proxy_url":            "",
+		"verification_status":  "not_required",
 	}
 }
 
@@ -235,6 +238,25 @@ func TestReauthorizeNullAuthJSONUsesSavedCredential(t *testing.T) {
 	authJSON, _ := stub.updates[0]["cpa_auth_json"].(string)
 	if !strings.Contains(authJSON, "null-path-access") {
 		t.Fatalf("pushed=%s", authJSON)
+	}
+}
+
+func TestReauthorizeRejectsExpiredSavedCredential(t *testing.T) {
+	a, stub, admin := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	if _, err := a.DB.Exec(`INSERT INTO proxies(id,name,scheme,host,port,enabled,created_at,updated_at) VALUES('pool','exit','http','127.0.0.1',9090,1,?,?)`, now(), now()); err != nil {
+		t.Fatal(err)
+	}
+	saved := reauthAuth("one@example.test")
+	saved["expired"] = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	sealAccountAuth(t, a, id, saved)
+	res := postReauth(t, admin, id, map[string]any{"proxy_id": "pool"})
+	body := readBody(res)
+	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "auth_json.expired") || !strings.Contains(body, "访问令牌已过期") {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	if len(stub.updates) != 0 {
+		t.Fatalf("supplier updates=%d", len(stub.updates))
 	}
 }
 

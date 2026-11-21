@@ -24,16 +24,17 @@ import (
 )
 
 type App struct {
-	DB           *sql.DB
-	cfg          Config
-	keys         *secretbox.Keyring
-	sessions     *sessionStore
-	logins       *loginLimiter
-	writes       *writeLimiter
-	oauth        oauthPendingStore
-	billMutex    sync.Mutex
-	billFactory  func(string, string) (billSupplier, error)
-	billInterval time.Duration
+	DB            *sql.DB
+	cfg           Config
+	keys          *secretbox.Keyring
+	sessions      *sessionStore
+	logins        *loginLimiter
+	writes        *writeLimiter
+	oauth         oauthPendingStore
+	oauthCooldown oauthAccountCooldown
+	billMutex     sync.Mutex
+	billFactory   func(string, string) (billSupplier, error)
+	billInterval  time.Duration
 
 	webMu      sync.Mutex
 	webClients map[string]*supplier.WebClient

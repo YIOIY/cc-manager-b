@@ -182,6 +182,12 @@ func (a *App) runOne(ctx context.Context) {
 		failed("PROXY_REQUIRED")
 		return
 	}
+	// Re-check after queue wait: credentials may have expired since enqueue.
+	if problems := validateAuthFields(auth); len(problems) > 0 {
+		a.finishJobErr(id, "failed", credentialSubmitError(problems))
+		a.setDelivery(accountID, spec.ConnectionID, "failed", "")
+		return
+	}
 	tokenBytes, err := decode(tokenSecret, spec.ConnectionID)
 	if err != nil {
 		a.finishJobErr(id, "failed", errs.New(errs.CodeConnectionUnreadable).WithDetail("secret", "connection_token"))
@@ -557,6 +563,21 @@ func outcomeOf(err error) *errs.Error {
 }
 
 var requiredAuth = []string{"access_token", "refresh_token", "last_refresh", "email", "account_uuid", "organization_uuid", "organization_name", "type", "expired", "proxy_url", "verification_status"}
+
+// credentialSubmitError maps worker-side auth validation onto registered job
+// outcomes so the UI gets reauthorize / fix_input instead of an Adhoc retry.
+func credentialSubmitError(problems []errs.FieldError) *errs.Error {
+	for _, p := range problems {
+		if p.Field == "auth_json.expired" {
+			return errs.New(errs.CodeCredentialExpired).WithDetail("field", p.Field)
+		}
+	}
+	e := errs.New(errs.CodeCredentialsIncomplete)
+	if len(problems) > 0 {
+		e = e.WithDetail("field", problems[0].Field).WithFields(problems...)
+	}
+	return e
+}
 
 func (a *App) preflight(accountID, connectionID string) map[string]any {
 	checks := []map[string]any{}

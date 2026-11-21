@@ -98,8 +98,11 @@
             <div>
               <strong>{{ edit.account }}</strong>
               <p>{{ linkedReauth ? '将使用库内已保存凭证同步到平台。' : '账号凭证已保存，无需重复授权。' }}</p>
+              <p v-if="fieldErrors.expired" class="wizard-inline-notice" data-saved-expired role="alert">
+                {{ fieldErrors.expired }}
+              </p>
             </div>
-            <el-button text @click="startReauthorize">重新授权</el-button>
+            <el-button text data-reauthorize @click="startReauthorize">重新授权</el-button>
           </div>
           <el-form-item
             v-if="linkedReauth"

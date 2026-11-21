@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -94,6 +95,52 @@ type Result struct {
 	Warnings     []string       `json:"warnings"`
 }
 
+// StatusError is a non-200 Claude OAuth HTTP response. The message never
+// includes the upstream body (tokens and codes can appear there).
+type StatusError struct {
+	Op         string
+	Status     int
+	RetryAfter time.Duration
+}
+
+func (e *StatusError) Error() string {
+	switch e.Status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Sprintf("Claude 授权服务拒绝访问（HTTP %d）", e.Status)
+	case http.StatusTooManyRequests:
+		return fmt.Sprintf("Claude 授权服务暂时限流（HTTP %d）", e.Status)
+	default:
+		return fmt.Sprintf("Claude 授权服务返回 HTTP %d", e.Status)
+	}
+}
+
+func AsStatusError(err error) (*StatusError, bool) {
+	var se *StatusError
+	if errors.As(err, &se) {
+		return se, true
+	}
+	return nil, false
+}
+
+func parseRetryAfter(h http.Header, now time.Time) time.Duration {
+	raw := strings.TrimSpace(h.Get("Retry-After"))
+	if raw == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(raw); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if at, err := http.ParseTime(raw); err == nil {
+		if d := at.Sub(now); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
 type identity struct {
 	UUID         string `json:"uuid"`
 	Email        string `json:"email"`
@@ -116,7 +163,7 @@ type tokenResponse struct {
 
 // request deliberately never includes a response body, URL or transport error
 // in its error: upstreams and proxies can echo tokens, codes and passwords.
-func request(ctx context.Context, client *http.Client, method, endpoint, token string, body any, out any) error {
+func request(ctx context.Context, client *http.Client, method, endpoint, token, op string, body any, out any) error {
 	var data []byte
 	if body != nil {
 		data, _ = json.Marshal(body)
@@ -136,7 +183,7 @@ func request(ctx context.Context, client *http.Client, method, endpoint, token s
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("Claude 授权服务返回 HTTP %d，请重新授权", res.StatusCode)
+		return &StatusError{Op: op, Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
 	}
 	data, err = io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 || json.Unmarshal(data, out) != nil {
@@ -145,13 +192,21 @@ func request(ctx context.Context, client *http.Client, method, endpoint, token s
 	return nil
 }
 
+func profileRestrictive(err error) bool {
+	se, ok := AsStatusError(err)
+	if !ok {
+		return false
+	}
+	return se.Status == http.StatusUnauthorized || se.Status == http.StatusForbidden || se.Status == http.StatusTooManyRequests
+}
+
 func Exchange(ctx context.Context, client *http.Client, code, state, verifier string) (Result, error) {
 	// Do not allow redirects to carry codes or Authorization to another host.
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	client = &copyClient
 	var tokens tokenResponse
-	err := request(ctx, client, "POST", tokenURL, "", map[string]string{"grant_type": "authorization_code", "code": code, "state": state, "code_verifier": verifier, "client_id": ClientID, "redirect_uri": RedirectURL}, &tokens)
+	err := request(ctx, client, "POST", tokenURL, "", "token", map[string]string{"grant_type": "authorization_code", "code": code, "state": state, "code_verifier": verifier, "client_id": ClientID, "redirect_uri": RedirectURL}, &tokens)
 	if err != nil {
 		return Result{}, err
 	}
@@ -173,32 +228,45 @@ func Exchange(ctx context.Context, client *http.Client, code, state, verifier st
 		Account      identity     `json:"account"`
 		Organization organization `json:"organization"`
 	}
-	if err := request(ctx, client, "GET", profileURL, tokens.Access, nil, &profile); err != nil {
-		result.Warnings = append(result.Warnings, "令牌已获取，但账号资料读取失败，请补充缺失资料。")
-	} else if profile.Account.UUID == "" || profile.Organization.UUID == "" || (tokens.Account.UUID != "" && profile.Account.UUID != tokens.Account.UUID) || (tokens.Organization.UUID != "" && profile.Organization.UUID != tokens.Organization.UUID) {
-		result.Warnings = append(result.Warnings, "账号资料不完整或与授权身份不一致，未自动填充资料。")
-	} else {
-		set("email", profile.Account.Email)
-		set("account_uuid", profile.Account.UUID)
-		set("organization_uuid", profile.Organization.UUID)
-		set("organization_name", profile.Organization.Name)
-		if created, e := time.Parse(time.RFC3339, profile.Account.CreatedAt); e == nil {
-			result.RegisterTime = created.UTC().Format("2006-01-02")
+	profileErr := request(ctx, client, "GET", profileURL, tokens.Access, "profile", nil, &profile)
+	if profileErr != nil {
+		if profileRestrictive(profileErr) {
+			return Result{}, profileErr
 		}
-		switch profile.Organization.RateLimitTier {
-		case "default_claude_max_5x":
-			result.Plan = "claude/cc-max-5x"
-		case "default_claude_max_20x":
-			result.Plan = "claude/cc-max-20x"
-		case "default_claude_pro":
-			result.Plan = "claude/cc-pro"
-		}
+		result.Warnings = append(result.Warnings, "令牌已获取，但账号资料暂时无法读取，请补充缺失资料。")
+		return result, nil
 	}
+	profileOK := profile.Account.UUID != "" && profile.Organization.UUID != "" &&
+		(tokens.Account.UUID == "" || profile.Account.UUID == tokens.Account.UUID) &&
+		(tokens.Organization.UUID == "" || profile.Organization.UUID == tokens.Organization.UUID)
+	if !profileOK {
+		result.Warnings = append(result.Warnings, "账号资料不完整或与授权身份不一致，未自动填充资料。")
+		// Do not call roles after identity mismatch; roles 429 is ignored and
+		// would not feed account cooldown in this release.
+		return result, nil
+	}
+	set("email", profile.Account.Email)
+	set("account_uuid", profile.Account.UUID)
+	set("organization_uuid", profile.Organization.UUID)
+	set("organization_name", profile.Organization.Name)
+	if created, e := time.Parse(time.RFC3339, profile.Account.CreatedAt); e == nil {
+		result.RegisterTime = created.UTC().Format("2006-01-02")
+	}
+	switch profile.Organization.RateLimitTier {
+	case "default_claude_max_5x":
+		result.Plan = "claude/cc-max-5x"
+	case "default_claude_max_20x":
+		result.Plan = "claude/cc-max-20x"
+	case "default_claude_pro":
+		result.Plan = "claude/cc-pro"
+	}
+	// Roles only after a fully trusted profile; failures are ignored and do not
+	// trigger OAuth account cooldown in this release.
 	if result.Auth["organization_name"] == nil {
 		var roles struct {
 			Name string `json:"organization_name"`
 		}
-		if err := request(ctx, client, "GET", rolesURL, tokens.Access, nil, &roles); err == nil {
+		if err := request(ctx, client, "GET", rolesURL, tokens.Access, "roles", nil, &roles); err == nil {
 			set("organization_name", roles.Name)
 		}
 	}

@@ -78,6 +78,31 @@ test('invalid state permits correction; failed exchange requires a fresh link', 
   wrapper.unmount()
 })
 
+test('rate-limited exchange clears the pending session and shows the wait message', async () => {
+  fetchMock.mockResolvedValueOnce(json({ data: pending })).mockResolvedValueOnce(
+    json(
+      {
+        error: {
+          code: 'OAUTH_RATE_LIMITED',
+          message: 'Claude 授权暂时限流，请约 45 秒后再试',
+          action: 'wait',
+          details: { retry_after_seconds: 45 },
+        },
+      },
+      429,
+    ),
+  )
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  await wrapper.get('#claude-authorization-result').setValue('code#test')
+  await wrapper.get('.oauth-exchange').trigger('click')
+  await flushPromises()
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
+  expect(wrapper.text()).toContain('请约 45 秒后再试')
+  wrapper.unmount()
+})
+
 test('an existing account can authorize through its saved proxy without exposing the proxy URL', async () => {
   fetchMock.mockResolvedValueOnce(json({ data: pending }))
   const wrapper = mount(ClaudeOAuthPanel, {

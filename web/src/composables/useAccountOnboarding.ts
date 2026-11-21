@@ -677,6 +677,13 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
             await jumpTo(fieldAnchors.deviceIds)
             return
           }
+          const expiredError = e.fields.find((field) => field.field === 'auth_json.expired')
+          if (expiredError) {
+            fieldErrors.value.expired = expiredError.message || '访问令牌已过期，请重新授权'
+            step.value = 1
+            scrollTop()
+            return
+          }
           scrollTop()
           return
         }

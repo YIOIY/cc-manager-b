@@ -608,6 +608,29 @@ test('sync_failed reauth keeps sealed credentials and omits auth_json on submit'
   expect(payload.expected_version).toBe(2)
 })
 
+test('expired saved credential shows an explicit notice and keeps reauthorize', async () => {
+  const w = setupReauth()
+  await next(w)
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: '提交的资料不符合要求',
+          category: 'validation',
+          fields: [{ field: 'auth_json.expired', code: 'INVALID_FORMAT', message: '访问令牌已过期，请重新授权' }],
+        },
+      }),
+      { status: 422 },
+    ),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(w.find('[data-review]').exists()).toBe(false)
+  expect(w.get('[data-saved-expired]').text()).toContain('访问令牌已过期，请重新授权')
+  expect(w.findAll('[data-reauthorize]').length).toBeGreaterThan(0)
+})
+
 test('reauth 502 keeps the same token for retry; startReauthorize requires a new token', async () => {
   const w = setupReauth(linkedAccount({ credentials_configured: false }))
   authorization = {

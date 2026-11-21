@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func deliveryFixture(t *testing.T, validators ...func(map[string]any)) (*App, *atomic.Int64, *atomic.Int64, *atomic.Int32) {
@@ -64,7 +65,22 @@ func deliveryFixture(t *testing.T, validators ...func(map[string]any)) (*App, *a
 }
 
 func deliveryBody() map[string]any {
-	return map[string]any{"account": "workflow@example.test", "password": "fixture-password", "plan": "claude/cc-max-20x", "register_location": "US", "register_time": "2026-11-04", "plan_start_time": "2026-11-04", "plan_end_time": "2026-12-04", "platform_connection_id": "conn", "auth_json": map[string]any{"id_token": "", "access_token": "fixture-access", "refresh_token": "fixture-refresh", "last_refresh": "2026-11-04T00:00:00Z", "email": "workflow@example.test", "account_uuid": "account-uuid", "organization_uuid": "org-uuid", "organization_name": "Fixture", "claude_device_ids": []any{"device-id"}, "type": "claude", "expired": "2026-12-04T00:00:00Z", "proxy_url": "http://127.0.0.1:9090", "verification_status": "verified"}}
+	now := time.Now().UTC()
+	day := now.Format("2006-01-02")
+	end := now.AddDate(0, 0, 30).Format("2006-01-02")
+	return map[string]any{
+		"account": "workflow@example.test", "password": "fixture-password", "plan": "claude/cc-max-20x",
+		"register_location": "US", "register_time": day, "plan_start_time": day, "plan_end_time": end,
+		"platform_connection_id": "conn",
+		"auth_json": map[string]any{
+			"id_token": "", "access_token": "fixture-access", "refresh_token": "fixture-refresh",
+			"last_refresh": now.Add(-time.Hour).Format(time.RFC3339), "email": "workflow@example.test",
+			"account_uuid": "account-uuid", "organization_uuid": "org-uuid", "organization_name": "Fixture",
+			"claude_device_ids": []any{"device-id"}, "type": "claude",
+			"expired": now.Add(30 * 24 * time.Hour).Format(time.RFC3339),
+			"proxy_url": "http://127.0.0.1:9090", "verification_status": "verified",
+		},
+	}
 }
 
 // withAdminSession attaches a synthetic admin identity so handlers that
@@ -121,12 +137,13 @@ func submitRequest(a *App, id, key string) *httptest.ResponseRecorder {
 
 func TestCreateAutomaticallyQueuesOnceAndAcceptedAccountSurvivesUnavailableUsage(t *testing.T) {
 	a, calls, reads, _ := deliveryFixture(t)
-	w := onboardRequest(a, deliveryBody(), "create-once")
+	body := deliveryBody()
+	w := onboardRequest(a, body, "create-once")
 	if w.Code != 202 {
 		t.Fatal(w.Body.String())
 	}
 	id := responseData(t, w)["account_id"].(string)
-	replay := onboardRequest(a, deliveryBody(), "create-once")
+	replay := onboardRequest(a, body, "create-once")
 	if replay.Code != 202 || responseData(t, replay)["account_id"] != id {
 		t.Fatal(replay.Body.String())
 	}
@@ -154,6 +171,47 @@ func TestCreateAutomaticallyQueuesOnceAndAcceptedAccountSurvivesUnavailableUsage
 	}
 	if calls.Load() != 1 {
 		t.Fatal("linked account uploaded again")
+	}
+}
+
+func TestQueuedDeliveryRejectsCredentialExpiredDuringWait(t *testing.T) {
+	a, calls, _, _ := deliveryFixture(t)
+	body := deliveryBody()
+	w := onboardRequest(a, body, "expire-while-queued")
+	if w.Code != 202 {
+		t.Fatal(w.Body.String())
+	}
+	id := responseData(t, w)["account_id"].(string)
+	auth, ok := body["auth_json"].(map[string]any)
+	if !ok {
+		t.Fatal("auth_json missing")
+	}
+	auth["expired"] = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	sealAccountAuth(t, a, id, auth)
+	a.runOne(context.Background())
+	if calls.Load() != 0 {
+		t.Fatal("expired credential was pushed to supplier")
+	}
+	account := deliveryAccount(t, a)
+	if account["onboarding_state"] != "failed" {
+		t.Fatalf("state=%v", account["onboarding_state"])
+	}
+	job, _ := account["submission_job"].(map[string]any)
+	if job["code"] != "CREDENTIAL_EXPIRED" {
+		t.Fatalf("job=%+v", job)
+	}
+	if job["message"] != "访问令牌已过期" || job["action"] != "reauthorize" || job["retryable"] != false {
+		t.Fatalf("expired semantics lost: %+v", job)
+	}
+	if hint, _ := job["hint"].(string); !strings.Contains(hint, "重新授权") {
+		t.Fatalf("hint=%v", job["hint"])
+	}
+	var result string
+	if e := a.DB.QueryRow(`SELECT result_json FROM jobs WHERE account_id=?`, id).Scan(&result); e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(result, `"code":"CREDENTIAL_EXPIRED"`) || !strings.Contains(result, `"action":"reauthorize"`) {
+		t.Fatalf("result=%s", result)
 	}
 }
 
