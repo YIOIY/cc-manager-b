@@ -74,6 +74,7 @@ const (
 var allowedDetailKeys = map[string]bool{
 	"resource": true, "permission": true, "secret": true, "retry_after_seconds": true,
 	"upstream_status": true, "job_id": true, "stage": true, "field": true, "next_attempt_at": true,
+	"oauth_stage": true, "oauth_status": true, "oauth_ms": true, "attempt": true,
 }
 
 // Error is a registered error with optional per-occurrence data.
@@ -217,7 +218,9 @@ func statusAllowed(c Category, status int) bool {
 	allowed := map[Category][]int{
 		CategoryAuth: {401, 403}, CategoryPermission: {403}, CategoryValidation: {400, 405, 413, 422},
 		CategoryNotFound: {404}, CategoryConflict: {409, 422}, CategoryRateLimit: {429},
-		CategoryUpstream: {502, 504}, CategoryConfig: {503}, CategoryStorage: {503}, CategoryInternal: {500},
+		// 401/403 reach us as upstream answers too: Claude answers a rejected
+		// identity on its own token/profile endpoints and we only relay it.
+		CategoryUpstream: {401, 403, 502, 504}, CategoryConfig: {503}, CategoryStorage: {503}, CategoryInternal: {500},
 	}
 	for _, s := range allowed[c] {
 		if s == status {

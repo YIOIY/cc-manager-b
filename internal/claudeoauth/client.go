@@ -272,3 +272,57 @@ func Exchange(ctx context.Context, client *http.Client, code, state, verifier st
 	}
 	return result, nil
 }
+
+// ReachBusy is a reachability probe that got a 429. The exit works; Claude is
+// just throttling, so the caller should wait rather than swap proxies.
+type ReachBusy struct{ RetryAfter time.Duration }
+
+func (e *ReachBusy) Error() string { return "Claude 授权服务暂时限流" }
+
+func AsReachBusy(err error) (*ReachBusy, bool) {
+	var re *ReachBusy
+	if errors.As(err, &re) {
+		return re, true
+	}
+	return nil, false
+}
+
+// Reachable checks that this proxy can really talk to the token endpoint. It
+// uses GET rather than HEAD (some exits and CDNs answer HEAD badly) and reads
+// the status, so a broken exit, a captive portal and a throttling edge all
+// become distinguishable before the user opens a browser:
+//
+//   - transport error        -> error (swap the exit)
+//   - 429                    -> *ReachBusy (wait)
+//   - 401/403/405            -> nil; the host answered, exchange may still work
+//   - 5xx / other            -> error naming the status
+//   - 200 but not JSON       -> error (likely an intercepting exit)
+func Reachable(ctx context.Context, client *http.Client) error {
+	copyClient := *client
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL, nil)
+	if err != nil {
+		return errors.New("授权请求无法创建")
+	}
+	req.Header.Set("Accept", "application/json")
+	res, err := copyClient.Do(req)
+	if err != nil {
+		return errors.New("无法连接 Claude 授权服务")
+	}
+	defer res.Body.Close()
+	switch {
+	case res.StatusCode == http.StatusTooManyRequests:
+		return &ReachBusy{RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
+	case res.StatusCode == http.StatusUnauthorized, res.StatusCode == http.StatusForbidden, res.StatusCode == http.StatusMethodNotAllowed:
+		return nil
+	case res.StatusCode >= 500:
+		return &StatusError{Op: "reach", Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
+	case res.StatusCode != http.StatusOK:
+		return &StatusError{Op: "reach", Status: res.StatusCode}
+	}
+	data, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if err != nil || !json.Valid(data) {
+		return errors.New("所选代理返回的不是 Claude 响应，可能被中间设备拦截")
+	}
+	return nil
+}

@@ -32,6 +32,7 @@ type App struct {
 	writes        *writeLimiter
 	oauth         oauthPendingStore
 	oauthCooldown oauthAccountCooldown
+	oauthGate     *oauthGate
 	accountLocks  accountLocks
 	billMutex     sync.Mutex
 	billFactory   func(string, string) (billSupplier, error)
@@ -44,6 +45,9 @@ type App struct {
 	// probeCandidateProxy, when set, replaces the live probe used before
 	// createProxy inserts a row. Tests install a stub; production leaves it nil.
 	probeCandidateProxy func(ctx context.Context, raw string) (proxyProbeResult, error)
+	// probeOAuthReach, when set, replaces the live connectivity check made
+	// through the selected proxy before an authorization link is issued.
+	probeOAuthReach func(ctx context.Context, client *http.Client) error
 
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -132,11 +136,12 @@ func NewWithConfig(cfg Config, workers bool) (*App, error) {
 			return nil, err
 		}
 	}
-	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now()}
+	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now(), oauthGate: newOAuthGate(oauthGateSize)}
 	if autoStubProxyProbe {
 		a.probeCandidateProxy = func(context.Context, string) (proxyProbeResult, error) {
 			return proxyProbeResult{OK: true, Stage: "complete", Message: "test stub", CheckedAt: now()}, nil
 		}
+		a.probeOAuthReach = func(context.Context, *http.Client) error { return nil }
 	}
 	if err = a.ensureBootstrapAdmin(); err != nil {
 		db.Close()

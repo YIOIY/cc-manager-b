@@ -45,6 +45,7 @@ func init() {
 		Def{Code: "OPTIONAL_METADATA_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "补充信息格式不正确", Doc: "余额、标签、支付方式等选填项"},
 		Def{Code: "OAUTH_RESULT_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "授权结果无法识别", Hint: "请粘贴 Claude 授权页给出的授权码或完整回调地址", Doc: "本地解析错误，文案由解析器给出", AllowCustomMessage: true},
 		Def{Code: "OAUTH_PROXY_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "授权使用的代理不可用", Hint: "请更换代理后重新生成授权链接", Doc: "—", AllowCustomMessage: true},
+		Def{Code: "OAUTH_PROXY_UNREACHABLE", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "所选代理连不上 Claude", Hint: "请更换代理后重试；代理本身可能已失效", Doc: "经所选代理对令牌端点 GET 探测失败：连接失败、超时、5xx 或非 JSON 响应（疑似拦截）；文案带阶段", AllowCustomMessage: true},
 		Def{Code: "CONNECTION_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "平台连接配置无效", Hint: "请检查平台地址和令牌", Doc: "—"},
 		Def{Code: "CONNECTION_DISABLED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "平台连接已停用或未配置令牌", Hint: "请在平台设置中启用并填写令牌", Doc: "—"},
 		Def{Code: "ACCOUNT_LINK_MISSING", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "部分账号未关联该平台或已归档", Hint: "请检查选择范围", Doc: "账单同步范围"},
@@ -77,9 +78,11 @@ func init() {
 		Def{Code: "SELF_DEMOTION", Category: CategoryConflict, Status: 422, Action: ActionNone, Message: "不能移除自己的管理员角色", Doc: "—"},
 		Def{Code: "SELF_DISABLE", Category: CategoryConflict, Status: 422, Action: ActionNone, Message: "不能停用自己", Doc: "—"},
 		Def{Code: "RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Action: ActionWait, Message: "操作过于频繁", Hint: "请稍后再试", Doc: "details.retry_after_seconds 与 Retry-After 头一致"},
-		Def{Code: "OAUTH_BUSY", Category: CategoryRateLimit, Status: 429, Action: ActionWait, Message: "授权会话较多", Hint: "请稍后重试", Doc: "待授权链接数达到上限"},
-		Def{Code: "OAUTH_RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Retryable: true, Action: ActionWait, Message: "Claude 授权暂时限流", Hint: "请稍后再试，勿连续重新授权", Doc: "details.retry_after_seconds 与 Retry-After 头一致；本地按 accountID 冷却有封顶，不等于完整遵守上游 Retry-After", AllowCustomMessage: true},
-		Def{Code: "OAUTH_EXCHANGE_FAILED", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionReauthorize, Message: "Claude 授权服务未能完成兑换", Hint: "请重新生成授权链接后再试", Doc: "文案由客户端给出；不含上游响应", AllowCustomMessage: true},
+		Def{Code: "OAUTH_BUSY", Category: CategoryRateLimit, Status: 429, Retryable: true, Action: ActionWait, Message: "授权会话较多", Hint: "请稍后重试", Doc: "待授权链接数达到上限或并发兑换排队 30 秒未获额度；details.retry_after_seconds 与 Retry-After 头一致", AllowCustomMessage: true},
+		Def{Code: "OAUTH_RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Retryable: true, Action: ActionWait, Message: "Claude 授权暂时限流", Hint: "请稍后再试，勿连续重新授权", Doc: "上游 429 或本地冷却命中；details.retry_after_seconds 与 Retry-After 头一致，按账号冷却（无账号时按邮箱），遵从上游秒数、上限 1 小时；命中时保留待兑换链接，若链接仍有效则开始接口直接 200 返回原链接加 retry_after_seconds", AllowCustomMessage: true},
+		Def{Code: "OAUTH_EXCHANGE_FAILED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "授权码兑换失败", Hint: "请确认粘贴的是本次链接返回的授权码", Doc: "授权码无效、过期或已使用（400/404 等）；details.upstream_status 为上游状态；不含上游响应", AllowCustomMessage: true},
+		Def{Code: "OAUTH_SUPPLIER_REJECTED", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "Claude 授权服务暂时故障", Hint: "稍后按原链接重试即可", Doc: "兑换时上游 5xx；已有链接与授权码保留，可直接重试", AllowCustomMessage: true},
+		Def{Code: "OAUTH_IDENTITY_REJECTED", Category: CategoryUpstream, Status: 403, Action: ActionReauthorize, Message: "Claude 拒绝了当前身份", Hint: "请换代理或稍后再重新授权", Doc: "兑换时 401/403，多为 IP 或身份风控；重放同一授权码无效，需重新生成链接；details.upstream_status"},
 		Def{Code: "ENCRYPTION_KEY_REQUIRED", Category: CategoryConfig, Status: 503, Action: ActionContactAdmin, Message: "服务尚未配置凭证加密密钥", Hint: "请联系管理员完成配置", Doc: "HTTP 与任务共用", AllowCustomMessage: true},
 		Def{Code: "OAUTH_START_FAILED", Category: CategoryInternal, Status: 500, Retryable: true, Action: ActionRetry, Message: "无法生成授权链接", Hint: "请稍后重试", Doc: "随机数生成失败"},
 		Def{Code: "PROXY_CHECK_FAILED", Category: CategoryInternal, Status: 500, Retryable: true, Action: ActionRetry, Message: "代理检测记录保存失败", Doc: "—"},
@@ -200,6 +203,9 @@ const (
 	CodeOptionalMetadataInvalid     = "OPTIONAL_METADATA_INVALID"
 	CodeOauthResultInvalid          = "OAUTH_RESULT_INVALID"
 	CodeOauthProxyInvalid           = "OAUTH_PROXY_INVALID"
+	CodeOauthProxyUnreachable       = "OAUTH_PROXY_UNREACHABLE"
+	CodeOauthSupplierRejected       = "OAUTH_SUPPLIER_REJECTED"
+	CodeOauthIdentityRejected       = "OAUTH_IDENTITY_REJECTED"
 	CodeConnectionInvalid           = "CONNECTION_INVALID"
 	CodeConnectionUnreadable        = "CONNECTION_UNREADABLE"
 	CodeConnectionChanged           = "CONNECTION_CHANGED"

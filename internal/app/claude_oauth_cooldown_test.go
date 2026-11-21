@@ -24,7 +24,8 @@ func TestOAuthAccountCooldownExtendKeepsLaterDeadline(t *testing.T) {
 	if shorter < 100*time.Second {
 		t.Fatalf("shorter overwrite: %v", shorter)
 	}
-	capped := s.extend("other", now, 30*time.Minute)
+	// A wild upstream header is capped so an account is not locked out for a day.
+	capped := s.extend("other", now, 5*time.Hour)
 	if capped != oauthCooldownCap {
 		t.Fatalf("cap=%v", capped)
 	}
@@ -64,7 +65,7 @@ func TestClaudeOAuthCooldownSharedAcrossSessionsAndDropsPending(t *testing.T) {
 	saved["proxy_url"] = "http://proxy.example:8080"
 	sealAccountAuth(t, a, id, saved)
 
-	a.oauthCooldown.extend(id, time.Now(), 2*time.Minute)
+	a.oauthCooldown.extend("id:"+id, time.Now(), 2*time.Minute)
 
 	res := admin.do("POST", "/api/v1/claude-oauth/sessions", `{"account_id":"`+id+`"}`)
 	body := readBody(res)
@@ -94,7 +95,7 @@ func TestClaudeOAuthCooldownSharedAcrossSessionsAndDropsPending(t *testing.T) {
 
 	// Clear cooldown briefly to create a pending, then re-apply and exchange.
 	a.oauthCooldown.mu.Lock()
-	delete(a.oauthCooldown.until, id)
+	delete(a.oauthCooldown.until, "id:"+id)
 	a.oauthCooldown.mu.Unlock()
 	res = admin.do("POST", "/api/v1/claude-oauth/sessions", `{"account_id":"`+id+`"}`)
 	if res.StatusCode != http.StatusCreated {
@@ -107,7 +108,7 @@ func TestClaudeOAuthCooldownSharedAcrossSessionsAndDropsPending(t *testing.T) {
 	}
 	_ = json.NewDecoder(res.Body).Decode(&created)
 	res.Body.Close()
-	a.oauthCooldown.extend(id, time.Now(), time.Minute)
+	a.oauthCooldown.extend("id:"+id, time.Now(), time.Minute)
 
 	res = admin.do("POST", "/api/v1/claude-oauth/sessions/"+created.Data.ID+"/exchange", `{"result":"code"}`)
 	exBody := readBody(res)
@@ -117,8 +118,8 @@ func TestClaudeOAuthCooldownSharedAcrossSessionsAndDropsPending(t *testing.T) {
 	a.oauth.mu.Lock()
 	_, exists := a.oauth.items[created.Data.ID]
 	a.oauth.mu.Unlock()
-	if exists {
-		t.Fatal("pending should be deleted on cooldown hit")
+	if !exists {
+		t.Fatal("pending should survive a cooldown hit")
 	}
 }
 
@@ -127,7 +128,7 @@ func TestWriteOAuthExchangeErrorMapsStatuses(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/claude-oauth/sessions/x/exchange", nil)
 	rr := httptest.NewRecorder()
 	a.writeOAuthExchangeError(rr, req, "acc", &claudeoauth.StatusError{Op: "profile", Status: http.StatusUnauthorized})
-	if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), "令牌无效或访问被拒绝") {
+	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "OAUTH_IDENTITY_REJECTED") {
 		t.Fatalf("401: %d %s", rr.Code, rr.Body.String())
 	}
 	rr = httptest.NewRecorder()
