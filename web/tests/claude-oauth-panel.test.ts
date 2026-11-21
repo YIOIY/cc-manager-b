@@ -63,7 +63,9 @@ test('an invalid result keeps the paste; a supplier failure keeps the link and r
   fetchMock
     .mockResolvedValueOnce(json({ data: pending }))
     .mockResolvedValueOnce(json({ error: { code: 'OAUTH_RESULT_INVALID', message: '结果不匹配' } }, 422))
-    .mockResolvedValueOnce(json({ error: { code: 'OAUTH_EXCHANGE_FAILED', message: 'Claude 暂时失败，请稍后重试' } }, 502))
+    .mockResolvedValueOnce(
+      json({ error: { code: 'OAUTH_EXCHANGE_FAILED', message: 'Claude 暂时失败，请稍后重试' } }, 502),
+    )
   const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
   await wrapper.get('button').trigger('click')
   await flushPromises()
@@ -113,9 +115,7 @@ test('a cooldown start reuses the live link and counts the wait down', async () 
   const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
   await wrapper.get('button').trigger('click')
   await flushPromises()
-  expect((wrapper.get('#claude-authorization-url').element as HTMLInputElement).value).toBe(
-    pending.authorization_url,
-  )
+  expect((wrapper.get('#claude-authorization-url').element as HTMLInputElement).value).toBe(pending.authorization_url)
   await wrapper.get('#claude-authorization-result').setValue('code#test')
   expect(wrapper.get('.oauth-exchange').text()).toContain('5s')
   expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeDefined()
@@ -125,9 +125,7 @@ test('a cooldown start reuses the live link and counts the wait down', async () 
 test('an identity rejection clears the dead link and the paste', async () => {
   fetchMock
     .mockResolvedValueOnce(json({ data: pending }))
-    .mockResolvedValueOnce(
-      json({ error: { code: 'OAUTH_IDENTITY_REJECTED', message: '授权身份与预期不符' } }, 403),
-    )
+    .mockResolvedValueOnce(json({ error: { code: 'OAUTH_IDENTITY_REJECTED', message: '授权身份与预期不符' } }, 403))
   const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
   await wrapper.get('button').trigger('click')
   await flushPromises()

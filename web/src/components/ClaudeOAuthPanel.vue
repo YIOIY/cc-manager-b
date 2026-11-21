@@ -77,7 +77,9 @@
           <span v-for="part in summaryMetaParts" :key="part">{{ part }}</span>
         </p>
       </div>
-      <el-button text :loading="busy" :disabled="disabled" class="oauth-done-action" @click="start()">重新授权</el-button>
+      <el-button text :loading="busy" :disabled="disabled" class="oauth-done-action" @click="start()"
+        >重新授权</el-button
+      >
     </div>
     <el-button v-else type="primary" :loading="busy" :disabled="disabled" @click="start()">{{
       completed ? '重新授权' : '登录 Claude'
