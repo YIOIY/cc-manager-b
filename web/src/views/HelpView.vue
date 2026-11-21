@@ -315,7 +315,7 @@ button {
 }
 h3 {
   margin: 0;
-  color: #213d4b;
+  color: #1c1f23;
   font-size: 17px;
 }
 .help-section-sub {
@@ -343,7 +343,7 @@ h3 {
 .help-search label {
   display: block;
   margin-bottom: 10px;
-  color: #213d4b;
+  color: #1c1f23;
   font-size: 17px;
   font-weight: 700;
 }
@@ -391,7 +391,7 @@ h3 {
 }
 .help-hit:hover,
 .help-hit:focus-visible {
-  background: #f4faf8;
+  background: #eaf5ff;
   outline: none;
 }
 .help-hit-group {
@@ -451,7 +451,7 @@ h3 {
 }
 .help-route button:hover,
 .help-route button:focus-visible {
-  background: #f4faf8;
+  background: #eaf5ff;
   outline: none;
 }
 .help-route i {
@@ -464,7 +464,7 @@ h3 {
   background: var(--surface);
   color: var(--accent-deep);
   font:
-    700 14px/1 'DM Mono',
+    700 14px/1 'ui-monospace',
     ui-monospace,
     monospace;
   font-style: normal;
@@ -510,7 +510,7 @@ h3 {
 .help-card:hover,
 .help-card:focus-visible {
   border-color: var(--accent);
-  background: #f4faf8;
+  background: #eaf5ff;
   outline: none;
 }
 .help-card-icon {
@@ -561,7 +561,7 @@ h3 {
 }
 .help-question:hover,
 .help-question:focus-visible {
-  background: #f4faf8;
+  background: #eaf5ff;
   color: var(--accent-deep);
   outline: none;
 }
@@ -600,7 +600,7 @@ h3 {
   font-weight: 600;
 }
 .help-back:hover {
-  background: #f4faf8;
+  background: #eaf5ff;
 }
 .help-group {
   margin-top: 16px;
@@ -617,7 +617,7 @@ h3 {
 .help-group-title span {
   padding: 1px 7px;
   border-radius: 99px;
-  background: #eef6f4;
+  background: #d6eaff;
   color: #5b7a74;
   font-weight: 600;
   font-size: 11px;
@@ -635,7 +635,7 @@ h3 {
   text-align: left;
 }
 .help-topic-link:hover {
-  background: #f3f8f7;
+  background: #eaf5ff;
 }
 .help-topic-link.active {
   background: #e3f3ef;
@@ -712,7 +712,7 @@ h3 {
   background: var(--accent-deep);
   color: #fff;
   font:
-    700 12px/1 'DM Mono',
+    700 12px/1 'ui-monospace',
     ui-monospace,
     monospace;
 }
@@ -746,7 +746,7 @@ h3 {
   padding: 12px 14px;
   border: 1px solid #cfe6df;
   border-radius: 11px;
-  background: #f6fbf9;
+  background: #eaf5ff;
 }
 .help-flow li + li::before {
   content: '';
@@ -769,7 +769,7 @@ h3 {
   background: var(--accent-deep);
   color: #fff;
   font:
-    700 12px/1 'DM Mono',
+    700 12px/1 'ui-monospace',
     ui-monospace,
     monospace;
   font-style: normal;
@@ -797,7 +797,7 @@ h3 {
 }
 .help-table th {
   padding: 9px 14px;
-  background: #f5f9f9;
+  background: #f5f6f8;
   color: var(--muted-strong);
   font-size: 12px;
   font-weight: 700;
@@ -832,9 +832,9 @@ h3 {
   margin-top: 4px;
 }
 .help-note.tone-info {
-  background: #f1f8f6;
-  border: 1px solid #d5ebe5;
-  color: #2f5f55;
+  background: #eaf5ff;
+  border: 1px solid #d6eaff;
+  color: #4e5257;
 }
 .help-note.tone-warn {
   background: #fdf6ea;
@@ -853,7 +853,7 @@ h3 {
   align-items: center;
   justify-content: space-between;
   padding: 5px 6px 5px 13px;
-  background: #f5f9f9;
+  background: #f5f6f8;
   border-bottom: 1px solid #e6eeee;
   color: #5f747d;
   font-size: 12px;
@@ -864,13 +864,13 @@ h3 {
 .help-code pre {
   margin: 0;
   padding: 12px 13px;
-  background: #fbfdfd;
+  background: #fafbfc;
   overflow-x: auto;
 }
 .help-code code {
   color: #24414d;
   font:
-    12.5px/1.6 'DM Mono',
+    12.5px/1.6 'ui-monospace',
     ui-monospace,
     SFMono-Regular,
     Menlo,
@@ -905,7 +905,7 @@ h3 {
 .help-related-list button:hover,
 .help-related-list button:focus-visible {
   border-color: var(--accent);
-  background: #f4faf8;
+  background: #eaf5ff;
   outline: none;
 }
 .help-related-list strong {
@@ -941,7 +941,7 @@ h3 {
 }
 .help-pager button:hover,
 .help-pager button:focus-visible {
-  background: #f4faf8;
+  background: #eaf5ff;
   outline: none;
 }
 .help-pager small {

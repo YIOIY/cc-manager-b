@@ -454,10 +454,10 @@ onMounted(loadSettings)
   color: #4553c4;
   background: #eef0ff;
   border-color: #dfe2ff;
-  font-family: 'DM Mono', monospace;
+  font-family: 'ui-monospace', monospace;
 }
 .proxy-route-kicker {
-  font-family: Manrope, system-ui, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
   font-size: 10px;
   letter-spacing: 0.08em;
   color: #7a85d8;
@@ -551,7 +551,7 @@ onMounted(loadSettings)
 .proxy-mode-card.is-active {
   background: var(--tint-50);
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(24, 168, 137, 0.12);
+  box-shadow: 0 0 0 3px rgba(0, 119, 250, 0.12);
   color: var(--accent-deep);
 }
 .proxy-mode-card strong {
@@ -559,7 +559,7 @@ onMounted(loadSettings)
   font-size: 13px;
 }
 .proxy-mode-card.is-active strong {
-  color: #0b6f5a;
+  color: #004fb3;
 }
 .proxy-mode-card small {
   color: var(--muted);
@@ -623,7 +623,7 @@ onMounted(loadSettings)
   border-radius: 9px;
 }
 .proxy-check.is-ok {
-  border-left-color: #59aa91;
+  border-left-color: #0077fa;
 }
 .proxy-check-title {
   display: flex;

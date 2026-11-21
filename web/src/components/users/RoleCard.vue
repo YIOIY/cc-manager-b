@@ -143,12 +143,12 @@ const summary = computed(() => moduleSummary(props.role, props.catalogue))
   gap: 5px;
   padding: 3px 9px;
   border-radius: 7px;
-  background: #f3f6f7;
+  background: #f5f6f8;
   color: var(--ink-mid);
   font-size: 11.5px;
 }
 .access-summary-chip b {
-  font-family: 'DM Mono', monospace;
+  font-family: 'ui-monospace', monospace;
   font-weight: 500;
   color: var(--muted-cool);
 }

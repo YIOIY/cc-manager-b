@@ -376,11 +376,14 @@ const unpagedAccountLimit = 2000
 
 var accountOnboardingStates = map[string]bool{"pending": true, "submitting": true, "linked": true, "failed": true, "unknown": true}
 
-// accountAbnormalPredicate matches delivery failures, platform failure statuses,
-// and remote rows the console has marked missing.
+// accountAbnormalPredicate matches delivery failures, actionable platform failure
+// statuses (not ban/banned), and remote rows the console has marked missing.
 func accountAbnormalPredicate() string {
 	statuses := make([]string, 0, len(webFailureStatuses))
 	for status := range webFailureStatuses {
+		if status == "ban" || status == "banned" {
+			continue
+		}
 		statuses = append(statuses, "'"+status+"'")
 	}
 	sort.Strings(statuses)

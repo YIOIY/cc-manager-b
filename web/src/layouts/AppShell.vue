@@ -132,77 +132,71 @@ async function signOut() {
 .shell {
   display: flex;
   min-height: 100vh;
+  background: #f5f6f8;
 }
 
 .shell > aside {
-  width: 252px;
-  background: linear-gradient(180deg, #0a1723 0%, #102334 100%);
-  color: var(--slate-300);
-  padding: 26px 16px 18px;
+  width: 220px;
+  background: #232429;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 20px 12px 16px;
   display: flex;
   flex-direction: column;
   position: relative;
   overflow: hidden;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .shell > aside:after {
-  content: '';
-  position: absolute;
-  width: 190px;
-  height: 190px;
-  border: 1px solid rgba(87, 213, 183, 0.16);
-  border-radius: 50%;
-  right: -105px;
-  bottom: -48px;
-  box-shadow:
-    0 0 0 24px rgba(87, 213, 183, 0.03),
-    0 0 0 48px rgba(87, 213, 183, 0.025);
+  display: none;
 }
 
 .nav-caption {
-  color: #5d7483;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 10px;
-  font-weight: 800;
-  padding: 0 15px 10px;
+  color: rgba(255, 255, 255, 0.35);
+  text-transform: none;
+  letter-spacing: 0.04em;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 12px 12px;
   position: relative;
   z-index: 1;
 }
 
 .nav-mark {
   position: absolute;
-  right: -17px;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
   width: 3px;
-  height: 20px;
-  border-radius: 3px;
-  background: #62d9bb;
-  box-shadow: 0 0 14px #62d9bb88;
+  height: 16px;
+  border-radius: 0 2px 2px 0;
+  background: #0077fa;
+  box-shadow: none;
 }
 
 .shell-user {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: auto 8px 4px;
-  padding: 10px 10px 10px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--slate-300);
+  margin: auto 4px 6px;
+  padding: 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.65);
   position: relative;
   z-index: 1;
 }
 .shell-user-avatar {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   flex: none;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--surface);
-  font-weight: 800;
-  font-size: 13px;
+  border-radius: 50%;
+  background: #0077fa;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
 }
 .shell-user > div {
   min-width: 0;
@@ -211,48 +205,50 @@ async function signOut() {
   line-height: 1.3;
 }
 .shell-user strong {
-  color: var(--surface);
-  font-size: 12.5px;
+  color: #fff;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .shell-user small {
   font-size: 11px;
-  color: #8ea0b1;
+  color: rgba(255, 255, 255, 0.4);
 }
 .shell-user .el-button {
-  color: var(--slate-300);
+  color: rgba(255, 255, 255, 0.55);
   padding: 6px;
 }
 .shell > aside > .el-button {
-  margin: 0 8px 0;
-  color: var(--slate-300);
+  margin: 0 4px;
+  color: rgba(255, 255, 255, 0.55);
   justify-content: flex-start;
-  padding: 10px 13px;
+  padding: 10px 12px;
   position: relative;
   z-index: 1;
   display: flex;
   gap: 8px;
   align-items: center;
+  border-radius: 6px;
 }
 
 .shell > aside > .el-button:hover {
-  color: var(--surface);
-  background: #ffffff0b;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .shell main {
   flex: 1;
   min-width: 0;
+  background: #f5f6f8;
 }
 
 .shell > main > header {
-  height: 84px;
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(18px);
-  border-bottom: 1px solid rgba(218, 226, 230, 0.9);
-  padding: 18px 42px;
+  height: 56px;
+  background: #fff;
+  backdrop-filter: none;
+  border-bottom: 1px solid #e5e6e8;
+  padding: 0 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -267,22 +263,19 @@ async function signOut() {
 }
 
 .shell > main > header h2:before {
-  content: '/';
-  color: var(--accent);
-  margin-right: 8px;
-  font-family: 'DM Mono', monospace;
+  content: none;
 }
 
 .content {
-  padding: 34px 42px 54px;
-  max-width: 1540px;
+  padding: 20px 24px 40px;
+  max-width: 1440px;
   margin: 0 auto;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-shrink: 0;
 }
 
@@ -290,8 +283,8 @@ async function signOut() {
   flex: 1;
   min-width: 0;
   margin: 0 16px;
-  color: #263b46;
-  font-size: 14px;
+  color: #1c1f23;
+  font-size: 13px;
   line-height: 1.5;
   display: flex;
   align-items: center;
@@ -348,47 +341,48 @@ async function signOut() {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 12px;
-  border: 1px solid var(--line-tint);
-  border-radius: 99px;
-  background: var(--surface);
-  color: var(--ink-mid);
+  padding: 6px 12px;
+  border: 1px solid #e5e6e8;
+  border-radius: 6px;
+  background: #fff;
+  color: #4e5257;
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }
 
 .header-feedback:hover,
 .header-feedback:focus-visible {
-  border-color: var(--accent);
-  color: var(--accent-deep);
+  border-color: #0077fa;
+  color: #0077fa;
+  background: #eaf5ff;
   outline: none;
 }
 
 .nav-badge {
   margin-left: auto;
-  min-width: 20px;
+  min-width: 18px;
   padding: 1px 6px;
-  border-radius: 99px;
-  background: #e0a030;
-  color: #1a1204;
+  border-radius: 10px;
+  background: #fc8800;
+  color: #fff;
   font:
-    700 11px/1.6 'DM Mono',
-    ui-monospace,
-    monospace;
+    600 11px/1.5 Inter,
+    system-ui,
+    sans-serif;
   font-style: normal;
   text-align: center;
 }
 
 .status-dot {
-  font-size: 11px;
-  font-weight: 700;
-  color: #18876f;
-  background: #e5f7f1;
-  border: 1px solid #c9eee3;
-  border-radius: 99px;
-  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #3bb346;
+  background: rgba(59, 179, 70, 0.1);
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
 }
 
 .status-dot:before {
@@ -397,7 +391,7 @@ async function signOut() {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #20b38d;
+  background: #3bb346;
   margin-right: 6px;
   vertical-align: 1px;
 }
@@ -407,13 +401,13 @@ async function signOut() {
     display: none;
   }
   .shell > aside {
-    width: 78px;
-    padding: 24px 10px;
+    width: 64px;
+    padding: 16px 8px;
   }
   .shell > aside nav a {
     justify-content: center;
     font-size: 0;
-    padding: 13px;
+    padding: 12px;
   }
   .shell > aside nav a:before {
     display: none;
@@ -424,93 +418,92 @@ async function signOut() {
     padding: 12px;
   }
   .content {
-    padding-left: 22px;
-    padding-right: 22px;
+    padding-left: 16px;
+    padding-right: 16px;
   }
   .shell > main > header {
-    padding-left: 22px;
-    padding-right: 22px;
+    padding-left: 16px;
+    padding-right: 16px;
   }
 }
 
 @media (max-width: 620px) {
   .content {
-    padding: 24px 14px 40px;
+    padding: 16px 12px 32px;
   }
   .shell > main > header {
-    padding: 16px 14px;
+    padding: 0 12px;
   }
 }
 
 .shell > aside nav button {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  padding: 11px 13px;
-  color: #9caebb;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  padding: 10px 12px 10px 14px;
+  color: rgba(255, 255, 255, 0.65);
+  border: none;
+  border-radius: 6px;
   cursor: pointer;
   background: transparent;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
   position: relative;
 }
 
 .shell > aside nav button svg {
-  color: #6f8796;
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .shell > aside nav button.active {
-  background: #1a3b40;
-  color: var(--tint-50);
-  border-color: #30615c;
+  background: rgba(0, 119, 250, 0.18);
+  color: #fff;
 }
 
 .shell > aside nav button:hover {
-  background: #1a3b40;
-  color: var(--tint-50);
-  border-color: #30615c;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 .shell > aside nav button.active svg {
-  color: var(--accent-light);
+  color: #54a9ff;
 }
 
 .shell > aside nav button:hover svg {
-  color: var(--accent-light);
+  color: #fff;
 }
 
 .shell > aside nav button:focus-visible {
-  outline: 2px solid var(--accent-light);
-  outline-offset: 2px;
+  outline: 2px solid #54a9ff;
+  outline-offset: 1px;
 }
 
 .breadcrumb {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
-  color: #84939b;
+  color: #6b7075;
   flex-shrink: 0;
   display: flex;
   align-items: center;
 }
 
 .breadcrumb span {
-  margin: 0 9px;
-  color: #bdc9ce;
+  margin: 0 8px;
+  color: #c8c9cc;
 }
 
 .breadcrumb strong {
-  color: #263b46;
+  color: #1c1f23;
+  font-weight: 600;
 }
 
 @media (max-width: 980px) {
   .shell > aside nav button {
     justify-content: center;
     font-size: 0;
-    padding: 13px;
+    padding: 12px;
   }
   .shell > aside > .el-button span {
     display: none;
@@ -519,8 +512,8 @@ async function signOut() {
 
 @media (max-width: 620px) {
   .content {
-    padding-left: 15px;
-    padding-right: 15px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 </style>

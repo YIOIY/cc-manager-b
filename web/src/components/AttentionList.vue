@@ -110,7 +110,7 @@ const summary = computed(() =>
   border-top: 0;
 }
 .attention-list li:hover {
-  background: #f6fbfa;
+  background: var(--tint-50);
 }
 .attention-dot {
   width: 8px;
@@ -139,7 +139,8 @@ const summary = computed(() =>
 }
 .attention-account strong {
   font-size: 13px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 500;
+  font-family: inherit;
 }
 .attention-account small,
 .attention-what small {

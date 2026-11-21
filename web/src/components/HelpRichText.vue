@@ -23,8 +23,8 @@ const parts = computed(() => richParts(props.text))
   border: 1px solid #cfdcdb;
   border-bottom-width: 2px;
   border-radius: 5px;
-  background: #f6faf9;
-  color: #1f3b47;
+  background: #f5f6f8;
+  color: #1c1f23;
   font-size: 0.92em;
   font-weight: 600;
   line-height: 1.55;

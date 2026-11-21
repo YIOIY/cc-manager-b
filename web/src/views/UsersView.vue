@@ -427,7 +427,7 @@ onMounted(load)
   gap: 6px;
 }
 .access-count {
-  font-family: 'DM Mono', monospace;
+  font-family: 'ui-monospace', monospace;
   font-size: 12px;
   color: var(--ink-mid);
 }
@@ -447,7 +447,7 @@ onMounted(load)
 }
 .access-state.is-on::before {
   background: var(--accent);
-  box-shadow: 0 0 0 3px #e3f5ef;
+  box-shadow: 0 0 0 3px #d6eaff;
 }
 :global(.access-danger) {
   color: #d9534f;

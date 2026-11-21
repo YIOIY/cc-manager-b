@@ -17,42 +17,51 @@ defineProps<{ eyebrow: string; title: string; description: string }>()
 .page-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 22px;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 :global(.page-head h1) {
-  margin: 0 0 5px;
-  font-size: 29px;
-  letter-spacing: -0.04em;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.3;
+  color: var(--ink);
 }
 
 @media (max-width: 620px) {
   .page-head {
     align-items: flex-start;
-    gap: 14px;
+    gap: 12px;
     flex-direction: column;
   }
 }
 
 .eyebrow {
-  font:
-    700 10px/1 'DM Mono',
-    monospace;
-  letter-spacing: 0.12em;
-  color: #168e76;
-  margin-bottom: 9px;
+  display: none;
+}
+
+.muted {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .page-actions {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-shrink: 0;
 }
 
 :global(.page-actions .el-button) {
   display: inline-flex;
-  gap: 7px;
+  gap: 6px;
   align-items: center;
 }
 

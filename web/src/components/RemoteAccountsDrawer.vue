@@ -178,8 +178,8 @@ function onPage(p: number) {
   color: var(--text-secondary, #606266);
 }
 .mini-badge.teal {
-  background: #e0f5ef;
-  color: #0f8a6a;
+  background: #d6eaff;
+  color: #0062d6;
 }
 .mini-badge.yellow {
   background: #fdf6d8;

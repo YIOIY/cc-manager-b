@@ -270,16 +270,16 @@ onMounted(load)
 .voice-status button b {
   margin-left: 3px;
   color: var(--ink-mid);
-  font-family: 'DM Mono', ui-monospace, monospace;
+  font-family: 'ui-monospace', ui-monospace, monospace;
 }
 .voice-status button:hover,
 .voice-status button:focus-visible {
-  background: #f4faf8;
+  background: #eaf5ff;
   outline: none;
 }
 .voice-status button.active {
   border-color: #cfe6df;
-  background: #e9f6f2;
+  background: #d6eaff;
   color: var(--accent-deep);
   font-weight: 600;
 }
@@ -352,7 +352,7 @@ onMounted(load)
 .voice-meta code {
   color: var(--muted-strong);
   font:
-    11.5px 'DM Mono',
+    11.5px 'ui-monospace',
     ui-monospace,
     monospace;
 }
@@ -361,8 +361,8 @@ onMounted(load)
   margin-top: 12px;
   padding: 11px 14px;
   border-radius: 10px;
-  background: #f1f8f6;
-  border: 1px solid #d5ebe5;
+  background: #eaf5ff;
+  border: 1px solid #d6eaff;
 }
 .voice-reply span {
   color: #4d7a70;

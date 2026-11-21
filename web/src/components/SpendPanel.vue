@@ -151,16 +151,16 @@ function shortMoney(fen: number) {
   display: flex;
   align-items: flex-end;
   border-radius: 6px;
-  background: #f1f6f5;
+  background: #f5f6f8;
 }
 .spend-day em {
   display: block;
   width: 100%;
   border-radius: 6px;
-  background: linear-gradient(180deg, #2bb594, #167c69);
+  background: linear-gradient(180deg, #4c9bff, #004fb3);
 }
 .spend-day.pending em {
-  background: repeating-linear-gradient(135deg, #8fd9c5, #8fd9c5 4px, #c9eee3 4px, #c9eee3 8px);
+  background: repeating-linear-gradient(135deg, #54a9ff, #54a9ff 4px, #d6eaff 4px, #d6eaff 8px);
 }
 .spend-day small {
   font-size: 10px;
@@ -218,7 +218,7 @@ function shortMoney(fen: number) {
   margin-top: 4px;
   color: var(--muted-soft);
   font:
-    10px/1 'DM Mono',
+    10px/1 'ui-monospace',
     ui-monospace,
     monospace;
 }

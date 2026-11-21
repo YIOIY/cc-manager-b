@@ -289,7 +289,7 @@ watch(text, () => {
 
 .import-editor textarea {
   font:
-    12px/1.7 'DM Mono',
+    12px/1.7 'ui-monospace',
     monospace;
   background: var(--surface-soft);
 }
@@ -298,14 +298,14 @@ watch(text, () => {
   padding: 13px 14px;
   border: 1px solid #d1e8e1;
   border-radius: 7px;
-  background: #f7faf9;
+  background: #f5f6f8;
 }
 
 .reference-title {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: #1c876f;
+  color: #0062d6;
   font-size: 11px;
   font-weight: 700;
 }
@@ -321,7 +321,7 @@ watch(text, () => {
   word-break: break-word;
   color: #315563;
   font:
-    10px/1.55 'DM Mono',
+    10px/1.55 'ui-monospace',
     monospace;
 }
 
@@ -333,7 +333,7 @@ watch(text, () => {
 }
 
 .import-results {
-  border-top: 1px solid #edf1f1;
+  border-top: 1px solid #f0f1f2;
   padding-top: 13px;
   margin-top: 16px;
 }
@@ -349,7 +349,7 @@ watch(text, () => {
   justify-content: space-between;
   gap: 12px;
   padding: 7px 0;
-  border-bottom: 1px solid #f0f3f3;
+  border-bottom: 1px solid #f0f1f2;
   font-size: 11px;
   color: #5a6d77;
 }
@@ -365,7 +365,7 @@ watch(text, () => {
   margin-left: 7px;
   padding: 3px 6px;
   border-radius: 5px;
-  background: #e8f7f2;
+  background: #d6eaff;
   color: var(--accent-deep);
   font: 10px/1 monospace;
   font-style: normal;
@@ -398,7 +398,7 @@ watch(text, () => {
 }
 
 .import-dialog-intro strong {
-  color: #193f4b;
+  color: #1c1f23;
   font-size: 15px;
 }
 
@@ -464,7 +464,7 @@ watch(text, () => {
 .import-shortcut {
   color: #94a2a8;
   font:
-    10px/1 'DM Mono',
+    10px/1 'ui-monospace',
     monospace;
 }
 
@@ -476,7 +476,7 @@ watch(text, () => {
   border: 1px solid var(--line-tint);
   border-bottom: 0;
   border-radius: 10px 10px 0 0;
-  background: #f5faf9;
+  background: #f5f6f8;
 }
 
 .json-toolbar .el-button {
@@ -489,7 +489,7 @@ watch(text, () => {
 
 .json-toolbar .el-button:hover {
   color: var(--accent-deep);
-  background: #e6f5f0;
+  background: #d6eaff;
 }
 
 .json-toolbar .el-button.is-disabled {
@@ -516,9 +516,9 @@ watch(text, () => {
   min-height: 304px !important;
   border-radius: 0 !important;
   border-color: var(--line-tint) !important;
-  background: #fbfdfd !important;
+  background: #fafbfc !important;
   padding: 13px 14px !important;
-  color: #233f4a;
+  color: #1c1f23;
   resize: vertical;
 }
 
@@ -538,7 +538,7 @@ watch(text, () => {
   border: 1px solid var(--line-tint);
   border-top: 0;
   border-radius: 0 0 10px 10px;
-  background: #f6faf9;
+  background: #f5f6f8;
   color: #819197;
   font-size: 10px;
 }
@@ -550,8 +550,8 @@ watch(text, () => {
 }
 
 .json-status.is-success {
-  color: #19856d;
-  background: #effaf6;
+  color: #0062d6;
+  background: #eaf5ff;
 }
 
 .json-status > span:first-child {
@@ -564,7 +564,7 @@ watch(text, () => {
   margin-left: auto;
   color: var(--muted-soft);
   font:
-    10px 'DM Mono',
+    10px 'ui-monospace',
     monospace;
   white-space: nowrap;
 }
@@ -584,7 +584,7 @@ watch(text, () => {
   background: var(--surface);
   color: #45616b;
   font:
-    11px/1.65 'DM Mono',
+    11px/1.65 'ui-monospace',
     monospace;
   white-space: pre-wrap;
   word-break: break-word;

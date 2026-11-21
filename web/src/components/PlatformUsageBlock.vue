@@ -127,7 +127,7 @@ const usd = computed(() => {
   gap: 4px 8px;
 }
 .cost-amounts .usd-number {
-  color: #2f6f5e;
+  color: #0062d6;
 }
 .cost-amounts .muted-number {
   color: var(--text-tertiary, #909399);

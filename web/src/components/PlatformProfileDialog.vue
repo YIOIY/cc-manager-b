@@ -288,7 +288,7 @@ async function submit() {
   color: var(--text-secondary, #606266);
 }
 .profile-compare td:nth-child(3) {
-  color: var(--accent-deep, #167c69);
+  color: var(--accent-deep, #004fb3);
   font-weight: 600;
 }
 .profile-compare + .profile-dialog-hint {

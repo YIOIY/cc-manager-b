@@ -143,7 +143,7 @@ function windows(row: QuotaRow) {
 }
 .quota-rows li:hover,
 .quota-rows li:focus-visible {
-  background: #f4faf8;
+  background: #eaf5ff;
   outline: none;
 }
 .quota-rows li.off {
@@ -161,11 +161,8 @@ function windows(row: QuotaRow) {
   white-space: nowrap;
 }
 .quota-account strong {
-  color: var(--ink-soft);
-  font:
-    600 12.5px/1.5 'DM Mono',
-    ui-monospace,
-    monospace;
+  color: var(--ink);
+  font: 500 13px/1.5 inherit;
 }
 .quota-account small {
   color: var(--muted-soft);
@@ -186,9 +183,9 @@ function windows(row: QuotaRow) {
 /* The track carries a tick at 80%, where an account counts as near its limit. */
 .quota-gauge i {
   position: relative;
-  height: 7px;
-  border-radius: 99px;
-  background: #e9f0ef;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-soft);
   overflow: hidden;
 }
 .quota-gauge i::after {
@@ -197,13 +194,13 @@ function windows(row: QuotaRow) {
   left: 80%;
   top: 0;
   bottom: 0;
-  width: 1.5px;
-  background: rgba(20, 33, 50, 0.28);
+  width: 1px;
+  background: rgba(28, 31, 35, 0.2);
 }
 .quota-gauge em {
   display: block;
   height: 100%;
-  border-radius: 99px;
+  border-radius: 3px;
   background: var(--accent);
 }
 .quota-gauge i.tone-warn em {
@@ -215,10 +212,8 @@ function windows(row: QuotaRow) {
 .quota-gauge b {
   text-align: right;
   color: var(--ink-mid);
-  font:
-    700 12px/1 'DM Mono',
-    ui-monospace,
-    monospace;
+  font: 600 12px/1 inherit;
+  font-variant-numeric: tabular-nums;
 }
 .quota-gauge b.tone-warn {
   color: #a8721a;
@@ -241,26 +236,24 @@ function windows(row: QuotaRow) {
 .quota-cost {
   text-align: right;
   color: var(--ink-mid);
-  font:
-    600 12px/1 'DM Mono',
-    ui-monospace,
-    monospace;
+  font: 500 12px/1 inherit;
+  font-variant-numeric: tabular-nums;
 }
 .quota-more {
   display: block;
   width: 100%;
   margin-top: 8px;
   padding: 7px;
-  border: 1px dashed var(--line-tint);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
   background: transparent;
-  color: var(--accent-strong);
+  color: var(--accent);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 .quota-more:hover {
-  background: #f4faf8;
+  background: #eaf5ff;
 }
 @media (max-width: 760px) {
   .quota-head {

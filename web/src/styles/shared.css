@@ -1,20 +1,20 @@
 /* Classes used by more than one component, and every rule targeting them. Component-specific rules live in the SFCs. */
 
 .brand {
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  color: var(--tint-50);
-  font-size: 18px;
-  padding: 4px 14px 25px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  font-size: 16px;
+  padding: 4px 12px 18px;
   position: relative;
   z-index: 1;
 }
 
 .brand span {
   color: var(--accent-light);
-  font-size: 10px;
+  font-size: 11px;
   margin-left: 6px;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.06em;
 }
 
 .shell > main > header .muted {
@@ -25,6 +25,7 @@
 
 .page-head .muted {
   font-size: 13px;
+  margin-top: 4px;
 }
 
 .muted {
@@ -34,10 +35,10 @@
 .form-card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 20px 22px;
-  margin: 0 0 20px;
-  box-shadow: 0 10px 28px rgba(19, 38, 49, 0.05);
+  border-radius: 6px;
+  padding: 16px 18px;
+  margin: 0 0 16px;
+  box-shadow: none;
 }
 
 .form-card h3 {
@@ -66,7 +67,7 @@
 }
 
 .create-dialog .el-dialog__header {
-  background: linear-gradient(135deg, #f7fbfa, var(--surface));
+  background: linear-gradient(135deg, var(--tint-50), var(--surface));
   padding: 24px 28px 18px;
 }
 
@@ -88,7 +89,7 @@
 
 .account-form .el-form-item__label {
   font-weight: 700;
-  color: #526370;
+  color: #4e5257;
 }
 
 .account-form .el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label:before {
@@ -98,7 +99,7 @@
 .field-hint {
   font-size: 11px;
   line-height: 1.5;
-  color: #84929c;
+  color: #6b7075;
   margin-top: 5px;
 }
 
@@ -127,7 +128,7 @@
 .create-dialog {
   width: min(780px, calc(100vw - 32px)) !important;
   margin: 4vh auto !important;
-  border-radius: 16px !important;
+  border-radius: 10px !important;
 }
 
 .create-dialog .el-dialog__header {
@@ -173,7 +174,7 @@
 }
 
 .account-form .el-form-item__label {
-  color: #435867;
+  color: #4e5257;
   line-height: 40px;
 }
 
@@ -182,17 +183,17 @@
 }
 
 .account-form .el-input__wrapper {
-  border-radius: 10px !important;
+  border-radius: 7px !important;
   background: var(--surface) !important;
 }
 
 .account-form .el-select__wrapper {
-  border-radius: 10px !important;
+  border-radius: 7px !important;
   background: var(--surface) !important;
 }
 
 .account-form .el-textarea__inner {
-  border-radius: 10px !important;
+  border-radius: 7px !important;
   background: var(--surface) !important;
 }
 
@@ -211,7 +212,7 @@
 
 .account-form .field-hint {
   padding-left: 1px;
-  color: #8a99a1;
+  color: #8a847a;
   font-size: 10px;
   line-height: 1.4;
 }
@@ -259,8 +260,8 @@
 }
 
 .create-dialog .el-dialog__body::-webkit-scrollbar-thumb {
-  background: #cbdad8;
-  border-radius: 10px;
+  background: #d4cdc2;
+  border-radius: 8px;
 }
 
 .create-dialog .el-dialog__body::-webkit-scrollbar-track {
@@ -302,25 +303,25 @@
   place-items: center;
   width: 28px;
   height: 28px;
-  margin-left: -2px;
-  border: 1px solid #69d8bb80;
-  border-radius: 9px;
-  background: linear-gradient(145deg, #1cae90, #116b69);
-  color: #e9fff8;
-  box-shadow: 0 5px 14px #06151c66;
+  margin-left: 0;
+  border: none;
+  border-radius: 6px;
+  background: #0077fa;
+  color: #fff;
+  box-shadow: none;
 }
 
 .brand-word {
-  color: var(--tint-50);
-  font-size: 16px;
-  letter-spacing: 0.1em;
+  color: #fff;
+  font-size: 15px;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
 .brand-word b {
-  color: var(--accent-light);
-  font-size: 10px;
-  letter-spacing: 0.18em;
+  color: #54a9ff;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   margin-left: 4px;
 }
 
@@ -345,78 +346,75 @@
 }
 
 .login-card .brand {
-  padding: 0 0 31px;
-  gap: 11px;
+  padding: 0 0 16px;
+  gap: 10px;
 }
 
 .login-card .brand-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
-  box-shadow: 0 8px 18px rgba(13, 130, 106, 0.24);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  box-shadow: none;
+  background: #0077fa;
+  color: #fff;
 }
 
 .login-card .brand-word {
-  font-size: 18px;
-  letter-spacing: 0.12em;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  color: #1c1f23;
 }
 
 .login-card .brand-word b {
   font-size: 11px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.06em;
+  color: #0077fa;
 }
 
 @media (max-width: 620px) {
   .login-card .brand {
-    padding-bottom: 25px;
+    padding-bottom: 12px;
   }
 }
 
 .brand .brand-mark {
   font-size: 14px;
-  margin-left: -2px;
-  color: #e9fff8;
+  margin-left: 0;
+  color: #fff;
   letter-spacing: normal;
 }
 
 .brand .brand-word {
-  font-size: 16px;
+  font-size: 15px;
   margin-left: 0;
-  color: var(--tint-50);
-  letter-spacing: 0.1em;
+  color: #fff;
+  letter-spacing: 0.02em;
 }
 
 .brand .brand-word b {
-  font-size: 10px;
+  font-size: 11px;
   margin-left: 4px;
-  color: var(--accent-light);
-  letter-spacing: 0.18em;
+  color: #54a9ff;
+  letter-spacing: 0.06em;
 }
 
 .login-card .brand .brand-word {
-  color: var(--ink);
+  color: #1c1f23;
 }
 
 .login-card .brand .brand-word b {
-  color: var(--accent-strong);
+  color: #0077fa;
 }
 
 .panel {
   background: var(--surface);
-  border: 1px solid var(--line-tint);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(20, 35, 40, 0.045);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: none;
 }
 
 .heading-icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: #e7f7f2;
-  color: #139279;
-  flex: none;
+  display: none;
 }
 
 .heading-icon.small {
@@ -445,9 +443,9 @@
   width: min(900px, calc(100vw - 48px)) !important;
   margin: 4vh auto !important;
   padding: 0;
-  border: 1px solid #e4eceb;
-  border-radius: 18px !important;
-  box-shadow: 0 32px 100px #0e27352e;
+  border: 1px solid #e5e6e8;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 28px rgba(28, 31, 35, 0.12);
 }
 
 .account-create-dialog .form-grid.two {
@@ -474,7 +472,7 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 1.6;
-  color: #4d626b;
+  color: #4e5257;
   overflow: visible;
   white-space: normal;
   word-break: normal;
@@ -531,38 +529,34 @@
 }
 
 .account-create-dialog .account-form .el-input__wrapper:hover {
-  box-shadow: 0 0 0 1px #b5cec6 inset !important;
+  box-shadow: 0 0 0 1px #c8c9cc inset !important;
 }
 
 .account-create-dialog .account-form .el-select__wrapper:hover {
-  box-shadow: 0 0 0 1px #b5cec6 inset !important;
+  box-shadow: 0 0 0 1px #c8c9cc inset !important;
 }
 
 .account-create-dialog .account-form .el-input__wrapper.is-focus {
-  box-shadow:
-    0 0 0 1px #37a889 inset,
-    0 0 0 3px #18a8890d !important;
+  box-shadow: 0 0 0 1px #0077fa inset !important;
 }
 
 .account-create-dialog .account-form .el-select__wrapper.is-focused {
-  box-shadow:
-    0 0 0 1px #37a889 inset,
-    0 0 0 3px #18a8890d !important;
+  box-shadow: 0 0 0 1px #0077fa inset !important;
 }
 
 .account-create-dialog .account-form .el-input__inner {
   height: 38px;
-  color: #3d525d;
+  color: #1c1f23;
   font-size: 12px;
 }
 
 .account-create-dialog .account-form .el-input__inner::placeholder {
-  color: #acb6bb;
+  color: #a0a3a8;
   font-size: 12px;
 }
 
 .account-create-dialog .account-form .el-textarea__inner::placeholder {
-  color: #acb6bb;
+  color: #a0a3a8;
   font-size: 12px;
 }
 
@@ -570,7 +564,7 @@
   width: 100%;
   margin-top: 7px;
   padding: 0;
-  color: #99a5aa;
+  color: #888d92;
   font-size: 10px;
   line-height: 1.7;
 }
@@ -605,19 +599,19 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  min-height: 25px;
-  padding: 3px 9px;
+  min-height: 22px;
+  padding: 2px 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 700;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
 .delivery-status.success {
-  background: #eaf7f2;
-  border-color: #d5eee2;
-  color: #18815e;
+  background: #eef6ef;
+  border-color: #d5e6d8;
+  color: #2f7a48;
 }
 
 .delivery-status.pending {

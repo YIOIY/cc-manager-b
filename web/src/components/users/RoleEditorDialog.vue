@@ -288,7 +288,7 @@ async function save() {
   padding: 14px 16px;
   border: 1px solid #d9efe8;
   border-radius: 12px;
-  background: #f4fbf8;
+  background: #eaf5ff;
 }
 .access-pages-head {
   display: flex;
@@ -302,7 +302,7 @@ async function save() {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #0b6f5a;
+  color: #004fb3;
 }
 .access-pages-head .muted {
   font-size: 12px;
@@ -338,7 +338,7 @@ async function save() {
   vertical-align: -2px;
 }
 .access-perm-list li.is-page label {
-  border: 1px dashed #c5e6dc;
+  border: 1px dashed #d6eaff;
 }
 .access-page-tag {
   display: inline-flex;
@@ -416,7 +416,7 @@ async function save() {
   box-shadow: 0 1px 4px rgba(20, 35, 40, 0.08);
 }
 .access-editor-module b {
-  font-family: 'DM Mono', monospace;
+  font-family: 'ui-monospace', monospace;
   font-size: 11px;
   font-weight: 500;
   color: #9aa6b3;

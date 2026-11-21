@@ -82,11 +82,8 @@ const rows = computed(() => props.jobs.map((job) => ({ ...job, outcome: jobOutco
   white-space: nowrap;
 }
 .job-main strong {
-  color: var(--ink-soft);
-  font:
-    600 12.5px/1.5 'DM Mono',
-    ui-monospace,
-    monospace;
+  color: var(--ink);
+  font: 500 13px/1.5 inherit;
 }
 .job-main span {
   color: var(--muted-strong);

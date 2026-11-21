@@ -398,7 +398,7 @@ watch(
 .delivery-dialog .el-dialog__header {
   padding: 21px 24px 17px;
   margin: 0;
-  border-bottom: 1px solid #edf1f1;
+  border-bottom: 1px solid #f0f1f2;
 }
 
 .delivery-dialog .el-dialog__title {
@@ -419,8 +419,8 @@ watch(
 
 .delivery-dialog .el-dialog__footer {
   padding: 16px 24px;
-  border-top: 1px solid #eaf0ef;
-  background: #fcfdfd;
+  border-top: 1px solid #f0f1f2;
+  background: #fafbfc;
 }
 
 .delivery-account {
@@ -480,7 +480,7 @@ watch(
 }
 
 .delivery-state-note.success {
-  background: #eff9f4;
+  background: #eaf5ff;
   color: #44896d;
 }
 
@@ -536,7 +536,7 @@ watch(
   padding: 15px;
   border: 1px solid #e3eeea;
   border-radius: 9px;
-  background: #fcfefd;
+  background: #fafbfc;
 }
 
 .delivery-linked-platform .delivery-facts {
@@ -553,7 +553,7 @@ watch(
 
 .delivery-section-title > span {
   margin-left: auto;
-  color: #84988e;
+  color: #6b7075;
   font-size: 11px;
 }
 
@@ -578,7 +578,7 @@ watch(
   padding: 13px 15px;
   border: 1px solid #e5edeb;
   border-radius: 9px;
-  background: #fbfdfc;
+  background: #fafbfc;
 }
 
 .delivery-checks ul {

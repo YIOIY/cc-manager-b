@@ -44,9 +44,9 @@ const props = defineProps<{
 
 // Colour says something where it can: green is healthy, amber needs a look,
 // red is broken; plans have no such meaning and get a neutral ramp.
-const statusColors: Record<string, string> = { using: '#18a889', cooking: '#61b8d9', pending_activation: '#9db7e0' }
+const statusColors: Record<string, string> = { using: '#0077fa', cooking: '#61b8d9', pending_activation: '#9db7e0' }
 const deliveryColors: Record<string, string> = {
-  linked: '#18a889',
+  linked: '#0077fa',
   submitting: '#61b8d9',
   pending: '#c9d3d6',
   unknown: '#e0a030',
@@ -56,7 +56,7 @@ const expiryColors: Record<string, string> = {
   expired: '#c9423d',
   within_7: '#e0a030',
   within_30: '#ecd08a',
-  later: '#18a889',
+  later: '#0077fa',
   unknown: '#c9d3d6',
 }
 const failing = new Set([
@@ -72,7 +72,7 @@ const failing = new Set([
   'suspended',
   'arrearage',
 ])
-const planRamp = ['#0f8a70', '#4bb39a', '#8fd1bf', '#c5e6dc', '#9aa8ae']
+const planRamp = ['#0062d6', '#4c9bff', '#54a9ff', '#d6eaff', '#888d92']
 
 function build(
   title: string,
@@ -175,6 +175,6 @@ const groups = computed(() => [
 }
 .share-legend b {
   color: var(--ink-soft);
-  font-family: 'DM Mono', ui-monospace, monospace;
+  font-family: 'ui-monospace', ui-monospace, monospace;
 }
 </style>

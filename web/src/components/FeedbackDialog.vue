@@ -133,12 +133,12 @@ function goToList() {
 <style scoped>
 /* The chosen kind uses the app's own accent instead of the library's blue. */
 .feedback-kinds :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background-color: var(--accent, #18a889);
-  border-color: var(--accent, #18a889);
-  box-shadow: -1px 0 0 0 var(--accent, #18a889);
+  background-color: var(--accent, #0077fa);
+  border-color: var(--accent, #0077fa);
+  box-shadow: -1px 0 0 0 var(--accent, #0077fa);
 }
 .feedback-kinds :deep(.el-radio-button__inner:hover) {
-  color: var(--accent-deep, #0f8a70);
+  color: var(--accent-deep, #0062d6);
 }
 .feedback-kinds :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner:hover) {
   color: #fff;
@@ -146,9 +146,9 @@ function goToList() {
 .feedback-context {
   padding: 11px 14px;
   border-radius: 10px;
-  background: var(--surface-soft, #fbfcfc);
-  border: 1px solid var(--line-soft, #edf1f2);
-  color: var(--muted-strong, #6a7788);
+  background: var(--surface-soft, #fafbfc);
+  border: 1px solid var(--line-soft, #f0f1f2);
+  color: var(--muted-strong, #55595e);
   font-size: 12.5px;
   line-height: 1.7;
 }
@@ -159,15 +159,15 @@ function goToList() {
 .feedback-context code {
   padding: 0 5px;
   border-radius: 4px;
-  background: #eef4f3;
-  color: var(--ink-soft, #263b47);
+  background: #d6eaff;
+  color: var(--ink-soft, #1c1f23);
   font:
-    12px 'DM Mono',
+    12px 'ui-monospace',
     ui-monospace,
     monospace;
 }
 .feedback-context small {
-  color: var(--muted-soft, #9aa8ae);
+  color: var(--muted-soft, #888d92);
 }
 .feedback-sent {
   display: flex;
@@ -175,16 +175,16 @@ function goToList() {
   align-items: center;
   gap: 8px;
   padding: 18px 0 8px;
-  color: var(--accent-deep, #0f8a70);
+  color: var(--accent-deep, #0062d6);
   text-align: center;
 }
 .feedback-sent strong {
-  color: var(--ink-soft, #263b47);
+  color: var(--ink-soft, #1c1f23);
   font-size: 17px;
 }
 .feedback-sent p {
   margin: 0;
-  color: var(--muted-strong, #6a7788);
+  color: var(--muted-strong, #55595e);
   font-size: 13px;
 }
 </style>

@@ -344,7 +344,7 @@ const cards = computed<Card[]>(() =>
   overflow: hidden;
   min-width: 0;
   padding: 13px 14px 11px;
-  background: #08111f;
+  background: #232429;
   border: 1px solid #aa9516;
   border-radius: 14px;
   box-shadow:
@@ -393,7 +393,7 @@ const cards = computed<Card[]>(() =>
 }
 
 .health-dot.online {
-  background: #54ddbd;
+  background: #54a9ff;
   box-shadow: 0 0 9px rgba(84, 221, 189, 0.65);
 }
 
@@ -414,13 +414,13 @@ const cards = computed<Card[]>(() =>
 }
 
 .mini-badge.green {
-  background: #063a35;
-  color: #50ddbe;
+  background: #2a3a28;
+  color: #8fcea0;
 }
 
 .mini-badge.teal {
-  background: #063730;
-  color: #36d8b3;
+  background: #3a2a14;
+  color: #54a9ff;
 }
 
 .mini-badge.yellow {
@@ -434,7 +434,7 @@ const cards = computed<Card[]>(() =>
 }
 
 .mini-badge.provider {
-  background: #1aa383;
+  background: #0077fa;
   color: white;
   text-transform: none;
 }
@@ -545,7 +545,7 @@ const cards = computed<Card[]>(() =>
 .usage-card-rule {
   height: 1px;
   margin: 14px 0 12px;
-  background: #18283e;
+  background: #2a2b30;
 }
 
 .usage-stats {
@@ -591,7 +591,7 @@ const cards = computed<Card[]>(() =>
 :global(.usage-card-foot strong) {
   padding: 4px 7px;
   border-radius: 6px;
-  background: #102846;
+  background: #2a2b30;
   color: #5eaef0;
 }
 
@@ -641,39 +641,37 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-monitor .platform-card-grid {
-  padding: 16px 15px 20px;
-  gap: 14px;
-  background: var(--surface-soft);
-  border-top: 1px solid var(--line-soft);
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 350px), 1fr));
+  padding: 12px;
+  gap: 12px;
+  background: transparent;
+  border-top: 1px solid var(--line);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
   align-items: stretch;
 }
 
 .platform-monitor .usage-card {
-  padding: 18px;
+  padding: 14px 16px;
   background: var(--surface);
-  border: 1px solid #dfe8e8;
-  border-radius: 12px;
-  box-shadow: 0 5px 16px rgba(20, 35, 40, 0.055);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
 }
 
 .platform-monitor .usage-card:hover {
-  transform: translateY(-2px);
-  border-color: #9bd7ca;
-  box-shadow: 0 10px 22px rgba(20, 35, 40, 0.09);
+  transform: none;
+  border-color: var(--accent);
+  box-shadow: none;
+  background: var(--tint-50);
 }
 
 :global(.platform-monitor .usage-identity strong) {
-  color: var(--ink-soft);
-  font:
-    700 12px/1.2 'DM Mono',
-    monospace;
+  color: var(--ink);
   font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.5;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .platform-monitor .health-dot {
@@ -682,13 +680,13 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-monitor .health-dot.online {
-  background: #1aa383;
-  box-shadow: 0 0 0 3px #e4f6f1;
+  background: #3bb346;
+  box-shadow: none;
 }
 
 .platform-monitor .health-dot.attention {
-  background: #d7a21a;
-  box-shadow: 0 0 0 3px #fff5d7;
+  background: #fc8800;
+  box-shadow: none;
 }
 
 .platform-monitor .usage-card-rule {
@@ -696,57 +694,75 @@ const cards = computed<Card[]>(() =>
 }
 
 :global(.platform-monitor .usage-stats small) {
-  color: #7e8d95;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
 }
 
 :global(.platform-monitor .usage-stats b) {
-  color: var(--ink-soft);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .platform-monitor .usage-stats .blue-number {
-  color: #1784bc;
+  color: var(--accent);
 }
 
 .platform-monitor .usage-stats .date-number {
-  color: #52728b;
+  color: var(--ink-mid);
 }
 
 .platform-monitor .usage-card-foot {
-  color: #8a989e;
+  color: var(--muted);
   margin-top: auto;
-  padding-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
   line-height: 1.5;
-  gap: 12px;
+  gap: 10px;
+  font-family: inherit;
+  font-size: 12px;
 }
 
 :global(.platform-monitor .usage-card-foot strong) {
-  background: var(--tint-100);
-  color: var(--accent-deep);
+  background: var(--tint-50);
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .platform-monitor .mini-badge {
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-family: inherit;
+  font-weight: 500;
+  background: var(--surface-soft);
+  color: var(--ink-mid);
 }
 
 .platform-monitor .mini-badge.green {
-  background: #e8f7f2;
-  color: var(--accent-deep);
+  background: rgba(59, 179, 70, 0.1);
+  border-color: transparent;
+  color: #3bb346;
 }
 
 .platform-monitor .mini-badge.teal {
-  background: var(--tint-100);
-  color: var(--accent-deep);
+  background: var(--tint-50);
+  border-color: transparent;
+  color: var(--accent);
 }
 
 .platform-monitor .mini-badge.yellow {
-  background: #fff6d9;
-  color: #a97900;
+  background: rgba(252, 136, 0, 0.1);
+  border-color: transparent;
+  color: #fc8800;
 }
 
 .platform-monitor .mini-badge.creator {
-  background: #eef5fa;
-  color: #3a6f8f;
-  border-color: #c5d8e6;
+  background: var(--surface-soft);
+  color: var(--ink-mid);
+  border-color: var(--line);
 }
 
 .platform-monitor .platform-empty {
@@ -766,13 +782,13 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-monitor .usage-card-foot .card-action {
-  height: 30px;
+  height: 28px;
   padding: 0 10px;
-  border-radius: 8px;
-  font-weight: 700;
+  border-radius: 6px;
+  font-weight: 500;
   box-shadow: none;
   flex: none;
-  min-height: 31px;
+  min-height: 28px;
   margin: 0;
 }
 
@@ -820,9 +836,9 @@ const cards = computed<Card[]>(() =>
 }
 
 .account-platform-id {
-  font-family: 'DM Mono', monospace;
-  font-size: 10px;
-  color: #607e88;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .account-card-badges {

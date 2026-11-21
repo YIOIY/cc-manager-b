@@ -214,7 +214,7 @@ onBeforeUnmount(reset)
   padding: 20px;
   border: 1px solid #dce7e8;
   border-radius: 14px;
-  background: #f4f9f9;
+  background: #f5f6f8;
 }
 .oauth-intro {
   display: flex;
@@ -233,7 +233,7 @@ onBeforeUnmount(reset)
 }
 .oauth-intro strong {
   font-size: 15px;
-  color: #253735;
+  color: #1c1f23;
 }
 .oauth-intro p,
 .oauth-network-hint {

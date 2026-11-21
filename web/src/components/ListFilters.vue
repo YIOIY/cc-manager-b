@@ -162,7 +162,7 @@ function conditionLabel(field: FilterField) {
 
 :global(.search-row .el-input__wrapper) {
   min-height: 38px;
-  background: #f8fafb !important;
+  background: #f9f9f9 !important;
 }
 
 .filter-count {
@@ -246,7 +246,7 @@ function conditionLabel(field: FilterField) {
 }
 
 :global(.platform-monitor .search-row .el-input__wrapper) {
-  background: #0d1a2b !important;
+  background: #2a2b30 !important;
   box-shadow: 0 0 0 1px #21324a inset !important;
 }
 
@@ -255,7 +255,7 @@ function conditionLabel(field: FilterField) {
 }
 
 .platform-monitor .filter-panel {
-  background: #0a1727;
+  background: #232429;
   border-color: #20334c;
 }
 
@@ -276,7 +276,7 @@ function conditionLabel(field: FilterField) {
 }
 
 :global(.platform-monitor .search-row .el-input__wrapper) {
-  background: #f8fafb !important;
+  background: #f9f9f9 !important;
   box-shadow: 0 0 0 1px #dfe8ea inset !important;
 }
 
