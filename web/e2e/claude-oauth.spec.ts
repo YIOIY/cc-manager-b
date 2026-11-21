@@ -20,7 +20,7 @@ test('新建上号：页内保存代理、PKCE 授权、补充资料、核对与
   // This saves a real pool entry through the app API, without probing the example proxy.
   await dialog.getByRole('radio', { name: '填写新代理' }).check()
   await dialog.locator('#onboarding-proxy-address').fill('http://fixture-user:fixture-password@proxy.example.com:8080')
-  await dialog.getByRole('button', { name: '保存并使用' }).click()
+  await dialog.getByRole('button', { name: '检测并保存', exact: true }).click()
   await expect(dialog.getByText('新代理已保存并选中。')).toBeVisible()
   await expect(dialog.getByRole('button', { name: '登录 Claude', exact: true })).toBeEnabled()
   await page.screenshot({ path: testInfo.outputPath('wizard-connect.png'), fullPage: true })
@@ -102,9 +102,19 @@ test('新建上号：页内保存代理、PKCE 授权、补充资料、核对与
   await expect(dialog.getByPlaceholder('输入账号密码')).toHaveValue('fixture-delivery-password')
   await dialog.locator('[data-next]').click()
   await dialog.locator('[data-submit]').click()
-  await expect(dialog).toBeHidden()
+  // First-time onboarding stays open on a success page so the next account can follow.
+  await expect(dialog.locator('[data-submitted]')).toContainText('已提交')
   expect(submits).toBe(1)
   await expect(page.getByText('账号已提交，等待平台处理。可在账号卡片查看上号结果。')).toBeVisible()
+  // "Add another" keeps the platform and proxy but drops the previous account entirely.
+  await dialog.locator('[data-add-another]').click()
+  await expect(dialog.locator('[data-submitted]')).toHaveCount(0)
+  await expect(dialog.locator('.oauth-done')).toHaveCount(0)
+  await expect(dialog.locator('#field-password')).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '登录 Claude', exact: true })).toBeEnabled()
+  // Finishing closes the wizard; reopening starts from an empty form.
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(dialog).toBeHidden()
   await page.getByRole('button', { name: /新建账号/ }).click()
   await expect(dialog.locator('.oauth-done')).toHaveCount(0)
   await expect(dialog.locator('#field-password')).toHaveCount(0)
@@ -206,7 +216,8 @@ test('已有账号重新授权沿用保存资料，设备缺失时有可见补�
   const card = page.locator('article').filter({ hasText: 'reauth-fixture@example.com' })
   await card.getByRole('button', { name: '重新授权' }).click()
   const dialog = page.locator('.account-wizard')
-  await dialog.locator('[data-reauthorize]').click()
+  // The body card and the footer both carry this action; use the one in the page.
+  await dialog.locator('.wizard-connected [data-reauthorize]').click()
   await expect(dialog.getByRole('button', { name: '登录 Claude', exact: true })).toBeEnabled()
   const startResponse = page.waitForResponse(
     (res) => new URL(res.url()).pathname === '/api/v1/claude-oauth/sessions' && res.request().method() === 'POST',

@@ -6,7 +6,7 @@ test.describe('登录', () => {
     await page.goto('/')
     await page.getByPlaceholder('输入管理员账号').fill('admin')
     await page.getByPlaceholder('输入登录密码').fill('definitely-wrong-password')
-    await page.getByRole('button', { name: '进入工作台' }).click()
+    await page.getByRole('button', { name: '登录', exact: true }).click()
     await expect(loginCard(page).locator('.el-alert')).toBeVisible()
     await expect(page.getByRole('navigation', { name: '主导航' })).toHaveCount(0)
   })

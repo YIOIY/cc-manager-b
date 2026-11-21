@@ -25,7 +25,12 @@ type Config struct {
 	BillMaxItems       int
 	TrustProxy         bool
 	WriteRatePerMinute int // per-user mutating requests; 0 disables
-	Version            string
+	// StubNetworkProbes skips the live proxy check on save and the proxy→Claude
+	// reachability check before an authorization link. Only the browser
+	// end-to-end suite sets it: its fixture proxies are not real. Never enable
+	// it outside tests, because it turns both safeguards into no-ops.
+	StubNetworkProbes bool
+	Version           string
 }
 
 const (
@@ -48,6 +53,7 @@ func LoadConfig() (Config, error) {
 		BillMaxItems:       defaultBillMaxItems,
 		TrustProxy:         os.Getenv("CC_MANAGER_TRUST_PROXY") == "1",
 		WriteRatePerMinute: defaultWriteRate,
+		StubNetworkProbes:  os.Getenv("CC_MANAGER_STUB_NETWORK_PROBES") == "1",
 	}
 	if _, err := supplier.ProxyFromEnv(); err != nil {
 		return cfg, fmt.Errorf("CC_MANAGER_SUPPLIER_PROXY: %w", err)

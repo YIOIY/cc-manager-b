@@ -79,7 +79,7 @@ test('存储错误通知展示请求编号且可复制', async ({ page, context 
   await page.getByRole('button', { name: '新增代理' }).first().click()
   const dialog = page.locator('.el-dialog').filter({ hasText: '新增代理' })
   await dialog.getByPlaceholder(/IP 地址或域名/).fill('10.9.9.9')
-  await dialog.getByRole('button', { name: '保存代理' }).click()
+  await dialog.getByRole('button', { name: '检测并保存', exact: true }).click()
   const notice = dialog.locator('.error-notice')
   await expect(notice).toContainText('数据存储暂时不可用')
   await expect(notice).toContainText('req-e2e-77')
@@ -155,7 +155,7 @@ test('422 信封在真实表单上标红具体字段', async ({ page }) => {
   await page.getByRole('button', { name: '新增代理' }).first().click()
   const dialog = page.locator('.el-dialog').filter({ hasText: '新增代理' })
   await dialog.getByPlaceholder(/IP 地址或域名/).fill('bad host')
-  await dialog.getByRole('button', { name: '保存代理' }).click()
+  await dialog.getByRole('button', { name: '检测并保存', exact: true }).click()
   // 真实 el-form-item 渲染内联错误，两个字段同时标红
   await expect(dialog.locator('.el-form-item__error')).toHaveCount(2)
   await expect(dialog.locator('.el-form-item__error').filter({ hasText: '主机地址无法解析' })).toHaveCount(1)

@@ -24,7 +24,9 @@ export default defineConfig({
     command: [
       `rm -f ${dbPath} ${dbPath}-wal ${dbPath}-shm`,
       `cd .. && CC_MANAGER_LISTEN=127.0.0.1:${port} CC_MANAGER_DB=${dbPath} CC_MANAGER_ADMIN_PASSWORD=${ADMIN_PASSWORD}` +
-        ' CC_MANAGER_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= CC_MANAGER_WEB_DIR=web/dist CC_MANAGER_LOG_LEVEL=warn ./bin/cc-manager',
+        ' CC_MANAGER_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= CC_MANAGER_WEB_DIR=web/dist CC_MANAGER_LOG_LEVEL=warn' +
+        // The fixture proxies are fake; skip the live proxy / Claude reachability checks.
+        ' CC_MANAGER_STUB_NETWORK_PROBES=1 ./bin/cc-manager',
     ].join(' && '),
     url: `http://127.0.0.1:${port}/healthz`,
     reuseExistingServer: false,

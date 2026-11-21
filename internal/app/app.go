@@ -137,7 +137,10 @@ func NewWithConfig(cfg Config, workers bool) (*App, error) {
 		}
 	}
 	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now(), oauthGate: newOAuthGate(oauthGateSize)}
-	if autoStubProxyProbe {
+	if cfg.StubNetworkProbes {
+		slog.Warn("network probes are stubbed (CC_MANAGER_STUB_NETWORK_PROBES=1); use this for end-to-end tests only")
+	}
+	if autoStubProxyProbe || cfg.StubNetworkProbes {
 		a.probeCandidateProxy = func(context.Context, string) (proxyProbeResult, error) {
 			return proxyProbeResult{OK: true, Stage: "complete", Message: "test stub", CheckedAt: now()}, nil
 		}
