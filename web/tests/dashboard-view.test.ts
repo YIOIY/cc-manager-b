@@ -203,10 +203,9 @@ async function render(dash: Dashboard, att: AttentionResponse = attention, ins: 
 
 test('the top row shows fleet counts and spend', async () => {
   const text = (await render(dashboard())).text()
-  expect(text).toContain('平台账号')
-  expect(text).toContain('8')
-  expect(text).toContain('使用中 6')
-  expect(text).toContain('已封禁 2')
+  expect(text).toContain('可用容量')
+  expect(text).toContain('6 / 8 在用')
+  expect(text).toContain('5h 24% · 7d 32%')
   expect(text).toContain('$2,067.05')
   expect(text).toContain('$6,875.95')
   expect(text).not.toContain('¥14,882.78')
@@ -265,16 +264,64 @@ test('without the web channel the top row falls back to local counts with a hint
   expect(text).toContain('暂无账单数据')
 })
 
-test('amounts are shown only in dollars, with the daily average and the totals strip', async () => {
+test('amounts are shown only in dollars, with the daily average and the cumulative total', async () => {
   const text = (await render(dashboard())).text()
   expect(text).toContain('$2,067.05') // ¥14,882.78 ÷ 7.2
   expect(text).toContain('$6,875.95') // ¥49,506.82 ÷ 7.2
   expect(text).toContain('日均')
-  expect(text).toContain('累计花费')
-  expect(text).toContain('$1,000.00')
+  expect(text).toContain('累计 $1,000.00')
   expect(text).not.toContain('¥')
-  expect(text).toContain('累计 Token')
-  expect(text).toContain('平均占用')
+})
+
+test('the action and expiry stats count what needs a hand and when plans run out', async () => {
+  const w = await render(dashboard(), attention, {
+    ...insights,
+    composition: { ...insights.composition, next_expiry: '2026-11-18' },
+  })
+  const action = w.get('[data-stat="action"]').text()
+  expect(action).toContain('需要动手')
+  expect(action).toMatch(/封禁 \/ 失败 \d+/)
+  expect(action).toMatch(/接近限额 \d+/)
+  const expiry = w.get('[data-stat="expiry"]').text()
+  expect(expiry).toContain('6 个 30 天内到期')
+  expect(expiry).toContain('7 天内 1')
+  expect(expiry).toContain('最早 11-18')
+})
+
+test('idle accounts are listed with days left and open the account', async () => {
+  const idle = [
+    {
+      account_id: 'i1',
+      account: 'idle@example.test',
+      alias: 'claude-idle',
+      week_percent: 2,
+      cost_fen: 100,
+      plan_end: '2026-12-18',
+      days_left: 27,
+    },
+    {
+      account_id: 'i2',
+      account: 'unknown@example.test',
+      alias: '',
+      week_percent: 0,
+      cost_fen: null,
+      plan_end: '',
+      days_left: null,
+    },
+  ]
+  const w = await render(dashboard(), attention, { ...insights, idle })
+  const rows = w.findAll('[data-idle]')
+  expect(rows.map((r) => r.attributes('data-idle'))).toEqual(['i1', 'i2'])
+  expect(rows[0]!.text()).toContain('7d 2%')
+  expect(rows[0]!.text()).toContain('剩 27 天')
+  expect(rows[1]!.text()).toContain('到期未知')
+  await rows[0]!.trigger('click')
+  expect(push).toHaveBeenCalledWith({ name: 'accounts', query: { q: 'idle@example.test' } })
+})
+
+test('without idle accounts the panel says so', async () => {
+  const text = (await render(dashboard())).text()
+  expect(text).toContain('没有闲置账号')
 })
 
 test('the quota board lists every account with both windows and opens the account', async () => {

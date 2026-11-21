@@ -478,6 +478,17 @@ export interface QuotaRow {
   cost_fen: number | null
 }
 
+export interface IdleRow {
+  account_id: string
+  account: string
+  alias: string
+  week_percent: number | null
+  cost_fen: number | null
+  plan_end: string
+  /** null when the plan end date is unknown. */
+  days_left: number | null
+}
+
 export interface HourlyCost {
   /** Start of the hour, RFC 3339 UTC. */
   hour: string
@@ -508,7 +519,14 @@ export interface DashboardInsights {
   }
   quota: QuotaRow[]
   hourly: HourlyCost[]
-  composition: { by_delivery: Record<string, number>; expiry: Record<string, number> }
+  composition: {
+    by_delivery: Record<string, number>
+    expiry: Record<string, number>
+    /** Earliest plan end date not yet passed; "" when none is known. */
+    next_expiry?: string
+  }
+  /** In-use accounts with both usage windows under 10%, most plan days left first. */
+  idle?: IdleRow[]
   /** null when the user may not see the task centre. */
   recent_jobs: RecentJob[] | null
 }

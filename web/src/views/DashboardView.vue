@@ -1,78 +1,70 @@
 <template>
-  <PageHead
-    eyebrow="WORKSPACE"
-    title="仪表盘"
-    description="账号还够不够用：配额、需要处理的账号、消费节奏和最近的上号结果。"
-  >
+  <PageHead eyebrow="WORKSPACE" title="仪表盘" description="还剩多少能用、花了多少、有多少要处理、什么时候要续。">
     <el-button :loading="loading" @click="load"><RefreshCw :size="15" />刷新</el-button>
   </PageHead>
   <el-alert v-if="error" :title="error" type="error" show-icon @close="error = ''" />
 
   <div class="stat-grid dashboard-stats">
     <div class="stat" data-stat="accounts" role="button" tabindex="0" @click="go({})" @keyup.enter="go({})">
-      <span>平台账号</span><b>{{ dash ? fleetTotal : '—' }}</b>
-      <small v-if="webChannel">使用中 {{ usingCount }} · 已封禁 {{ bannedCount }}</small>
+      <span>可用容量</span>
+      <b v-if="dash && webChannel"
+        >{{ usingCount }}<em> / {{ fleetTotal }} 在用</em></b
+      >
+      <b v-else>{{ dash ? fleetTotal : '—' }}</b>
+      <small v-if="webChannel"
+        >平均已用：5h {{ insights ? insights.fleet.avg_five_hour_percent.toFixed(0) + '%' : '—' }} · 7d
+        {{ insights ? insights.fleet.avg_week_percent.toFixed(0) + '%' : '—' }}</small
+      >
       <small v-else>配置网页登录后显示平台状态</small>
-    </div>
-    <div
-      class="stat"
-      data-stat="near_limit"
-      :class="{ attention: nearLimit > 0 }"
-      role="button"
-      tabindex="0"
-      @click="go({ five_hour_min: '80' })"
-      @keyup.enter="go({ five_hour_min: '80' })"
-    >
-      <span>接近限额</span><b>{{ dash ? nearLimit : '—' }}</b
-      ><small>5 小时窗口 ≥ 80%</small>
     </div>
     <div class="stat" data-stat="today_cost">
       <span>今日消费</span>
       <b class="money">{{ usd(todayFen) || '—' }}</b>
-      <small>未出齐，约 2 小时延迟</small>
-    </div>
-    <div class="stat" data-stat="week_cost">
-      <span>7 天消费</span>
-      <b class="money">{{ usd(weekFen) || '—' }}</b>
       <small
-        >日均 {{ usd(dailyAverage) || '—'
+        >7 天 {{ usd(weekFen) || '—' }} · 日均 {{ usd(dailyAverage) || '—'
         }}<template v-if="change"
           >，昨天比前一天<i :class="change.up ? 'up' : 'down'"
             >{{ change.up ? '多' : '少' }} {{ change.percent }}%</i
           ></template
         ></small
       >
+      <small class="stat-foot"
+        >今日未出齐，约 2 小时延迟<template v-if="insights">
+          · 累计 {{ usd(insights.fleet.cost_fen_total) || '—' }}</template
+        ></small
+      >
+    </div>
+    <div class="stat" data-stat="action" :class="{ attention: actionTotal > 0 }">
+      <span>需要动手</span>
+      <b>{{ dash ? actionTotal : '—' }}</b>
+      <small class="stat-links">
+        <a role="button" tabindex="0" data-stat="banned" @click="scrollToAttention" @keyup.enter="scrollToAttention"
+          >封禁 / 失败 {{ attention?.counts?.banned ?? (webChannel ? bannedCount : 0) }}</a
+        >
+        <a
+          role="button"
+          tabindex="0"
+          data-stat="near_limit"
+          :class="{ hot: nearLimit > 0 }"
+          @click="go({ five_hour_min: '80' })"
+          @keyup.enter="go({ five_hour_min: '80' })"
+          >接近限额 {{ nearLimit }}</a
+        >
+      </small>
+    </div>
+    <div class="stat" data-stat="expiry" :class="{ warn: (expiry.within_7 || 0) + (expiry.expired || 0) > 0 }">
+      <span>到期节奏</span>
+      <b>{{ insights ? expiringSoon : '—' }}<em v-if="insights"> 个 30 天内到期</em></b>
+      <small
+        >7 天内 {{ expiry.within_7 || 0 }} · 已到期 {{ expiry.expired || 0
+        }}<template v-if="nextExpiry"> · 最早 {{ nextExpiry.slice(5) }}</template></small
+      >
     </div>
   </div>
 
-  <section v-if="insights" class="ledger" aria-label="累计数据">
-    <div>
-      <span>累计花费</span>
-      <b>{{ usd(insights.fleet.cost_fen_total) || '—' }}</b>
-      <small>{{ insights.fleet.accounts }} 个账号合计</small>
-    </div>
-    <div>
-      <span>累计 Token</span>
-      <b>{{ compactCount(insights.fleet.input_tokens + insights.fleet.output_tokens) }}</b>
-      <small
-        >输入 {{ compactCount(insights.fleet.input_tokens) }}，输出
-        {{ compactCount(insights.fleet.output_tokens) }}</small
-      >
-    </div>
-    <div>
-      <span>平均占用</span>
-      <b>{{ insights.fleet.avg_five_hour_percent.toFixed(1) }}%</b>
-      <small>5 小时窗口；7 天窗口 {{ insights.fleet.avg_week_percent.toFixed(1) }}%</small>
-    </div>
-    <div :class="{ warn: expiringSoon > 0 }">
-      <span>30 天内到期</span>
-      <b>{{ expiringSoon }}</b>
-      <small>其中 7 天内 {{ expiry.within_7 || 0 }} 个，已到期 {{ expiry.expired || 0 }} 个</small>
-    </div>
-  </section>
-
   <div class="dashboard-grid">
     <AttentionList
+      ref="attentionPanel"
       :items="attention?.items || []"
       :counts="attention?.counts || {}"
       :loading="attentionLoading"
@@ -97,58 +89,70 @@
       @open="(row) => go({ q: row.account || row.alias })"
       @all="go({})"
     />
-    <FleetComposition
-      :status-counts="remoteCounts"
-      :plan-counts="dash?.accounts.by_plan || {}"
-      :delivery-counts="insights?.composition.by_delivery"
-      :expiry-counts="insights?.composition.expiry"
+    <IdleAccounts
+      :rows="insights?.idle || []"
+      :loading="insightsLoading"
+      :failed="insightsFailed"
+      @open="(row) => go({ q: row.account || row.alias })"
     />
   </div>
 
-  <div class="dashboard-grid" :class="{ single: !recentJobs }">
-    <RecentJobs v-if="recentJobs" :jobs="recentJobs" @all="router.push({ name: 'jobs' })" />
-    <section class="dashboard-panel system-panel">
-      <div class="dashboard-panel-head">
-        <div>
-          <h2>系统状态</h2>
-          <p class="panel-sub">数据从哪来、多久之前更新的。</p>
+  <details class="dashboard-more" :open="systemAlert || undefined">
+    <summary>
+      {{ recentJobs ? '账号构成、最近上号与系统状态' : '账号构成与系统状态' }}
+      <el-tag v-if="systemAlert" size="small" type="danger">同步异常</el-tag>
+    </summary>
+    <div class="dashboard-grid three">
+      <FleetComposition
+        :status-counts="remoteCounts"
+        :plan-counts="dash?.accounts.by_plan || {}"
+        :delivery-counts="insights?.composition.by_delivery"
+        :expiry-counts="insights?.composition.expiry"
+      />
+      <RecentJobs v-if="recentJobs" :jobs="recentJobs" @all="router.push({ name: 'jobs' })" />
+      <section class="dashboard-panel system-panel">
+        <div class="dashboard-panel-head">
+          <div>
+            <h2>系统状态</h2>
+            <p class="panel-sub">数据从哪来、多久之前更新的。</p>
+          </div>
         </div>
-      </div>
-      <dl class="system-list">
-        <div>
-          <dt>网页同步</dt>
-          <dd>
-            {{ webHealthSource?.last_sync_at ? formatDateTime(webHealthSource.last_sync_at) : '尚未同步' }}
-            <el-tag size="small" :type="webHealth.tone">{{ webHealth.label }}</el-tag>
-          </dd>
-        </div>
-        <div>
-          <dt>指标同步</dt>
-          <dd>
-            {{ dash?.platform.last_sync_at ? formatDateTime(dash.platform.last_sync_at) : '尚未同步' }}
-            <el-tag size="small" :type="metricsHealth.tone">{{ metricsHealth.label }}</el-tag>
-          </dd>
-        </div>
-        <div>
-          <dt>代理</dt>
-          <dd>{{ dash?.proxies.enabled ?? '—' }} 个启用，{{ dash?.proxies.disabled ?? '—' }} 个停用</dd>
-        </div>
-        <div>
-          <dt>任务</dt>
-          <dd>
-            运行 {{ dash?.jobs.running ?? '—' }}，排队 {{ dash?.jobs.queued ?? '—' }}，失败
-            {{ dash?.jobs.failed ?? '—' }}
-          </dd>
-        </div>
-      </dl>
-      <p v-if="webHealth.detail" class="system-note" role="status">
-        网页同步：{{ webHealth.detail }}{{ webHealth.hint ? '，' + webHealth.hint : '' }}
-      </p>
-      <p v-if="metricsHealth.detail" class="system-note" role="status">
-        指标同步：{{ metricsHealth.detail }}{{ metricsHealth.hint ? '，' + metricsHealth.hint : '' }}
-      </p>
-    </section>
-  </div>
+        <dl class="system-list">
+          <div>
+            <dt>网页同步</dt>
+            <dd>
+              {{ webHealthSource?.last_sync_at ? formatDateTime(webHealthSource.last_sync_at) : '尚未同步' }}
+              <el-tag size="small" :type="webHealth.tone">{{ webHealth.label }}</el-tag>
+            </dd>
+          </div>
+          <div>
+            <dt>指标同步</dt>
+            <dd>
+              {{ dash?.platform.last_sync_at ? formatDateTime(dash.platform.last_sync_at) : '尚未同步' }}
+              <el-tag size="small" :type="metricsHealth.tone">{{ metricsHealth.label }}</el-tag>
+            </dd>
+          </div>
+          <div>
+            <dt>代理</dt>
+            <dd>{{ dash?.proxies.enabled ?? '—' }} 个启用，{{ dash?.proxies.disabled ?? '—' }} 个停用</dd>
+          </div>
+          <div>
+            <dt>任务</dt>
+            <dd>
+              运行 {{ dash?.jobs.running ?? '—' }}，排队 {{ dash?.jobs.queued ?? '—' }}，失败
+              {{ dash?.jobs.failed ?? '—' }}
+            </dd>
+          </div>
+        </dl>
+        <p v-if="webHealth.detail" class="system-note" role="status">
+          网页同步：{{ webHealth.detail }}{{ webHealth.hint ? '，' + webHealth.hint : '' }}
+        </p>
+        <p v-if="metricsHealth.detail" class="system-note" role="status">
+          指标同步：{{ metricsHealth.detail }}{{ metricsHealth.hint ? '，' + metricsHealth.hint : '' }}
+        </p>
+      </section>
+    </div>
+  </details>
 </template>
 
 <script setup lang="ts">
@@ -162,6 +166,7 @@ import SpendPanel from '../components/SpendPanel.vue'
 import QuotaBoard from '../components/QuotaBoard.vue'
 import FleetComposition from '../components/FleetComposition.vue'
 import RecentJobs from '../components/RecentJobs.vue'
+import IdleAccounts from '../components/IdleAccounts.vue'
 import { api, errorMessage } from '../api'
 import type { AttentionItem, AttentionResponse, Dashboard, DashboardInsights } from '../types/api'
 import { formatDateTime } from '../utils/format'
@@ -210,6 +215,15 @@ const expiry = computed(() => insights.value?.composition.expiry || {})
 const expiringSoon = computed(
   () => (expiry.value.expired || 0) + (expiry.value.within_7 || 0) + (expiry.value.within_30 || 0),
 )
+const nextExpiry = computed(() => insights.value?.composition.next_expiry || '')
+// Accounts needing a hand: failures/bans plus those near the 5-hour limit.
+const actionTotal = computed(
+  () => (attention.value?.counts?.banned ?? (webChannel.value ? bannedCount.value : 0)) + nearLimit.value,
+)
+const attentionPanel = ref<{ $el?: HTMLElement } | null>(null)
+function scrollToAttention() {
+  attentionPanel.value?.$el?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+}
 const recentJobs = computed(() => insights.value?.recent_jobs ?? null)
 const metricsHealth = computed<SyncHealthView>(() =>
   dash.value ? describeMetricsHealth(dash.value.platform) : { tone: 'info', label: '未开始' },
@@ -219,15 +233,13 @@ const webHealth = computed<SyncHealthView>(() =>
   webHealthSource.value ? describeSyncHealth(webHealthSource.value) : { tone: 'info', label: '未配置' },
 )
 
+// Open the folded section by default when a sync channel is failing.
+const systemAlert = computed(() => webHealth.value.tone === 'danger' || metricsHealth.value.tone === 'danger')
+
 // Dollars when the platform rate is known (from insights); otherwise blank.
 function usd(fen: number): string {
   const cents = fenToUsdCents(fen, insights.value?.usd_cny_rate)
   return cents === null ? '' : formatUsdCents(cents)
-}
-function compactCount(n: number): string {
-  if (n >= 1e8) return (n / 1e8).toFixed(2) + ' 亿'
-  if (n >= 1e4) return (n / 1e4).toFixed(1) + ' 万'
-  return n.toLocaleString('zh-CN')
 }
 function go(query: Record<string, string>) {
   router.push({ name: 'accounts', query })
@@ -347,16 +359,6 @@ onMounted(load)
 .stat:nth-child(4) b {
   color: var(--ink);
 }
-.stat.attention:nth-child(2) {
-  border-color: #ffd4ce;
-  background: linear-gradient(180deg, #fff7f6 0%, #fff 72%);
-}
-.stat.attention:nth-child(2):before {
-  background: var(--el-color-danger);
-}
-.stat.attention:nth-child(2) b {
-  color: var(--el-color-danger);
-}
 .stat-usd {
   display: block;
   margin-top: 2px;
@@ -382,50 +384,76 @@ onMounted(load)
   color: var(--accent);
 }
 
-/* Secondary strip: quieter than KPI cards, not competing for attention. */
-.ledger {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0;
-  margin-top: 12px;
-  background: #fafbfc;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
+.stat b em {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: 0;
 }
-.ledger > div {
-  padding: 12px 16px;
-  border-left: 1px solid var(--line-soft);
-  background: transparent;
-  min-width: 0;
+.stat small.stat-foot {
+  margin-top: 2px;
 }
-.ledger > div:first-child {
-  border-left: 0;
+.stat-links {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 4px 14px;
 }
-.ledger span {
-  display: block;
-  color: var(--muted-soft);
-  font-size: 12px;
-  font-weight: 400;
-}
-.ledger b {
-  display: block;
-  margin-top: 4px;
+.stat-links a {
   color: var(--ink-mid);
-  font: 600 15px/1.3 inherit;
-  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--line-strong);
 }
-.ledger .warn b {
+.stat-links a:hover,
+.stat-links a:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+.stat-links a.hot {
+  color: var(--el-color-danger);
+}
+.stat.attention:nth-child(3) {
+  border-color: #ffd4ce;
+  background: linear-gradient(180deg, #fff7f6 0%, #fff 72%);
+}
+.stat.attention:nth-child(3):before {
+  background: var(--el-color-danger);
+}
+.stat.attention:nth-child(3) b {
+  color: var(--el-color-danger);
+}
+.stat.warn:nth-child(4):before {
+  background: var(--pending);
+}
+.stat.warn:nth-child(4) b {
   color: var(--pending);
 }
-.ledger small {
-  display: block;
-  margin-top: 2px;
-  color: var(--muted-soft);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+.dashboard-more {
+  margin-top: 16px;
+}
+.dashboard-more > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+.dashboard-more > summary:hover {
+  color: var(--ink);
+}
+.dashboard-more > .dashboard-grid {
+  margin-top: 4px;
+}
+.dashboard-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .dashboard-grid {
@@ -546,7 +574,8 @@ onMounted(load)
 
 @media (max-width: 1100px) {
   .dashboard-grid,
-  .dashboard-grid.wide-left {
+  .dashboard-grid.wide-left,
+  .dashboard-grid.three {
     grid-template-columns: 1fr;
   }
 }
@@ -554,27 +583,10 @@ onMounted(load)
   .stat-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-  .ledger {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .ledger > div:nth-child(3) {
-    border-left: 0;
-  }
-  .ledger > div:nth-child(n + 3) {
-    border-top: 1px solid var(--line-soft);
-  }
 }
 @media (max-width: 620px) {
-  .stat-grid,
-  .ledger {
+  .stat-grid {
     grid-template-columns: 1fr;
-  }
-  .ledger > div {
-    border-left: 0;
-    border-top: 1px solid var(--line-soft);
-  }
-  .ledger > div:first-child {
-    border-top: 0;
   }
   :global(.dashboard-panel) {
     padding: 14px;

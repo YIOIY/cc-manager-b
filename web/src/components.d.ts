@@ -55,6 +55,7 @@ declare module 'vue' {
     FeedbackDialog: typeof import('./components/FeedbackDialog.vue')['default']
     FleetComposition: typeof import('./components/FleetComposition.vue')['default']
     HelpRichText: typeof import('./components/HelpRichText.vue')['default']
+    IdleAccounts: typeof import('./components/IdleAccounts.vue')['default']
     ImportDialog: typeof import('./components/ImportDialog.vue')['default']
     ListFilters: typeof import('./components/ListFilters.vue')['default']
     OnboardingProxyPicker: typeof import('./components/OnboardingProxyPicker.vue')['default']
