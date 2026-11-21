@@ -137,12 +137,31 @@ func (a *App) runOne(ctx context.Context) {
 		return
 	}
 	a.setDelivery(accountID, spec.ConnectionID, "running", "")
+	// The OAuth reauthorization holds this lock while it pushes a fresh token.
+	// A job that already read the pre-OAuth credential would otherwise
+	// overwrite the platform copy with a stale snapshot, so wait for the push
+	// to finish and re-read below. Lock order matches reauthorize: connection
+	// web sync, then account. A busy account requeues instead of blocking the
+	// single worker.
+	unlock, ok := a.accountLocks.tryLock(accountID)
+	if !ok {
+		a.requeueJob(id, accountID, spec.ConnectionID)
+		return
+	}
+	defer unlock()
+
 	var account, plan, location, registered, start, end, credential, metadataJSON string
 	var version int
 	err = a.DB.QueryRowContext(ctx, `SELECT account,plan,register_location,register_time,plan_start_time,plan_end_time,credentials_json,metadata_json,version FROM accounts WHERE id=?`, accountID).Scan(&account, &plan, &location, &registered, &start, &end, &credential, &metadataJSON, &version)
-	if err != nil || version != spec.Version {
+	if err != nil {
 		failed("VERSION_CONFLICT")
 		return
+	}
+	if version != spec.Version {
+		// The row moved on while queued (usually an OAuth reauthorization that
+		// just wrote a fresh token). The credential below is the newer one, so
+		// submit it instead of failing the user with a conflict.
+		slog.Info("submit using newer account snapshot", "account", accountID, "job", id, "queued_version", spec.Version, "current_version", version)
 	}
 	var base, tokenSecret string
 	var enabled int
@@ -527,6 +546,24 @@ func nullableRate(m supplier.Metric) any {
 }
 
 func (a *App) finishJob(id, state, code string) { a.finishJobErr(id, state, errs.Adhoc(code, 0, "")) }
+
+// requeueJob puts a claimed job back in the queue without burning it. The next
+// poll must be able to re-read the credential, so the version pin is dropped
+// and the delivery falls back to queued instead of staying "running".
+func (a *App) requeueJob(id, accountID, connectionID string) {
+	if _, err := a.DB.Exec(`UPDATE jobs SET state='queued',result_json='{}',updated_at=? WHERE id=? AND state='running'`, now(), id); err != nil {
+		slog.Error("job requeue failed", "job", id, "error", err)
+		a.finishJob(id, "failed", "INTERNAL_ERROR")
+		a.setDelivery(accountID, connectionID, "failed", "")
+		return
+	}
+	a.setDelivery(accountID, connectionID, "queued", "")
+	// Keep the ordering stable so a busy account does not starve behind the
+	// row it just released; the poll order is created_at, so bump it.
+	if _, err := a.DB.Exec(`UPDATE jobs SET created_at=? WHERE id=?`, now(), id); err != nil {
+		slog.Warn("job requeue order bump failed", "job", id, "error", err)
+	}
+}
 
 // finishJobErr persists the whole classified outcome so readers need no
 // client-side mapping table.

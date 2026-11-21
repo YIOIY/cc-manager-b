@@ -77,7 +77,7 @@ func deliveryBody() map[string]any {
 			"last_refresh": now.Add(-time.Hour).Format(time.RFC3339), "email": "workflow@example.test",
 			"account_uuid": "account-uuid", "organization_uuid": "org-uuid", "organization_name": "Fixture",
 			"claude_device_ids": []any{"device-id"}, "type": "claude",
-			"expired": now.Add(30 * 24 * time.Hour).Format(time.RFC3339),
+			"expired":   now.Add(30 * 24 * time.Hour).Format(time.RFC3339),
 			"proxy_url": "http://127.0.0.1:9090", "verification_status": "verified",
 		},
 	}

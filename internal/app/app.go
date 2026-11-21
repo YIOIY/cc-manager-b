@@ -32,6 +32,7 @@ type App struct {
 	writes        *writeLimiter
 	oauth         oauthPendingStore
 	oauthCooldown oauthAccountCooldown
+	accountLocks  accountLocks
 	billMutex     sync.Mutex
 	billFactory   func(string, string) (billSupplier, error)
 	billInterval  time.Duration

@@ -83,6 +83,17 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	defer lock.Unlock()
 
+	// Hold the per-account lock for the whole push. The submit worker takes the
+	// same lock, so a reauthorization can no longer be overwritten by a queued
+	// job that carried a pre-OAuth credential snapshot. Lock order is always
+	// connection web sync first, then account, on both paths.
+	unlock, err := a.accountLocks.lock(ctx, id)
+	if err != nil {
+		writeError(w, r, errs.New(errs.CodePlatformUnavailable).WithCause(err))
+		return
+	}
+	defer unlock()
+
 	snapshot, err := a.linkedSnapshot(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && snapshot.ConnectionID != first.ConnectionID) {
 		fail(w, http.StatusConflict, errs.CodeVersionConflict, "平台记录已变化，请刷新后重试")

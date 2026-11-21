@@ -17,9 +17,9 @@ func reauthAuth(email string) map[string]any {
 		"last_refresh": now.Add(-time.Hour).Format(time.RFC3339), "email": email,
 		"account_uuid": "u", "organization_uuid": "o", "organization_name": "Org",
 		"claude_device_ids": []any{"device-id"}, "type": "claude",
-		"expired":              now.Add(30 * 24 * time.Hour).Format(time.RFC3339),
-		"proxy_url":            "",
-		"verification_status":  "not_required",
+		"expired":             now.Add(30 * 24 * time.Hour).Format(time.RFC3339),
+		"proxy_url":           "",
+		"verification_status": "not_required",
 	}
 }
 
