@@ -222,13 +222,13 @@ test('the last used proxy is preselected next time while an unusable one is igno
   await flushPromises()
   // Nothing preselected: the login button stays blocked on the proxy.
   expect(again.get('.fake-oauth').attributes('disabled')).toBeDefined()
-  expect(again.get('[data-oauth-blocker]').text()).toContain('先选择代理')
+  expect(again.get('[data-oauth-blocker]').text()).toContain('先选择或添加代理')
 })
 
 test('the disabled login button says what is missing and jumps to that field', async () => {
   const w = setup()
   await flushPromises()
-  expect(w.get('[data-oauth-blocker]').text()).toContain('先选择代理')
+  expect(w.get('[data-oauth-blocker]').text()).toContain('先选择或添加代理')
   await w.get('#field-proxy select').setValue('px')
   expect(w.find('[data-oauth-blocker]').exists()).toBe(false)
   await w.get('#field-connection select').setValue('')

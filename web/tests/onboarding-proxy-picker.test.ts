@@ -79,7 +79,7 @@ test('users without proxy-create permission can select existing proxies but cann
   expect(w.get('input[value="auto"]').attributes('disabled')).toBeDefined()
   w.unmount()
 })
-test('with no usable proxy the picker opens on the new-proxy form and reports it as pending', async () => {
+test('with no usable proxy the picker opens on the new-proxy form without blocking until the user commits to it', async () => {
   const w = mount(OnboardingProxyPicker, {
     props: {
       modelValue: '',
@@ -89,7 +89,12 @@ test('with no usable proxy the picker opens on the new-proxy form and reports it
   })
   expect((w.get('input[value="new"]').element as HTMLInputElement).checked).toBe(true)
   expect(w.find('[data-proxy-address]').exists()).toBe(true)
-  expect(w.emitted('pending')?.[0]).toEqual([true])
+  // Untouched default: a pasted credential with its own proxy must still be able to continue.
+  expect(w.emitted('pending')).toBeUndefined()
+  await w.get('[data-proxy-address]').setValue('http://proxy.example.com:8080')
+  expect(w.emitted('pending')?.at(-1)).toEqual([true])
+  await w.get('[data-proxy-address]').setValue('')
+  expect(w.emitted('pending')?.at(-1)).toEqual([false])
   w.unmount()
   const withPool = mount(OnboardingProxyPicker, {
     props: { modelValue: '', proxies: [{ id: 'p', name: 'A', host: 'h', port: 1, scheme: 'http', enabled: true }] },
@@ -97,5 +102,8 @@ test('with no usable proxy the picker opens on the new-proxy form and reports it
   })
   expect((withPool.get('input[value="existing"]').element as HTMLInputElement).checked).toBe(true)
   expect(withPool.emitted('pending')).toBeUndefined()
+  // Choosing the new-proxy form explicitly still blocks, as before.
+  await withPool.get('input[value="new"]').setValue()
+  expect(withPool.emitted('pending')?.at(-1)).toEqual([true])
   withPool.unmount()
 })

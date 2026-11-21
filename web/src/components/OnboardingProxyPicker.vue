@@ -121,11 +121,18 @@ const parsed = computed(() => {
   return value?.host && value.port ? value : null
 })
 watch([address, name], () => emit('dirty', !!address.value || !!name.value))
-if (mode.value === 'new') emit('pending', true)
+// Opening on the new-proxy form by default must not block anything: a pasted
+// credential may already carry its own proxy. The form only counts as pending
+// once the user types an address or picks 「填写新代理」 themselves.
+const chosenNew = ref(false)
+watch(
+  () => mode.value === 'new' && (chosenNew.value || !!address.value.trim()),
+  (pending) => emit('pending', pending),
+)
 function changeMode(value: 'existing' | 'new') {
   if (props.disabled || saving.value || (value === 'new' && !canCreate.value)) return
   mode.value = value
-  emit('pending', value === 'new')
+  chosenNew.value = value === 'new'
   notice.value = null
   emit('update:modelValue', '')
 }

@@ -819,7 +819,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     if (savedCredentials.value || source.value === 'import' || source.value === 'manual') return null
     if (!connectionReady.value) return { text: '先选择上号平台', anchor: fieldAnchors.connection }
     if (proxyPending.value) return { text: '新代理还没检测保存', anchor: fieldAnchors.proxy }
-    if (!poolProxyReady.value && !savedProxyAccountId.value) return { text: '先选择代理', anchor: fieldAnchors.proxy }
+    if (!poolProxyReady.value && !savedProxyAccountId.value)
+      return { text: '先选择或添加代理', anchor: fieldAnchors.proxy }
     return null
   })
   function stopTimers() {
