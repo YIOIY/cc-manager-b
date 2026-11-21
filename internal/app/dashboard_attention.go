@@ -36,6 +36,9 @@ type attentionItem struct {
 	Value      float64 `json:"value"`
 }
 
+// reauthStatuses mirror the web client's: a new authorization recovers them.
+var reauthStatuses = map[string]bool{"login_failed": true, "re_login_failed": true, "sync_failed": true, "re_login": true}
+
 var attentionKindOrder = map[string]int{"near_limit": 0, "banned": 1, "expiring": 2, "missing": 3, "profile_diff": 4}
 
 // attentionItems builds the list and the per-kind totals (counted before
@@ -146,6 +149,11 @@ WHERE l.ingestion_state='accepted' AND a.archived=0`+ownerSQL+` ORDER BY a.accou
 			return attentionKindOrder[a.Kind] < attentionKindOrder[b.Kind]
 		}
 		switch a.Kind {
+		case "banned":
+			// Failures a re-authorization can fix come before hard bans.
+			if ra, rb := reauthStatuses[a.Label], reauthStatuses[b.Label]; ra != rb {
+				return ra
+			}
 		case "near_limit":
 			return a.Value > b.Value
 		case "expiring":

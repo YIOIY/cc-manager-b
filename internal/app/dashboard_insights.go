@@ -16,8 +16,12 @@ import (
 
 const (
 	insightsQuotaLimit = 50
-	insightsJobLimit   = 6
-	insightsHours      = 24
+	insightsIdleLimit  = 20
+	// An in-use account below this fraction of both its 5-hour and 7-day
+	// windows counts as idle; a busy 5-hour window means it is in use now.
+	idleWeekFraction = 0.10
+	insightsJobLimit = 6
+	insightsHours    = 24
 )
 
 type quotaRow struct {
@@ -30,6 +34,18 @@ type quotaRow struct {
 	WeekPercent     *float64 `json:"week_percent"`
 	WeekResetAt     string   `json:"week_reset_at"`
 	CostFen         *int64   `json:"cost_fen"`
+}
+
+// idleRow is an in-use account that has barely used its 7-day window.
+type idleRow struct {
+	AccountID   string   `json:"account_id"`
+	Account     string   `json:"account"`
+	Alias       string   `json:"alias"`
+	WeekPercent *float64 `json:"week_percent"`
+	CostFen     *int64   `json:"cost_fen"`
+	PlanEnd     string   `json:"plan_end"`
+	// DaysLeft is nil when the plan end date is unknown.
+	DaysLeft *int `json:"days_left"`
 }
 
 // dashboardInsights answers GET /api/v1/dashboard/insights.
@@ -45,7 +61,7 @@ func (a *App) dashboardInsights(w http.ResponseWriter, r *http.Request) {
 // dashboardInsightsData builds the response. recent_jobs is nil unless the
 // caller may see the task centre.
 func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJobs bool, scope ownershipScope) (map[string]any, error) {
-	fleet, quota, expiry, err := a.fleetQuota(ctx, at, scope)
+	fleet, quota, expiry, idle, nextExpiry, err := a.fleetQuota(ctx, at, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -71,8 +87,9 @@ func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJo
 		"usd_cny_rate": rate,
 		"fleet":        fleet,
 		"quota":        quota,
+		"idle":         idle,
 		"hourly":       hourly,
-		"composition":  map[string]any{"by_delivery": byDelivery, "expiry": expiry},
+		"composition":  map[string]any{"by_delivery": byDelivery, "expiry": expiry, "next_expiry": nextExpiry},
 		"recent_jobs":  jobs,
 	}, nil
 }
@@ -80,7 +97,10 @@ func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJo
 // fleetQuota walks every onboarded account once: totals and the quota board
 // come from accounts the platform still lists; the expiry buckets cover all
 // onboarded accounts (platform end date first, the local one otherwise).
-func (a *App) fleetQuota(ctx context.Context, at time.Time, scope ownershipScope) (map[string]any, []quotaRow, map[string]int, error) {
+//
+// It also returns the idle in-use accounts and the earliest plan end date
+// that has not passed yet ("" when none is known).
+func (a *App) fleetQuota(ctx context.Context, at time.Time, scope ownershipScope) (map[string]any, []quotaRow, map[string]int, []idleRow, string, error) {
 	ownerSQL, ownerArgs := scope.sqlAnd("a.created_by_user_id")
 	rows, err := a.DB.QueryContext(ctx, `SELECT a.id,a.account,COALESCE(a.plan_end_time,''),COALESCE(c.timezone,''),
 r.upstream_id IS NOT NULL,COALESCE(r.missing_since,''),COALESCE(r.superseded_by,''),COALESCE(r.alias,''),COALESCE(NULLIF(r.ext_status,''),r.a1_status,''),COALESCE(r.plan_end_time,''),
@@ -90,9 +110,11 @@ LEFT JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.up
 WHERE l.ingestion_state='accepted' AND a.archived=0`+ownerSQL+`
 ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',l.updated_at DESC`, ownerArgs...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, "", err
 	}
 	defer rows.Close()
+	idle := []idleRow{}
+	nextExpiry := ""
 	expiry := map[string]int{"expired": 0, "within_7": 0, "within_30": 0, "later": 0, "unknown": 0}
 	quota := []quotaRow{}
 	seen := map[string]bool{}
@@ -105,7 +127,7 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 		var five, week sql.NullFloat64
 		var cost, in, out sql.NullInt64
 		if err = rows.Scan(&id, &email, &localEnd, &zone, &hasRemote, &missing, &superseded, &alias, &status, &remoteEnd, &five, &fiveReset, &week, &weekReset, &cost, &in, &out); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, "", err
 		}
 		if seen[id] { // an older delivery of the same account
 			continue
@@ -116,7 +138,11 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 		if end == "" {
 			end = localEnd
 		}
-		expiry[expiryBucket(end, at, zone)]++
+		bucket := expiryBucket(end, at, zone)
+		expiry[bucket]++
+		if bucket != "expired" && bucket != "unknown" && (nextExpiry == "" || end < nextExpiry) {
+			nextExpiry = end
+		}
 
 		if !hasRemote || missing != "" || superseded != "" {
 			continue
@@ -142,9 +168,30 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 		inTokens += in.Int64
 		outTokens += out.Int64
 		quota = append(quota, q)
+		if status == "using" && week.Valid && week.Float64 < idleWeekFraction && (!five.Valid || five.Float64 < idleWeekFraction) {
+			row := idleRow{AccountID: id, Account: email, Alias: alias, WeekPercent: q.WeekPercent, CostFen: q.CostFen, PlanEnd: end}
+			if days, ok := daysUntil(end, at, zone); ok {
+				row.DaysLeft = &days
+			}
+			idle = append(idle, row)
+		}
 	}
 	if err = rows.Err(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, "", err
+	}
+	// The most plan days left unused is the biggest waste; unknown ends last.
+	sort.SliceStable(idle, func(i, j int) bool {
+		x, y := idle[i].DaysLeft, idle[j].DaysLeft
+		switch {
+		case x != nil && y != nil && *x != *y:
+			return *x > *y
+		case (x == nil) != (y == nil):
+			return x != nil
+		}
+		return *idle[i].WeekPercent < *idle[j].WeekPercent
+	})
+	if len(idle) > insightsIdleLimit {
+		idle = idle[:insightsIdleLimit]
 	}
 	sort.SliceStable(quota, func(i, j int) bool {
 		x, y := quota[i].FiveHourPercent, quota[j].FiveHourPercent
@@ -163,7 +210,7 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 	if len(quota) > insightsQuotaLimit {
 		quota = quota[:insightsQuotaLimit]
 	}
-	return fleet, quota, expiry, nil
+	return fleet, quota, expiry, idle, nextExpiry, nil
 }
 
 func average(sum float64, n int) float64 {
@@ -176,12 +223,11 @@ func average(sum float64, n int) float64 {
 // expiryBucket places a plan end date relative to today in the
 // connection's time zone.
 func expiryBucket(end string, at time.Time, zone string) string {
-	endDay, err := time.Parse("2006-01-02", end)
-	if err != nil {
+	days, ok := daysUntil(end, at, zone)
+	if !ok {
 		return "unknown"
 	}
-	today, _ := time.Parse("2006-01-02", at.In(connectionLocation(zone)).Format("2006-01-02"))
-	switch days := int(math.Round(endDay.Sub(today).Hours() / 24)); {
+	switch {
 	case days < 0:
 		return "expired"
 	case days <= 7:
@@ -314,4 +360,15 @@ WHERE j.kind='account.submit'`+ownerSQL+` ORDER BY j.created_at DESC,j.rowid DES
 		out = append(out, map[string]any{"id": id, "account_id": accountID, "account": account, "connection": connection, "state": state, "code": parsed.Code, "updated_at": updated})
 	}
 	return out, rows.Err()
+}
+
+// daysUntil counts whole days from today (in the connection's zone) to a
+// YYYY-MM-DD plan end date; negative once it has passed.
+func daysUntil(end string, at time.Time, zone string) (int, bool) {
+	endDay, err := time.Parse("2006-01-02", end)
+	if err != nil {
+		return 0, false
+	}
+	today, _ := time.Parse("2006-01-02", at.In(connectionLocation(zone)).Format("2006-01-02"))
+	return int(math.Round(endDay.Sub(today).Hours() / 24)), true
 }

@@ -131,3 +131,33 @@ func TestDashboardAttentionWithoutWebChannel(t *testing.T) {
 		t.Fatalf("local fallback items=%+v counts=%v err=%v", items, counts, err)
 	}
 }
+
+func TestDashboardAttentionPutsRecoverableFailuresBeforeBans(t *testing.T) {
+	a, stub, _ := routesFixture(t)
+	far := map[string]any{"plan_end_time": "2027-03-01"}
+	stub.setAccounts(
+		remoteAccount(428802, "one@example.test", "using", "2026-11-11 19:36", nil, far),
+		remoteAccount(411605, "hot@example.test", "using", "2026-11-10 00:14", nil, far),
+		remoteAccount(385753, "banned@example.test", "ban", "2026-11-05 01:57", nil, far),
+	)
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	// "banned" sorts first by name; "one" can be re-authorized, so it leads.
+	if _, err := a.DB.Exec(`UPDATE platform_remote_accounts SET ext_status='sync_failed' WHERE upstream_id='428802'`); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := a.attentionItems(context.Background(), time.Now(), ownershipScope{Admin: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var banned []string
+	for _, it := range items {
+		if it.Kind == "banned" {
+			banned = append(banned, it.Account+":"+it.Label)
+		}
+	}
+	if got := fmt.Sprint(banned); got != "[one@example.test:sync_failed banned@example.test:ban]" {
+		t.Fatalf("banned order=%s", got)
+	}
+}

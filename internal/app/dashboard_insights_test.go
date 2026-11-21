@@ -36,7 +36,14 @@ type insightsReply struct {
 	Composition struct {
 		ByDelivery map[string]int `json:"by_delivery"`
 		Expiry     map[string]int `json:"expiry"`
+		NextExpiry string         `json:"next_expiry"`
 	} `json:"composition"`
+	Idle []struct {
+		Account  string   `json:"account"`
+		Week     *float64 `json:"week_percent"`
+		PlanEnd  string   `json:"plan_end"`
+		DaysLeft *int     `json:"days_left"`
+	} `json:"idle"`
 	RecentJobs []struct {
 		ID         string `json:"id"`
 		AccountID  string `json:"account_id"`
@@ -94,6 +101,15 @@ func TestDashboardInsightsFleetQuotaAndComposition(t *testing.T) {
 	if e := out.Composition.Expiry; e["within_30"] != 3 || e["within_7"] != 0 || e["expired"] != 0 || e["later"] != 0 || e["unknown"] != 0 {
 		t.Fatalf("expiry=%v", e)
 	}
+	if out.Composition.NextExpiry != "2026-12-10" {
+		t.Fatalf("next expiry=%q", out.Composition.NextExpiry)
+	}
+	// hot uses 1% of its week but 84% of its 5-hour window: busy, not idle.
+	// banned has no usage and is not in use.
+	if len(out.Idle) != 1 || out.Idle[0].Account != "one@example.test" || out.Idle[0].Week == nil || *out.Idle[0].Week != 1 ||
+		out.Idle[0].PlanEnd != "2026-12-10" || out.Idle[0].DaysLeft == nil || *out.Idle[0].DaysLeft != 27 {
+		t.Fatalf("idle=%+v", out.Idle)
+	}
 	if out.RecentJobs == nil || len(out.RecentJobs) != 0 {
 		t.Fatalf("recent jobs=%v", out.RecentJobs)
 	}
@@ -104,8 +120,13 @@ func TestDashboardInsightsFleetQuotaAndComposition(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if e := insightsOf(t, a, insightsAt, true).Composition.Expiry; e["expired"] != 1 || e["within_7"] != 1 || e["later"] != 1 || e["within_30"] != 0 {
+	edited := insightsOf(t, a, insightsAt, true).Composition
+	if e := edited.Expiry; e["expired"] != 1 || e["within_7"] != 1 || e["later"] != 1 || e["within_30"] != 0 {
 		t.Fatalf("expiry after edit=%v", e)
+	}
+	// The expired plan is skipped: the earliest end still ahead wins.
+	if edited.NextExpiry != "2026-11-20" {
+		t.Fatalf("next expiry after edit=%q", edited.NextExpiry)
 	}
 
 	// The endpoint wraps the same data.
