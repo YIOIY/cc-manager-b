@@ -4,6 +4,7 @@
     :title="state === 'linked' ? '账号详情' : state === 'submitting' ? '上号进度' : '账号上号'"
     width="600px"
     class="delivery-dialog"
+    :class="{ 'delivery-wide': state === 'linked' }"
     destroy-on-close
     :close-on-click-modal="!busy"
     :close-on-press-escape="!busy"
@@ -19,16 +20,16 @@
         </div>
         <span class="delivery-status" :class="presentation.tone">{{ presentation.label }}</span>
       </div>
-      <div class="delivery-state-note" :class="presentation.tone">
+      <div v-if="state !== 'linked'" class="delivery-state-note" :class="presentation.tone">
         <component
-          :is="state === 'linked' ? CheckCircle2 : state === 'submitting' ? LoaderCircle : Info"
+          :is="state === 'submitting' ? LoaderCircle : Info"
           :size="18"
           :class="{ 'is-spinning': state === 'submitting' }"
         />
         <p>{{ presentation.description }}</p>
       </div>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
-      <dl class="delivery-facts">
+      <dl v-if="state !== 'linked'" class="delivery-facts">
         <div>
           <dt>账号套餐</dt>
           <dd>{{ planLabel(account.plan) || '未配置' }}</dd>
@@ -48,23 +49,51 @@
         </div>
       </dl>
       <template v-if="state === 'linked'">
-        <section v-for="link in account.platform_links" :key="link.connection_id" class="delivery-linked-platform">
-          <div class="delivery-section-title">
-            <CheckCircle2 :size="16" /><strong>{{ link.connection_name || '已关联平台' }}</strong
-            ><span>{{ runtimeLabel(link.status) }}</span>
+        <div v-if="failingReason" class="delivery-reason" data-reason>
+          <AlertCircle :size="16" />
+          <div>
+            <strong>{{ runtimeLabel(platformStatus) }}</strong>
+            <p>{{ failingReason }}</p>
+            <small v-if="account.platform?.reason_fetched_at">{{
+              formatDateTime(account.platform.reason_fetched_at)
+            }}</small>
           </div>
-          <dl class="delivery-facts">
-            <div>
-              <dt>平台账号 ID</dt>
-              <dd>{{ link.platform_account_id || '待平台返回' }}</dd>
+        </div>
+        <AccountUsageTrend
+          v-if="can('accounts.usage')"
+          :account-id="account.id"
+          :usd-rate="account.platform?.usd_cny_rate"
+        />
+        <section class="delivery-profile" aria-label="资料">
+          <div class="delivery-section-title"><strong>资料</strong></div>
+          <dl class="delivery-grid" data-profile>
+            <div v-for="row in profileRows" :key="row.label">
+              <dt>{{ row.label }}</dt>
+              <dd>{{ row.value }}<em v-if="row.diff" class="profile-diff" :title="'本地：' + row.diff">≠本地</em></dd>
             </div>
             <div>
-              <dt>交付记录 ID</dt>
-              <dd>{{ link.upstream_id }}</dd>
+              <dt>所属用户</dt>
+              <dd>
+                {{ ownerLabel || (isAdmin ? '未分配' : '—') }}
+                <el-button
+                  v-if="isAdmin"
+                  text
+                  type="primary"
+                  size="small"
+                  class="assign-inline"
+                  @click="assignOpen = true"
+                  >分配</el-button
+                >
+              </dd>
             </div>
           </dl>
         </section>
-        <p class="delivery-footnote">账号已完成上号。指标或账单尚未同步，不影响已上号状态。</p>
+        <AccountActivity
+          v-if="can('audit.view') || can('jobs.view')"
+          :account-id="account.id"
+          :can-audit="can('audit.view')"
+          :can-jobs="can('jobs.view')"
+        />
       </template>
       <template v-else-if="state === 'submitting' || state === 'unknown'">
         <div class="delivery-task-info">
@@ -152,11 +181,27 @@
           :disabled="busy"
           @click="remove"
           >删除账号</el-button
+        ><template v-if="state === 'linked'"
+          ><el-button text type="primary" data-copy-account @click="copy(account?.account || '', '账号')"
+            >复制账号</el-button
+          ><el-button
+            v-if="account?.platform_account_id"
+            text
+            type="primary"
+            data-copy-platform-id
+            @click="copy(account.platform_account_id, '平台 ID')"
+            >复制平台 ID</el-button
+          ><span v-if="copied" class="delivery-copied" role="status">已复制{{ copied }}</span></template
         ><el-button :disabled="busy" @click="emit('update:modelValue', false)">{{
           state === 'linked' || state === 'submitting' || state === 'unknown' ? '关闭' : '取消'
         }}</el-button
         ><el-button v-if="state === 'submitting' || state === 'unknown'" :loading="busy" @click="emit('changed')"
           >刷新状态</el-button
+        ><el-button
+          v-if="state === 'linked' && account && canEditPlatform"
+          data-edit-platform
+          @click="emit('edit-platform', account)"
+          >修改平台资料</el-button
         ><el-button
           v-if="showReauth && canMutateAccount"
           type="primary"
@@ -195,8 +240,12 @@ import { api, errorMessage } from '../api'
 import { randomId } from '../utils/id'
 import { useSession } from '../composables/useSession'
 import type { Account, ConnectionOption, Preflight } from '../types/api'
-import { planLabel } from '../utils/format'
-import { shortPlatformAlias } from '../model/platform-card'
+import { copyText } from '../utils/clipboard'
+import { formatDateTime, planLabel } from '../utils/format'
+import { formatTags, locationLabel, paymentLabel, shortPlatformAlias } from '../model/platform-card'
+import { canEditPlatformProfile, isFailingStatus, type DetailRow } from '../model/account-detail'
+import AccountUsageTrend from './AccountUsageTrend.vue'
+import AccountActivity from './AccountActivity.vue'
 import { ElMessageBox } from 'element-plus'
 import {
   deliveryState,
@@ -214,6 +263,7 @@ const emit = defineEmits<{
   configure: []
   complete: [account: Account, connectionId?: string]
   reauthorize: [account: Account]
+  'edit-platform': [account: Account]
   deleted: [accountId: string]
   assigned: [result: { userId: string; message?: string; proxy_action?: string }]
 }>()
@@ -246,6 +296,51 @@ const canDeleteAccount = computed(
     state.value === 'failed' ||
     (state.value === 'unknown' && props.account?.submission_job?.code !== 'LOCAL_LINK_SAVE_FAILED'),
 )
+const platformStatus = computed(() => props.account?.platform?.status || props.account?.platform_status || '')
+const failingReason = computed(() =>
+  isFailingStatus(platformStatus.value) ? props.account?.platform?.reason_text || '' : '',
+)
+const canEditPlatform = computed(() => (props.account ? canEditPlatformProfile(props.account, { owns, can }) : false))
+const profileRows = computed<DetailRow[]>(() => {
+  const a = props.account
+  if (!a) return []
+  const p = a.platform?.profile
+  const row = (label: string, value: string | undefined | null, local = ''): DetailRow | null =>
+    value && value !== '—' ? { label, value, diff: local && local !== value ? local : undefined } : null
+  const range = (start?: string, end?: string) => (start || end ? `${start || '?'} → ${end || '?'}` : '')
+  const rows = [
+    row('套餐', planLabel(p?.plan || a.plan), a.plan && p?.plan && a.plan !== p.plan ? planLabel(a.plan) : ''),
+    row(
+      '本期订阅',
+      range(p?.plan_start_time || a.plan_start_time, p?.plan_end_time || a.plan_end_time),
+      p?.plan_end_time && a.plan_end_time && p.plan_end_time !== a.plan_end_time
+        ? range(a.plan_start_time, a.plan_end_time)
+        : '',
+    ),
+    row('套餐余量', p?.balance ? p.balance + '%' : ''),
+    row('注册时间', p?.register_time || a.register_time),
+    row('注册地', locationLabel(p?.register_location || a.register_location)),
+    row('支付方式', paymentLabel(p?.payment_method || a.payment_method || '')),
+    row('注册设备', p?.register_device || a.register_device),
+    row('充值日期', p?.recharge_time || a.recharge_time),
+    row('质保期', p?.warranty_period || (a.warranty_period ? String(a.warranty_period) : '')),
+    row('标签', formatTags(p?.tags?.length ? p.tags : a.tags)),
+    row('平台别名', a.platform_alias),
+    row('绑定代理', a.proxy_host),
+    row('凭证', a.credentials_configured ? '已保存' : '未保存'),
+    row('平台最近同步', a.platform_observed_at ? formatDateTime(a.platform_observed_at) : ''),
+    row('备注', a.remark),
+  ]
+  return rows.filter((r): r is DetailRow => r !== null)
+})
+const copied = ref('')
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function copy(text: string, what: string) {
+  if (!text || !(await copyText(text))) return
+  copied.value = what
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => (copied.value = ''), 1500)
+}
 function forwardAssigned(result: { userId: string; message?: string; proxy_action?: string }) {
   emit('assigned', result)
   emit('changed')
@@ -393,6 +488,10 @@ watch(
   border-radius: 14px;
   display: flex;
   flex-direction: column;
+}
+
+.delivery-dialog.delivery-wide.el-dialog {
+  width: min(720px, calc(100vw - 32px)) !important;
 }
 
 .delivery-dialog .el-dialog__header {
@@ -670,5 +769,78 @@ watch(
 }
 .delivery-delete {
   margin-right: auto;
+}
+.delivery-reason {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(245, 63, 63, 0.07);
+  color: #d4380d;
+  font-size: 13px;
+}
+.delivery-reason svg {
+  flex: none;
+  margin-top: 2px;
+}
+.delivery-reason p {
+  margin: 4px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.delivery-reason small {
+  color: #a8704f;
+  font-size: 11px;
+}
+.delivery-profile {
+  margin-top: 16px;
+}
+.delivery-profile .delivery-section-title strong {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+.delivery-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 24px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+.delivery-grid > div {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.delivery-grid dt {
+  flex: none;
+  width: 76px;
+  color: var(--muted);
+}
+.delivery-grid dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+.profile-diff {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(252, 136, 0, 0.1);
+  color: #fc8800;
+  font-size: 10px;
+  font-style: normal;
+}
+.delivery-copied {
+  align-self: center;
+  color: #3bb346;
+  font-size: 12px;
+}
+@media (max-width: 620px) {
+  .delivery-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

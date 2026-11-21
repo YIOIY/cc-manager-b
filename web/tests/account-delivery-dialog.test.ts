@@ -202,3 +202,226 @@ test('unknown outcome with LOCAL_LINK_SAVE_FAILED offers no delete button', asyn
   await flushPromises()
   expect(wrapper.findAll('button').some((b) => b.text().includes('删除账号'))).toBe(false)
 })
+
+async function asUser(permissions: string[]) {
+  fetchMock.mockImplementationOnce(() =>
+    json(200, {
+      data: {
+        authenticated: true,
+        csrf_token: 'csrf',
+        user: { id: 'u', username: 'admin', role: 'admin', permissions },
+      },
+    }),
+  )
+  await useSession().check()
+  fetchMock.mockReset()
+}
+
+const linked = {
+  id: 'acc-9',
+  account: 'live@example.test',
+  plan: 'claude/cc-max-20x',
+  plan_end_time: '2026-12-31',
+  version: 2,
+  archived: false,
+  platform_account_id: '30566',
+  platform_alias: 'claude-20261120003',
+  platform_status: 'ban',
+  platform_observed_at: '2026-11-21T10:14:00Z',
+  proxy_host: '203.0.113.9',
+  credentials_configured: true,
+  tags: ['coding'],
+  remark: '测试备注',
+  platform_links: [
+    { connection_id: 'conn', connection_name: '平台 A', upstream_id: 'u1', ingestion_state: 'accepted' },
+  ],
+  platform: {
+    status: 'ban',
+    reason_text:
+      'Your account is on hold and can not use Claude Code. View details or appeal: https://claude.ai/restricted',
+    reason_fetched_at: '2026-11-21T10:14:46Z',
+    missing_since: '',
+    web_channel: { configured: true, suspended: false },
+    usd_cny_rate: 7.2,
+    profile: {
+      plan: 'claude/cc-max-20x',
+      plan_start_time: '2026-11-20',
+      plan_end_time: '2026-12-19',
+      register_time: '2026-11-16',
+      register_location: 'US',
+      balance: '100',
+      payment_method: 'apple_pay',
+      register_device: 'Mac',
+      recharge_time: '',
+      warranty_period: '1',
+      tags: ['coding'],
+    },
+  },
+  onboarding_state: 'linked',
+  created_by_user_id: 'u',
+} as unknown as Account
+
+const history = {
+  data: {
+    list: [
+      {
+        observed_at: '2026-11-19T20:00:00Z',
+        cost_fen: 100,
+        five_hour_used_percent: 10,
+        week_used_percent: 2,
+        input_tokens: 1,
+        output_tokens: 1,
+        five_hour_reset_at: '',
+        week_reset_at: '',
+      },
+      {
+        observed_at: '2026-11-20T20:00:00Z',
+        cost_fen: 900,
+        five_hour_used_percent: 40,
+        week_used_percent: 5,
+        input_tokens: 2,
+        output_tokens: 2,
+        five_hour_reset_at: '',
+        week_reset_at: '',
+      },
+    ],
+  },
+}
+
+function routes(extra: Record<string, unknown> = {}) {
+  fetchMock.mockImplementation((url: string) => {
+    if (url.includes('/platform-usage-history')) return json(200, history)
+    if (url.includes('/audit-events'))
+      return json(200, {
+        data: [
+          {
+            id: 7,
+            action: 'account.assign',
+            resource_type: 'account',
+            resource_id: 'acc-9',
+            actor: 'admin',
+            detail: '',
+            created_at: '2026-11-20T10:00:00Z',
+          },
+          {
+            id: 8,
+            action: 'account.assign',
+            resource_type: 'account',
+            resource_id: 'acc-90',
+            actor: 'x',
+            detail: 'other',
+            created_at: '2026-11-20T11:00:00Z',
+          },
+        ],
+      })
+    if (url.includes('/jobs'))
+      return json(200, {
+        data: [
+          extra.job ?? {
+            id: 'j',
+            state: 'succeeded',
+            account_id: 'acc-9',
+            code: '',
+            message: '',
+            created_at: '2026-11-19T10:00:00Z',
+            updated_at: '2026-11-19T10:01:00Z',
+          },
+        ],
+      })
+    throw new Error('unexpected ' + url)
+  })
+}
+
+test('a linked account detail shows the full reason, the whole profile and a usage trend', async () => {
+  await asUser(['accounts.usage', 'accounts.platform_edit'])
+  routes()
+  const w = mount(AccountDeliveryDialog, {
+    props: { modelValue: true, account: linked, connections },
+    global: { stubs },
+  })
+  await flushPromises()
+  // The reason is shown in full, not cut to a card line.
+  expect(w.get('[data-reason]').text()).toContain('https://claude.ai/restricted')
+  expect(w.get('[data-profile]').text()).toContain('套餐CC Max 20x')
+  const profile = w.get('[data-profile]').text()
+  for (const expected of [
+    '2026-11-20 → 2026-12-19',
+    '2026-11-16',
+    '美国',
+    'ApplePay',
+    'Mac',
+    '203.0.113.9',
+    '测试备注',
+    '已保存',
+  ])
+    expect(profile, expected).toContain(expected)
+  // The plan end differs from the local record: flagged, with the local value on hover.
+  expect(w.get('[data-profile] .profile-diff').attributes('title')).toContain('2026-12-31')
+  expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/accounts/acc-9/platform-usage-history?days=7'))).toBe(
+    true,
+  )
+  expect(w.find('.trend-lines').exists()).toBe(true)
+  // 11-20 spent 900-100 fen = $1.11 at 7.2.
+  expect(w.get('.spend-bar').attributes('title')).toContain('$1.11')
+  await w.get('[data-days="30"]').trigger('click')
+  await flushPromises()
+  expect(fetchMock.mock.calls.some(([u]) => String(u).includes('days=30'))).toBe(true)
+  w.unmount()
+})
+
+test('activity is requested only for sources the user may see, and only exact account matches are listed', async () => {
+  await asUser(['audit.view'])
+  routes()
+  const onlyAudit = mount(AccountDeliveryDialog, {
+    props: { modelValue: true, account: linked, connections },
+    global: { stubs },
+  })
+  await flushPromises()
+  const urls = fetchMock.mock.calls.map(([u]) => String(u))
+  expect(urls.some((u) => u.includes('/audit-events?resource_type=account&resource_id=acc-9'))).toBe(true)
+  expect(urls.some((u) => u.includes('/jobs'))).toBe(false)
+  expect(urls.some((u) => u.includes('platform-usage-history'))).toBe(false)
+  const text = onlyAudit.get('.account-activity').text()
+  expect(text).toContain('分配给用户')
+  expect(text).not.toContain('other') // acc-90 also matches the "contains" filter
+  onlyAudit.unmount()
+
+  await asUser([])
+  routes()
+  const none = mount(AccountDeliveryDialog, {
+    props: { modelValue: true, account: linked, connections },
+    global: { stubs },
+  })
+  await flushPromises()
+  expect(none.find('.account-activity').exists()).toBe(false)
+  expect(fetchMock).not.toHaveBeenCalled()
+  none.unmount()
+})
+
+test('the detail offers the platform edit when allowed and copies the account and platform id', async () => {
+  await asUser(['accounts.platform_edit'])
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const w = mount(AccountDeliveryDialog, {
+    props: { modelValue: true, account: linked, connections },
+    global: { stubs },
+  })
+  await flushPromises()
+  await w.get('[data-edit-platform]').trigger('click')
+  expect(w.emitted('edit-platform')?.[0]?.[0]).toMatchObject({ id: 'acc-9' })
+  await w.get('[data-copy-account]').trigger('click')
+  await w.get('[data-copy-platform-id]').trigger('click')
+  await flushPromises()
+  expect(writeText.mock.calls.map((c) => c[0])).toEqual(['live@example.test', '30566'])
+  expect(w.get('[role="status"]').text()).toContain('已复制平台 ID')
+  w.unmount()
+
+  await asUser([])
+  const denied = mount(AccountDeliveryDialog, {
+    props: { modelValue: true, account: linked, connections },
+    global: { stubs },
+  })
+  await flushPromises()
+  expect(denied.find('[data-edit-platform]').exists()).toBe(false)
+  denied.unmount()
+})

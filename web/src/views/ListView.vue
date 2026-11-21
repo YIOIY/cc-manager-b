@@ -235,6 +235,7 @@
       @configure="router.push({ name: 'connections' })"
       @complete="completeAccount"
       @reauthorize="reauthorizeAccount"
+      @edit-platform="editPlatformFromDetail"
       @deleted="onAccountDeleted"
     />
     <ImportDialog v-model="importOpen" @feedback="feedback" @imported="onImported" />
@@ -446,6 +447,10 @@ function editPlatform(row: Account) {
   platformProfileAccount.value = accountsAll.value.find((item) => item.id === row.id) || row
   platformProfileOpen.value = true
   actionMessage.value = ''
+}
+function editPlatformFromDetail(row: Account) {
+  deliveryOpen.value = false
+  editPlatform(row)
 }
 async function ensureOnboardAllowed(): Promise<boolean> {
   try {

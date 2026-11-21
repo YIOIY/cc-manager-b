@@ -183,6 +183,7 @@ import {
 import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/format'
 import { fenToUsdCents, formatUsdCents } from '../model/money'
 import { useSession } from '../composables/useSession'
+import { canEditPlatformProfile } from '../model/account-detail'
 import PlatformUsageBlock from './PlatformUsageBlock.vue'
 import { formatTags, locationLabel, paymentLabel, shortPlatformAlias } from '../model/platform-card'
 
@@ -206,15 +207,7 @@ const canReauth = computed(() => can('accounts.credentials') || canOnboard())
 // The platform edit needs ownership, the permission, a record the platform
 // still lists, and a console channel that is configured and not suspended.
 function canEditPlatform(card: Account): boolean {
-  const p = card.platform
-  return (
-    owns(card.created_by_user_id) &&
-    can('accounts.platform_edit') &&
-    !!p &&
-    !p.missing_since &&
-    !!p.web_channel?.configured &&
-    !p.web_channel?.suspended
-  )
+  return canEditPlatformProfile(card, { owns, can })
 }
 
 function ownerLabel(row: Account): string {
