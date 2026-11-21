@@ -43,6 +43,8 @@ export interface AccountOnboardingProps {
 export type AccountOnboardingEmit = {
   (event: 'update:modelValue', value: boolean): void
   (event: 'saved', result: OnboardResult): void
+  /** A first-time onboarding was accepted; the dialog stays open for the next account. */
+  (event: 'submitted', result: OnboardResult): void
   (event: 'reauthorized', result: ReauthorizeResult): void
   (event: 'proxy-created'): void
 }
@@ -66,6 +68,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   const proxyChanged = ref(false)
   /** Set after a retryable platform push failure while credentials stay in the form. */
   const pushFailed = ref(false)
+  /** The accepted first-time submission while the success page is shown. */
+  const submitted = ref<OnboardResult | null>(null)
   const addedProxies = ref<ProxyOption[]>([])
   const availableProxies = computed(() => [
     ...props.proxies,
@@ -180,6 +184,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     { key: 'plan_end_time', label: '本期订阅结束', anchor: fieldAnchors.planEnd },
   ] as const
   const LAST_CONNECTION_KEY = 'cc-manager:last-connection'
+  const LAST_PROXY_KEY = 'cc-manager:last-proxy'
   const enabledConnections = computed(() => props.connections.filter((c) => c.enabled))
   let initialForm = ''
   let idempotencyKey = ''
@@ -197,6 +202,25 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     }
     return enabledConnections.value.some((c) => c.id === last) ? last : ''
   }
+  function remembered(key: string) {
+    try {
+      return localStorage.getItem(key) || ''
+    } catch {
+      return ''
+    }
+  }
+  function remember(key: string, value: string) {
+    try {
+      localStorage.setItem(key, value)
+    } catch {
+      /* optional preference */
+    }
+  }
+  // The proxy used last time, as long as it is still in the pool and enabled.
+  function defaultProxy() {
+    const last = remembered(LAST_PROXY_KEY)
+    return props.proxies.some((p) => p.id === last && p.enabled) ? last : ''
+  }
   function blank(): AccountForm {
     return {
       plan: '',
@@ -208,6 +232,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       credential_type: 'claude',
       verification_status: 'not_required',
       platform_connection_id: defaultConnection(),
+      proxy_id: defaultProxy(),
     }
   }
   function clearCredential(target: AccountForm) {
@@ -631,16 +656,23 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         edit.value.id ? '/accounts/' + edit.value.id + '/onboard' : '/accounts/onboard',
         { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: serialized },
       )
-      try {
-        localStorage.setItem(LAST_CONNECTION_KEY, String(edit.value.platform_connection_id || ''))
-      } catch {
-        /* optional preference */
-      }
+      remember(LAST_CONNECTION_KEY, String(edit.value.platform_connection_id || ''))
+      remember(LAST_PROXY_KEY, String(edit.value.proxy_id || ''))
       lastAttempt = ''
-      edit.value = {}
       credentialPaste.value = ''
-      emit('update:modelValue', false)
-      emit('saved', result.data)
+      if (edit.value.id) {
+        edit.value = {}
+        emit('update:modelValue', false)
+        emit('saved', result.data)
+        return
+      }
+      // First-time onboarding usually comes in batches: stay open, keep the
+      // platform and proxy, and offer the next account.
+      submitted.value = result.data
+      authorizationStarted.value = false
+      proxyDirty.value = false
+      initialForm = JSON.stringify(edit.value)
+      emit('submitted', result.data)
     } catch (e) {
       notice.value = e
       if (e instanceof ApiError && e.fields.length) {
@@ -742,12 +774,54 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       return false
     }
   }
+  function finish() {
+    const result = submitted.value
+    submitted.value = null
+    edit.value = {}
+    emit('update:modelValue', false)
+    if (result) emit('saved', result)
+  }
+  function addAnother() {
+    const { proxy_id, platform_connection_id } = edit.value
+    edit.value = { ...blank(), proxy_id, platform_connection_id }
+    submitted.value = null
+    source.value = ''
+    oauthIdentity.value = null
+    oauthWarnings.value = []
+    knownKeys.value = new Set()
+    retainedDevices = null
+    credentialPaste.value = ''
+    credentialDetailsOpen.value = false
+    editKnownFields.value = false
+    oauthGeneration.value++
+    authorizationStarted.value = false
+    proxyChanged.value = false
+    pushFailed.value = false
+    step.value = 1
+    resetNotices()
+    initialForm = JSON.stringify(edit.value)
+    idempotencyKey = randomId()
+    scrollTop()
+  }
   async function requestClose() {
+    if (submitted.value) return finish()
     if (await confirmDiscard()) emit('update:modelValue', false)
   }
   async function beforeClose(done: () => void) {
+    if (submitted.value) {
+      finish()
+      return
+    }
     if (await confirmDiscard()) done()
   }
+  /** Why 「登录 Claude」 is disabled right now, with the field that fixes it. */
+  const oauthBlocker = computed(() => {
+    if (savedCredentials.value || source.value === 'import' || source.value === 'manual') return null
+    if (!connectionReady.value) return { text: '先选择上号平台', anchor: fieldAnchors.connection }
+    if (proxyPending.value) return { text: '新代理还没检测保存', anchor: fieldAnchors.proxy }
+    if (!poolProxyReady.value && !savedProxyAccountId.value) return { text: '先选择代理', anchor: fieldAnchors.proxy }
+    return null
+  })
   function stopTimers() {
     if (clock) clearInterval(clock)
     if (flashTimer) clearTimeout(flashTimer)
@@ -775,6 +849,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       authorizationStarted.value = false
       proxyChanged.value = false
       pushFailed.value = false
+      submitted.value = null
       addedProxies.value = []
       retainedDevices = null
       lastAttempt = ''
@@ -841,6 +916,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     return ['重新授权', '补充设备', '确认更新']
   })
   const displayStep = computed(() => {
+    if (submitted.value) return stepLabels.value.length + 1
     if (!linkedReauth.value) return step.value
     if (savedCredentials.value) return step.value >= 3 ? 2 : 1
     return step.value
@@ -856,6 +932,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   })
   return {
     stepLabels,
+    submitted,
+    oauthBlocker,
+    finish,
+    addAnother,
     step,
     displayStep,
     linkedReauth,

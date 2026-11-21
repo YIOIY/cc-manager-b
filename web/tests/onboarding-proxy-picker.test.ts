@@ -79,3 +79,23 @@ test('users without proxy-create permission can select existing proxies but cann
   expect(w.get('input[value="auto"]').attributes('disabled')).toBeDefined()
   w.unmount()
 })
+test('with no usable proxy the picker opens on the new-proxy form and reports it as pending', async () => {
+  const w = mount(OnboardingProxyPicker, {
+    props: {
+      modelValue: '',
+      proxies: [{ id: 'off', name: '停用', host: 'h', port: 1, scheme: 'http', enabled: false }],
+    },
+    global: { stubs },
+  })
+  expect((w.get('input[value="new"]').element as HTMLInputElement).checked).toBe(true)
+  expect(w.find('[data-proxy-address]').exists()).toBe(true)
+  expect(w.emitted('pending')?.[0]).toEqual([true])
+  w.unmount()
+  const withPool = mount(OnboardingProxyPicker, {
+    props: { modelValue: '', proxies: [{ id: 'p', name: 'A', host: 'h', port: 1, scheme: 'http', enabled: true }] },
+    global: { stubs },
+  })
+  expect((withPool.get('input[value="existing"]').element as HTMLInputElement).checked).toBe(true)
+  expect(withPool.emitted('pending')).toBeUndefined()
+  withPool.unmount()
+})

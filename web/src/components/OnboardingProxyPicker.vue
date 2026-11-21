@@ -104,7 +104,10 @@ const emit = defineEmits<{
 }>()
 const radioName = useId()
 const canCreate = computed(() => can('proxies.create'))
-const mode = ref<'existing' | 'new'>('existing')
+// With nothing to pick from, start on the form the user will need anyway.
+const mode = ref<'existing' | 'new'>(
+  !props.modelValue && !props.proxies.some((p) => p.enabled) && can('proxies.create') ? 'new' : 'existing',
+)
 const address = ref('')
 const name = ref('')
 const saving = ref(false)
@@ -118,6 +121,7 @@ const parsed = computed(() => {
   return value?.host && value.port ? value : null
 })
 watch([address, name], () => emit('dirty', !!address.value || !!name.value))
+if (mode.value === 'new') emit('pending', true)
 function changeMode(value: 'existing' | 'new') {
   if (props.disabled || saving.value || (value === 'new' && !canCreate.value)) return
   mode.value = value

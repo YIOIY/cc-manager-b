@@ -59,11 +59,11 @@ test('generates a link with the selected proxy, emits credentials, and clears th
   wrapper.unmount()
 })
 
-test('invalid state permits correction; failed exchange requires a fresh link', async () => {
+test('an invalid result keeps the paste; a supplier failure keeps the link and retries the same session', async () => {
   fetchMock
     .mockResolvedValueOnce(json({ data: pending }))
     .mockResolvedValueOnce(json({ error: { code: 'OAUTH_RESULT_INVALID', message: '结果不匹配' } }, 422))
-    .mockResolvedValueOnce(json({ error: { code: 'OAUTH_EXCHANGE_FAILED', message: '请重新授权' } }, 502))
+    .mockResolvedValueOnce(json({ error: { code: 'OAUTH_EXCHANGE_FAILED', message: 'Claude 暂时失败，请稍后重试' } }, 502))
   const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
   await wrapper.get('button').trigger('click')
   await flushPromises()
@@ -73,12 +73,14 @@ test('invalid state permits correction; failed exchange requires a fresh link', 
   expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
   await wrapper.get('.oauth-exchange').trigger('click')
   await flushPromises()
-  expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
-  expect(wrapper.text()).toContain('请重新授权')
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  expect((wrapper.get('#claude-authorization-result').element as HTMLInputElement).value).toBe('wrong')
+  expect(wrapper.text()).toContain('Claude 暂时失败，请稍后重试')
+  expect(fetchMock.mock.calls[2]![0]).toBe('/api/v1/claude-oauth/sessions/flow/exchange')
   wrapper.unmount()
 })
 
-test('rate-limited exchange clears the pending session and shows the wait message', async () => {
+test('rate-limited exchange keeps the link, disables the confirm button and counts down', async () => {
   fetchMock.mockResolvedValueOnce(json({ data: pending })).mockResolvedValueOnce(
     json(
       {
@@ -98,8 +100,59 @@ test('rate-limited exchange clears the pending session and shows the wait messag
   await wrapper.get('#claude-authorization-result').setValue('code#test')
   await wrapper.get('.oauth-exchange').trigger('click')
   await flushPromises()
-  expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
   expect(wrapper.text()).toContain('请约 45 秒后再试')
+  expect(wrapper.get('.oauth-exchange').text()).toContain('45s')
+  expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeDefined()
+  wrapper.unmount()
+})
+
+test('a cooldown start reuses the live link and counts the wait down', async () => {
+  fetchMock.mockResolvedValueOnce(json({ data: { ...pending, retry_after_seconds: 5 } }))
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect((wrapper.get('#claude-authorization-url').element as HTMLInputElement).value).toBe(
+    pending.authorization_url,
+  )
+  await wrapper.get('#claude-authorization-result').setValue('code#test')
+  expect(wrapper.get('.oauth-exchange').text()).toContain('5s')
+  expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeDefined()
+  wrapper.unmount()
+})
+
+test('an identity rejection clears the dead link and the paste', async () => {
+  fetchMock
+    .mockResolvedValueOnce(json({ data: pending }))
+    .mockResolvedValueOnce(
+      json({ error: { code: 'OAUTH_IDENTITY_REJECTED', message: '授权身份与预期不符' } }, 403),
+    )
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  await wrapper.get('#claude-authorization-result').setValue('code#test')
+  await wrapper.get('.oauth-exchange').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('授权身份与预期不符')
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
+  expect(wrapper.text()).toContain('登录 Claude')
+  wrapper.unmount()
+})
+
+test('refreshing the link asks the server for a new session; the initial login does not', async () => {
+  fetchMock
+    .mockResolvedValueOnce(json({ data: pending }))
+    .mockResolvedValueOnce(json({ data: { ...pending, id: 'flow-2' } }))
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'proxy' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ proxy_id: 'proxy' })
+  const refresh = wrapper.findAll('button').find((b) => b.text() === '重新获取链接')
+  await refresh!.trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ proxy_id: 'proxy', refresh: true })
+  expect(fetchMock.mock.calls[2]![0]).toBe('/api/v1/claude-oauth/sessions/flow')
   wrapper.unmount()
 })
 
@@ -173,5 +226,48 @@ test('changing the proxy after authorization does not warn about a link that no 
 test('an authorization without an email falls back to a visible placeholder', () => {
   const wrapper = mount(ClaudeOAuthPanel, { props: { summary: { email: '' } }, global: { stubs } })
   expect(wrapper.get('.oauth-done-email').text()).toBe('未返回邮箱')
+  wrapper.unmount()
+})
+
+test('pasting a complete callback address confirms the authorization without another click', async () => {
+  fetchMock
+    .mockResolvedValueOnce(json({ data: pending }))
+    .mockResolvedValueOnce(json({ data: { auth_json: { access_token: 'fixture-token' }, warnings: [] } }))
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'proxy' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  const url = 'https://platform.claude.com/oauth/code/callback?code=abc&state=test'
+  await wrapper.get('#claude-authorization-result').trigger('paste', { clipboardData: { getData: () => url } })
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ result: url })
+  expect(wrapper.emitted('authorized')).toHaveLength(1)
+  wrapper.unmount()
+})
+
+test('pasting a bare code waits for the explicit confirmation', async () => {
+  fetchMock.mockResolvedValueOnce(json({ data: pending }))
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'proxy' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  await wrapper
+    .get('#claude-authorization-result')
+    .trigger('paste', { clipboardData: { getData: () => 'only-a-code' } })
+  await flushPromises()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  wrapper.unmount()
+})
+
+test('a proxy that cannot reach Claude offers to change the proxy instead of a bare error', async () => {
+  fetchMock.mockResolvedValueOnce(
+    json({ error: { code: 'OAUTH_PROXY_UNREACHABLE', message: '所选代理连不上 Claude', category: 'validation' } }, 422),
+  )
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'proxy' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('所选代理连不上 Claude')
+  await wrapper.get('[data-change-proxy]').trigger('click')
+  // The button stub re-emits the native click, so count at least one.
+  expect(wrapper.emitted('change-proxy')?.length).toBeGreaterThan(0)
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
   wrapper.unmount()
 })

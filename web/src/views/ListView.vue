@@ -252,6 +252,7 @@
       :proxies="proxies"
       :connections="connections"
       @saved="onAccountSaved"
+      @submitted="onAccountSubmitted"
       @reauthorized="onAccountReauthorized"
       @proxy-created="refreshOnboardingProxies"
     />
@@ -521,6 +522,11 @@ async function completeAccount(row: Account, connectionId?: string) {
   editingConnectionId.value = connectionId || ''
   forceReauth.value = false
   accountFormOpen.value = true
+}
+// The wizard stays open for the next account; refresh the list behind it.
+async function onAccountSubmitted() {
+  feedback('账号已提交，等待平台处理。可在账号卡片查看上号结果。', 'info')
+  await page.load()
 }
 async function onAccountSaved(result: OnboardResult) {
   forceReauth.value = false

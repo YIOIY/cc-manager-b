@@ -11,23 +11,16 @@
   >
     <template #header>
       <div class="account-dialog-heading">
-        <span class="account-dialog-icon"><UsersRound :size="21" /></span>
-        <div>
-          <h2>{{ forceReauth ? '重新授权' : edit.id ? '完善资料并上号' : '添加 Claude 账号' }}</h2>
-          <p>
-            {{
-              forceReauth
-                ? savedCredentials
-                  ? '可直接用已保存凭证同步到平台，也可重新授权。'
-                  : '重新登录 Claude，更新凭证并同步到平台。'
-                : '连接账号，补充上号资料，确认后提交。'
-            }}
-            <a class="dialog-help-link" href="/help?topic=onboard" target="_blank" rel="noopener noreferrer"
-              ><BookOpen :size="13" />上号手册</a
-            >
-          </p>
-        </div>
+        <h2>{{ forceReauth ? '重新授权' : edit.id ? '完善资料并上号' : '添加 Claude 账号' }}</h2>
+        <a class="dialog-help-link" href="/help?topic=onboard" target="_blank" rel="noopener noreferrer"
+          ><BookOpen :size="13" />上号手册</a
+        >
       </div>
+      <p v-if="forceReauth" class="account-dialog-sub">
+        {{
+          savedCredentials ? '可直接用已保存凭证同步到平台，也可重新授权。' : '重新登录 Claude，更新凭证并同步到平台。'
+        }}
+      </p>
       <ol class="wizard-steps" aria-label="上号步骤">
         <li
           v-for="(label, index) in stepLabels"
@@ -150,6 +143,7 @@
             @started="onAuthorizationStarted"
             @busy="oauthBusy = $event"
             @authorized="fillFromOAuth"
+            @change-proxy="jumpTo(fieldAnchors.proxy)"
           />
           <div v-if="source === 'import' || source === 'manual'" class="wizard-connected">
             <CheckCircle2 :size="22" />
@@ -162,11 +156,16 @@
             <el-button text :disabled="busy" @click="startReauthorize">改用浏览器授权</el-button>
           </div>
           <div class="wizard-connection-actions">
-            <span class="field-hint">{{
-              !connectionReady || (!poolProxyReady && !savedProxyAccountId)
-                ? '先选择平台和代理，再开始浏览器授权。'
-                : '服务端授权使用所选代理；浏览器登录使用浏览器自身网络。'
-            }}</span
+            <button
+              v-if="oauthBlocker"
+              type="button"
+              class="wizard-blocker"
+              data-oauth-blocker
+              @click="jumpTo(oauthBlocker.anchor)"
+            >
+              <AlertCircle :size="14" />还不能登录：{{ oauthBlocker.text }}
+            </button>
+            <span v-else class="field-hint">服务端授权使用所选代理；浏览器登录使用浏览器自身网络。</span
             ><el-button
               v-if="connected && !edit.id"
               data-change-account
@@ -444,7 +443,20 @@
         </details>
         <AccountOptionalFields v-model="edit" />
       </section>
-      <section v-if="step === 3" data-review class="wizard-page" aria-label="确认上号">
+      <section v-if="submitted" data-submitted class="wizard-page wizard-success" aria-label="已提交">
+        <div class="wizard-connected">
+          <CheckCircle2 :size="24" />
+          <div>
+            <strong>已提交 {{ edit.account }}</strong>
+            <p>
+              平台正在处理，结果会显示在账号卡片上。平台「{{
+                selectedConnectionName
+              }}」和代理已保留，可以直接添加下一个账号。
+            </p>
+          </div>
+        </div>
+      </section>
+      <section v-else-if="step === 3" data-review class="wizard-page" aria-label="确认上号">
         <div class="wizard-connected">
           <CheckCircle2 :size="24" />
           <div>
@@ -504,7 +516,11 @@
       </section>
     </el-form>
     <template #footer
-      ><div class="wizard-footer">
+      ><div v-if="submitted" class="wizard-footer wizard-footer-done">
+        <el-button data-finish @click="finish">完成</el-button>
+        <el-button data-add-another type="primary" @click="addAnother">继续添加下一个</el-button>
+      </div>
+      <div v-else class="wizard-footer">
         <div class="create-dialog-actions">
           <el-button data-cancel :disabled="busy" @click="requestClose">取消</el-button
           ><el-button v-if="step > 1" data-back :disabled="busy" @click="goBack">上一步</el-button
@@ -543,7 +559,7 @@
 </template>
 <script setup lang="ts">
 import { computed } from 'vue'
-import { UsersRound, ShieldCheck, CheckCircle2, BookOpen } from 'lucide-vue-next'
+import { UsersRound, ShieldCheck, CheckCircle2, BookOpen, AlertCircle } from 'lucide-vue-next'
 import { useAccountOnboarding, type AccountOnboardingProps } from '../composables/useAccountOnboarding'
 import type { OnboardResult, ReauthorizeResult } from '../types/api'
 import ClaudeOAuthPanel from './ClaudeOAuthPanel.vue'
@@ -555,12 +571,17 @@ const props = defineProps<AccountOnboardingProps>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   saved: [result: OnboardResult]
+  submitted: [result: OnboardResult]
   reauthorized: [result: ReauthorizeResult]
   'proxy-created': []
 }>()
 const forceReauth = computed(() => !!props.forceReauth)
 const {
   stepLabels,
+  submitted,
+  oauthBlocker,
+  finish,
+  addAnother,
   step,
   displayStep,
   linkedReauth,
