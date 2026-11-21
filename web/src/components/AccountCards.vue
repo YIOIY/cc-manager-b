@@ -4,18 +4,22 @@
       <div class="usage-card-head">
         <div class="usage-identity">
           <span class="health-dot" :class="card.statusTone"></span>
-          <strong :title="card.platform_alias || card.account">{{
-            shortPlatformAlias(card.platform_alias) || card.account || '未命名账号'
-          }}</strong>
+          <strong
+            :title="
+              [card.platform_alias || card.account, card.platform?.auto_created ? '来自平台同步' : '']
+                .filter(Boolean)
+                .join(' · ')
+            "
+            >{{ shortPlatformAlias(card.platform_alias) || card.account || '未命名账号' }}</strong
+          >
         </div>
         <span class="delivery-status" :class="card.delivery.tone">{{ card.delivery.label }}</span>
       </div>
       <div class="account-card-identity">
         <span :title="card.account">{{ card.account }}</span>
-        <span v-if="card.platform_account_id" class="account-platform-id">平台 ID {{ card.platform_account_id }}</span>
+        <span v-if="card.platform_account_id" class="account-platform-id">ID {{ card.platform_account_id }}</span>
       </div>
       <div class="account-card-badges">
-        <span v-if="card.platform?.provider" class="mini-badge provider">{{ card.platform.provider }}</span>
         <span class="mini-badge yellow">{{ planLabel(card.plan) || '未配置套餐' }}</span>
         <span
           v-if="card.deliveryState === 'linked'"
@@ -30,7 +34,6 @@
         <span v-else-if="isAdmin" class="mini-badge creator muted-owner" title="尚未分配给用户，仅管理员可见"
           >未分配</span
         >
-        <span v-if="card.platform?.auto_created" class="mini-badge" title="由平台同步自动创建的本地账号">来自平台</span>
         <span v-if="card.platform?.missing_since" class="mini-badge attention" :title="card.platform.missing_since"
           >平台已移除</span
         >
@@ -41,40 +44,36 @@
           :title="card.proxy_host ? '绑定代理 ' + card.proxy_host : '已绑定代理，但代理记录不可用'"
           >代理 {{ card.proxy_host || '不可用' }}</span
         >
-        <span v-if="card.platform?.remote_created_at" class="account-card-created"
-          >创建时间 {{ card.platform.remote_created_at }}</span
-        >
+        <span v-for="tag in card.tags" :key="tag" class="mini-badge tag">{{ tag }}</span>
       </div>
       <template v-if="card.deliveryState === 'linked' && card.platform">
-        <div class="usage-card-rule"></div>
-        <div class="platform-profile">
-          <div v-for="field in card.profileFields" :key="field.key">
-            <small>{{ field.label }}</small>
-            <span :title="field.value">{{ field.value || '—' }}</span>
-            <em v-if="field.diff" class="profile-diff" :title="'本地：' + field.local">≠本地</em>
-          </div>
-        </div>
         <div
           v-if="card.statusFailing && card.platform.reason_text"
           class="platform-reason"
-          :title="card.platform.reason_text"
+          :title="
+            card.platform.reason_text +
+            (card.platform.reason_fetched_at ? '\n' + formatDateTime(card.platform.reason_fetched_at) : '')
+          "
         >
-          <AlertCircle :size="14" />
+          <AlertCircle :size="13" />
           <span>{{ card.platform.reason_text }}</span>
-          <small v-if="card.platform.reason_fetched_at">{{ formatDateTime(card.platform.reason_fetched_at) }}</small>
         </div>
         <div v-if="card.needsReauth" class="platform-reauth-hint">
-          <span>{{
+          {{
             card.platform?.status === 'sync_failed' || card.platform_status === 'sync_failed'
               ? '平台同步失败，可重新授权后同步到平台。'
               : 'Claude 登录失败，可重新授权后同步到平台。'
-          }}</span>
+          }}
         </div>
         <PlatformUsageBlock
           :usage="card.platform.usage"
           :observed-at="card.platform.observed_at"
           :usd-rate="card.platform.usd_cny_rate"
         />
+        <div v-if="card.profileSummary" class="platform-profile" :title="card.profileTitle">
+          <span>{{ card.profileSummary }}</span>
+          <em v-if="card.profileDiff" class="profile-diff">≠本地</em>
+        </div>
         <div v-if="hasValue(card.platform_requests)" class="usage-stats">
           <div>
             <small>今日请求</small><b>{{ formatCount(card.platform_requests) }}</b>
@@ -109,6 +108,9 @@
           v-if="card.footer"
           :title="card.deliveryState === 'linked' ? card.connectionNames : card.deliveryDetail"
           >{{ card.footer }}</span
+        >
+        <span v-else-if="card.platform?.remote_created_at" class="account-card-created" title="平台创建时间"
+          >{{ card.platform.remote_created_at.slice(5) }} 创建</span
         >
         <el-button
           v-if="isAdmin"
@@ -230,7 +232,10 @@ type Card = Account & {
   needsReauth: boolean
   connectionNames: string
   footer: string
-  profileFields: ProfileField[]
+  tags: string[]
+  profileSummary: string
+  profileTitle: string
+  profileDiff: boolean
 }
 
 const failingStatuses = new Set([
@@ -282,6 +287,32 @@ function profileFields(row: Account, p: PlatformInfo): ProfileField[] {
   return list
 }
 
+// Fields already shown in the head or tag row stay out of the one-line summary.
+const summaryHidden = new Set(['alias', 'aid', 'plan', 'tags'])
+const shortDate = (v: string) => (/^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(5, 10) : v)
+
+function profileSummary(fields: ProfileField[]) {
+  // Label helpers render an empty value as "—"; the summary simply skips it.
+  const value = (key: string) => {
+    const v = fields.find((f) => f.key === key)?.value || ''
+    return v === '—' ? '' : v
+  }
+  const start = value('plan_start_time')
+  const end = value('plan_end_time')
+  const parts = [
+    start || end ? `套餐 ${shortDate(start) || '?'} → ${shortDate(end) || '?'}` : '',
+    value('register_location'),
+    value('payment_method'),
+    value('register_device'),
+    value('balance') ? '余量 ' + value('balance') : '',
+  ].filter(Boolean)
+  const title = fields
+    .filter((f) => !summaryHidden.has(f.key) && f.value && f.value !== '—')
+    .map((f) => `${f.label}：${f.value}${f.diff ? `（本地 ${f.local}）` : ''}`)
+    .join('\n')
+  return { summary: parts.join(' · '), title, diff: fields.some((f) => f.diff) }
+}
+
 const cards = computed<Card[]>(() =>
   props.accounts.map((row) => {
     const state = deliveryState(row)
@@ -309,7 +340,11 @@ const cards = computed<Card[]>(() =>
       statusFailing: failing,
       needsReauth: state === 'linked' && needsReauth(platformStatus),
       connectionNames: names,
-      profileFields: row.platform ? profileFields(row, row.platform) : [],
+      ...(() => {
+        const p = profileSummary(row.platform ? profileFields(row, row.platform) : [])
+        return { profileSummary: p.summary, profileTitle: p.title, profileDiff: p.diff }
+      })(),
+      tags: formatTags(row.platform?.profile?.tags).split('、').filter(Boolean),
       footer: state === 'linked' ? '' : state === 'submitting' ? '上号结果自动更新' : '尚未完成平台上号',
     }
   }),
@@ -462,36 +497,31 @@ const cards = computed<Card[]>(() =>
 }
 
 .account-card-created {
-  margin-left: auto;
+  flex: none;
   font-size: 11px;
-  color: var(--text-tertiary, #909399);
+  color: var(--muted, #909399);
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-badge.tag {
+  text-transform: none;
 }
 
 .platform-profile {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 14px;
-  margin-top: 10px;
-}
-
-.platform-profile > div {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: 12px;
-}
-
-.platform-profile small {
-  flex: none;
-  color: var(--text-secondary, #606266);
+  margin-top: 9px;
+  color: var(--muted, #909399);
+  font-size: 11.5px;
+  cursor: default;
 }
 
 .platform-profile span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .profile-diff {
@@ -500,44 +530,36 @@ const cards = computed<Card[]>(() =>
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: #39360e;
-  color: #e7d231;
+  background: rgba(252, 136, 0, 0.1);
+  color: #fc8800;
 }
 
 .platform-reason {
   display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 6px 8px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #3d1414;
-  color: #ff8a80;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(245, 63, 63, 0.08);
+  color: #d4380d;
   font-size: 12px;
-  line-height: 1.45;
+  cursor: default;
 }
 
 .platform-reason :deep(svg) {
   flex: none;
-  margin-top: 2px;
 }
 
 .platform-reason span {
-  flex: 1 1 12em;
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.platform-reason small {
-  flex: 1 0 100%;
-  padding-left: 22px;
-  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .platform-reauth-hint {
-  margin-top: 8px;
+  margin-top: 6px;
   color: #c9a227;
   font-size: 12px;
 }
@@ -650,13 +672,17 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-monitor .usage-card {
-  padding: 14px 16px;
+  padding: 12px 14px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 6px;
   box-shadow: none;
   display: flex;
   flex-direction: column;
+}
+
+.platform-monitor .usage-card > :nth-last-child(2) {
+  margin-bottom: 10px;
 }
 
 .platform-monitor .usage-card:hover {
@@ -718,10 +744,10 @@ const cards = computed<Card[]>(() =>
 .platform-monitor .usage-card-foot {
   color: var(--muted);
   margin-top: auto;
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--line-soft);
   line-height: 1.5;
-  gap: 10px;
+  gap: 6px;
   font-family: inherit;
   font-size: 12px;
 }
@@ -781,14 +807,19 @@ const cards = computed<Card[]>(() =>
   gap: 10px;
 }
 
+.platform-monitor .usage-card-foot {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
 .platform-monitor .usage-card-foot .card-action {
-  height: 28px;
-  padding: 0 10px;
+  height: 26px;
+  padding: 0 8px;
   border-radius: 6px;
   font-weight: 500;
   box-shadow: none;
   flex: none;
-  min-height: 28px;
+  min-height: 26px;
   margin: 0;
 }
 
@@ -825,7 +856,7 @@ const cards = computed<Card[]>(() =>
   align-items: center;
   justify-content: space-between;
   gap: 7px;
-  margin: 8px 0 11px;
+  margin: 4px 0 8px;
   color: #82929a;
   font-size: 11px;
 }

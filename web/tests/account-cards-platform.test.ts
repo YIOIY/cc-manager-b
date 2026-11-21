@@ -98,16 +98,15 @@ function render(row: Account) {
 test('a linked account mirrors the platform card and its usage block', () => {
   const text = render(account(platform())).text()
   for (const expected of [
-    '7.00%',
-    '411,638',
-    '82,648',
+    '7%',
+    '入 412K',
+    '出 83K',
     '$4.89',
     '美国',
     'GooglePay',
     '20204',
     '使用中',
-    '来自平台',
-    '2026-12-10',
+    '套餐 11-11 → 12-10',
     'claude-20261111002',
   ]) {
     expect(text).toContain(expected)
@@ -119,10 +118,18 @@ test('a linked account mirrors the platform card and its usage block', () => {
   expect(text).toContain('≠本地') // plan_end_time differs from the local 2026-12-31
 })
 
+test('the full profile and platform origin stay available on hover', () => {
+  const w = render(account(platform()))
+  const profile = w.get('.platform-profile').attributes('title')
+  expect(profile).toContain('套餐结束时间：2026-12-10（本地 2026-12-31）')
+  expect(profile).toContain('注册时间：2026-11-03')
+  expect(w.get('.usage-identity strong').attributes('title')).toContain('来自平台同步')
+})
+
 test('without usage the block says the platform returned none', () => {
   const text = render(account(platform({ usage: null }))).text()
   expect(text).toContain('平台未返回用量')
-  expect(text).not.toContain('7.00%')
+  expect(text).not.toContain('5h')
 })
 
 test('a banned account shows the reason', () => {

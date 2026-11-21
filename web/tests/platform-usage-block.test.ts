@@ -46,3 +46,13 @@ test('without a rate the cost shows a placeholder', () => {
     expect(w.text()).not.toContain('¥751.04')
   }
 })
+
+test('usage windows render as bars with compact tokens and exact values on hover', () => {
+  const w = render(7.2)
+  expect(w.get('[data-window="5h"]').text()).toContain('16%')
+  expect(w.get('[data-window="7d"]').text()).toContain('8%')
+  expect(w.get('[data-window="5h"] .usage-fill').attributes('style')).toContain('width: 16%')
+  const tokens = w.get('.usage-summary span')
+  expect(tokens.text()).toBe('入 1.83M · 出 861K')
+  expect(tokens.attributes('title')).toContain('1,827,348')
+})
