@@ -118,6 +118,16 @@ func (a *App) runOne(ctx context.Context) {
 		a.finishJob(id, "failed", "JOB_PAYLOAD_INVALID")
 		return
 	}
+	// Reauthorization holds this lock while pushing a fresh token. Inspect
+	// delivery state and credentials only after it finishes; a busy account
+	// requeues the job without overwriting the other operation's delivery.
+	unlock, ok := a.accountLocks.tryLock(accountID)
+	if !ok {
+		a.requeueJob(id)
+		return
+	}
+	defer unlock()
+
 	// Any failure after the delivery is marked running must leave it in a
 	// terminal state, otherwise the account card shows "submitting" forever.
 	failed := func(code string) {
@@ -125,7 +135,7 @@ func (a *App) runOne(ctx context.Context) {
 		a.setDelivery(accountID, spec.ConnectionID, "failed", "")
 	}
 	var accepted int
-	_ = a.DB.QueryRowContext(ctx, `SELECT 1 FROM platform_links WHERE account_id=? AND connection_id=? AND ingestion_state='accepted'`, accountID, spec.ConnectionID).Scan(&accepted)
+	_ = a.DB.QueryRowContext(ctx, `SELECT 1 WHERE EXISTS(SELECT 1 FROM platform_links WHERE account_id=? AND connection_id=? AND ingestion_state='accepted') OR EXISTS(SELECT 1 FROM deliveries WHERE account_id=? AND connection_id=? AND ingestion_state='accepted')`, accountID, spec.ConnectionID, accountID, spec.ConnectionID).Scan(&accepted)
 	if accepted == 1 {
 		a.finishJob(id, "succeeded", "ALREADY_LINKED")
 		return
@@ -137,24 +147,16 @@ func (a *App) runOne(ctx context.Context) {
 		return
 	}
 	a.setDelivery(accountID, spec.ConnectionID, "running", "")
-	// The OAuth reauthorization holds this lock while it pushes a fresh token.
-	// A job that already read the pre-OAuth credential would otherwise
-	// overwrite the platform copy with a stale snapshot, so wait for the push
-	// to finish and re-read below. Lock order matches reauthorize: connection
-	// web sync, then account. A busy account requeues instead of blocking the
-	// single worker.
-	unlock, ok := a.accountLocks.tryLock(accountID)
-	if !ok {
-		a.requeueJob(id, accountID, spec.ConnectionID)
-		return
-	}
-	defer unlock()
 
 	var account, plan, location, registered, start, end, credential, metadataJSON string
-	var version int
-	err = a.DB.QueryRowContext(ctx, `SELECT account,plan,register_location,register_time,plan_start_time,plan_end_time,credentials_json,metadata_json,version FROM accounts WHERE id=?`, accountID).Scan(&account, &plan, &location, &registered, &start, &end, &credential, &metadataJSON, &version)
+	var archived, version int
+	err = a.DB.QueryRowContext(ctx, `SELECT account,plan,register_location,register_time,plan_start_time,plan_end_time,credentials_json,metadata_json,archived,version FROM accounts WHERE id=?`, accountID).Scan(&account, &plan, &location, &registered, &start, &end, &credential, &metadataJSON, &archived, &version)
 	if err != nil {
 		failed("VERSION_CONFLICT")
+		return
+	}
+	if archived != 0 {
+		failed("ARCHIVED")
 		return
 	}
 	if version != spec.Version {
@@ -547,17 +549,15 @@ func nullableRate(m supplier.Metric) any {
 
 func (a *App) finishJob(id, state, code string) { a.finishJobErr(id, state, errs.Adhoc(code, 0, "")) }
 
-// requeueJob puts a claimed job back in the queue without burning it. The next
-// poll must be able to re-read the credential, so the version pin is dropped
-// and the delivery falls back to queued instead of staying "running".
-func (a *App) requeueJob(id, accountID, connectionID string) {
+// requeueJob releases a claimed job while another operation owns the account.
+// That operation's delivery state must remain untouched until the next poll
+// acquires the lock and reads the current delivery and account snapshots.
+func (a *App) requeueJob(id string) {
 	if _, err := a.DB.Exec(`UPDATE jobs SET state='queued',result_json='{}',updated_at=? WHERE id=? AND state='running'`, now(), id); err != nil {
 		slog.Error("job requeue failed", "job", id, "error", err)
 		a.finishJob(id, "failed", "INTERNAL_ERROR")
-		a.setDelivery(accountID, connectionID, "failed", "")
 		return
 	}
-	a.setDelivery(accountID, connectionID, "queued", "")
 	// Keep the ordering stable so a busy account does not starve behind the
 	// row it just released; the poll order is created_at, so bump it.
 	if _, err := a.DB.Exec(`UPDATE jobs SET created_at=? WHERE id=?`, now(), id); err != nil {

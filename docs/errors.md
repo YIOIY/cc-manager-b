@@ -64,12 +64,12 @@
 | `NOT_FOUND` | not_found | 404 | 否 | none | 资源不存在或已被删除 | details.resource 指明资源类型；允许调用方自定义文案 |
 | `NO_LINKED_ACCOUNTS` | validation | 422 | 否 | none | 所选范围没有可同步的关联账号 | 账单同步范围 |
 | `NO_RETRY_ITEMS` | validation | 422 | 否 | none | 没有仍在可查窗口内的失败项 | 账单重试 |
-| `OAUTH_BUSY` | rate_limit | 429 | 是 | wait | 授权会话较多 | 待授权链接数达到上限或并发兑换排队 30 秒未获额度；details.retry_after_seconds 与 Retry-After 头一致；允许调用方自定义文案 |
-| `OAUTH_EXCHANGE_FAILED` | validation | 422 | 否 | fix_input | 授权码兑换失败 | 授权码无效、过期或已使用（400/404 等）；details.upstream_status 为上游状态；不含上游响应；允许调用方自定义文案 |
-| `OAUTH_IDENTITY_REJECTED` | upstream | 403 | 否 | reauthorize | Claude 拒绝了当前身份 | 兑换时 401/403，多为 IP 或身份风控；重放同一授权码无效，需重新生成链接；details.upstream_status |
+| `OAUTH_BUSY` | rate_limit | 429 | 是 | wait | 授权会话较多 | 待授权链接数达到上限、同一会话正在兑换或并发排队 30 秒未获额度；提供 details.retry_after_seconds 时与 Retry-After 头一致；允许调用方自定义文案 |
+| `OAUTH_EXCHANGE_FAILED` | validation | 422 | 否 | fix_input | 授权码兑换失败 | 授权码无效、过期、已使用（400/404/409），或成功响应数据无效；终止会话时 details.oauth_session_expired=true，前端须清除失效链接；details.upstream_status 为上游状态（如有），不含上游响应；允许调用方自定义文案 |
+| `OAUTH_IDENTITY_REJECTED` | upstream | 403 | 否 | reauthorize | Claude 拒绝了当前身份 | 兑换或资料读取返回 401/403，不据此推断拒绝原因；会话终止，需重新生成链接；details.upstream_status 与 details.oauth_session_expired=true |
 | `OAUTH_PROXY_INVALID` | validation | 422 | 否 | fix_input | 授权使用的代理不可用 | ；允许调用方自定义文案 |
 | `OAUTH_PROXY_UNREACHABLE` | validation | 422 | 否 | fix_input | 所选代理连不上 Claude | 经所选代理对令牌端点 GET 探测失败：连接失败、超时、5xx 或非 JSON 响应（疑似拦截）；文案带阶段；允许调用方自定义文案 |
-| `OAUTH_RATE_LIMITED` | rate_limit | 429 | 是 | wait | Claude 授权暂时限流 | 上游 429 或本地冷却命中；details.retry_after_seconds 与 Retry-After 头一致，按账号冷却（无账号时按邮箱），遵从上游秒数、上限 1 小时；命中时保留待兑换链接，若链接仍有效则开始接口直接 200 返回原链接加 retry_after_seconds；允许调用方自定义文案 |
+| `OAUTH_RATE_LIMITED` | rate_limit | 429 | 是 | wait | Claude 授权暂时限流 | 上游 429 或本地冷却命中；details.retry_after_seconds 与 Retry-After 头一致，按账号冷却（新账号按已登录浏览器会话），等待不少于 60 秒且上限 1 小时；命中时保留链接，profile 限流保留已取得令牌，重试只读取资料；开始接口可 200 返回原链接加 retry_after_seconds，刷新或取消不能清除冷却；允许调用方自定义文案 |
 | `OAUTH_RESULT_INVALID` | validation | 422 | 否 | fix_input | 授权结果无法识别 | 本地解析错误，文案由解析器给出；允许调用方自定义文案 |
 | `OAUTH_SESSION_EXPIRED` | not_found | 404 | 否 | reauthorize | 授权链接已失效 | 链接过期、被替换、已使用或不属于当前会话 |
 | `OAUTH_START_FAILED` | internal | 500 | 是 | retry | 无法生成授权链接 | 随机数生成失败 |

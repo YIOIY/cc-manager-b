@@ -33,6 +33,8 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
 })
 afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   fetchMock.mockReset()
 })
@@ -268,4 +270,178 @@ test('a proxy that cannot reach Claude offers to change the proxy instead of a b
   expect(wrapper.emitted('change-proxy')?.length).toBeGreaterThan(0)
   expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
   wrapper.unmount()
+})
+
+test.each([
+  ['OAUTH_RATE_LIMITED', 2, 'Enter'],
+  ['OAUTH_RATE_LIMITED', 2, 'paste'],
+  ['OAUTH_BUSY', 1, 'Enter'],
+  ['OAUTH_BUSY', 1, 'paste'],
+] as const)(
+  '%s blocks %s-second cooldown bypass through %s, then retries the same session',
+  async (code, seconds, input) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    fetchMock
+      .mockResolvedValueOnce(json({ data: pending }))
+      .mockResolvedValueOnce(
+        json({ error: { code, message: '请稍后重试', details: { retry_after_seconds: seconds } } }, 429),
+      )
+      .mockResolvedValueOnce(json({ data: { auth_json: { access_token: 'fixture-token' }, warnings: [] } }))
+    const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+    try {
+      await wrapper.get('button').trigger('click')
+      await flushPromises()
+      await wrapper.get('#claude-authorization-result').setValue('code#test')
+      await wrapper.get('.oauth-exchange').trigger('click')
+      await flushPromises()
+      const result = wrapper.get('#claude-authorization-result')
+      if (input === 'Enter') await result.trigger('keyup', { key: 'Enter' })
+      else await result.trigger('paste', { clipboardData: { getData: () => 'code#test' } })
+      await flushPromises()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect((result.element as HTMLInputElement).value).toBe('code#test')
+      expect(wrapper.get('.oauth-exchange').text()).toContain(`${seconds}s`)
+      await vi.advanceTimersByTimeAsync(seconds * 1000 - 1)
+      expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeDefined()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeUndefined()
+      await result.trigger('keyup', { key: 'Enter' })
+      await flushPromises()
+      expect(fetchMock.mock.calls[2]![0]).toBe('/api/v1/claude-oauth/sessions/flow/exchange')
+      expect(wrapper.emitted('authorized')).toHaveLength(1)
+    } finally {
+      wrapper.unmount()
+    }
+  },
+)
+
+test('a cooldown prevents refreshing the link without clearing the remaining wait', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  fetchMock
+    .mockResolvedValueOnce(json({ data: { ...pending, retry_after_seconds: 2 } }))
+    .mockResolvedValueOnce(json({ data: { ...pending, id: 'flow-2' } }))
+    .mockResolvedValue(json({ data: { cancelled: true } }))
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  try {
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    const refresh = wrapper.findAllComponents(stubs['el-button']).find((button) => button.text() === '重新获取链接')!
+    // Exercise the handler as well as the button state, so its guard cannot be bypassed.
+    refresh.vm.$emit('click')
+    await flushPromises()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(refresh.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.oauth-exchange').text()).toContain('2s')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(wrapper.get('.oauth-exchange').text()).toContain('1s')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(refresh.attributes('disabled')).toBeUndefined()
+    await refresh.trigger('click')
+    await flushPromises()
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ proxy_id: '', refresh: true })
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+test('a failed start cooldown prevents generating another link until it expires', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  fetchMock
+    .mockResolvedValueOnce(
+      json({ error: { code: 'OAUTH_BUSY', message: '请稍后重试', details: { retry_after_seconds: 1 } } }, 429),
+    )
+    .mockResolvedValueOnce(json({ data: pending }))
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  try {
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    const login = wrapper.getComponent(stubs['el-button'])
+    login.vm.$emit('click')
+    await flushPromises()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(login.attributes('disabled')).toBeDefined()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(login.attributes('disabled')).toBeUndefined()
+    await login.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+test.each([400, 404, 409])(
+  'an explicitly expired session after upstream %s clears the dead link and pasted result',
+  async (status) => {
+    fetchMock
+      .mockResolvedValueOnce(json({ data: pending }))
+      .mockResolvedValueOnce(
+        json(
+          {
+            error: {
+              code: 'OAUTH_EXCHANGE_FAILED',
+              message: '授权码已失效，请重新生成链接',
+              details: { upstream_status: status, oauth_session_expired: true },
+            },
+          },
+          422,
+        ),
+      )
+      .mockResolvedValueOnce(json({ data: { ...pending, id: 'flow-2' } }))
+    const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+    try {
+      await wrapper.get('button').trigger('click')
+      await flushPromises()
+      await wrapper.get('#claude-authorization-result').setValue('spent-code')
+      await wrapper.get('.oauth-exchange').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
+      expect(wrapper.text()).toContain('授权码已失效')
+      await wrapper.get('button').trigger('click')
+      await flushPromises()
+      expect((wrapper.get('#claude-authorization-result').element as HTMLInputElement).value).toBe('')
+    } finally {
+      wrapper.unmount()
+    }
+  },
+)
+
+test('an exchange can finish after the 30-second queue and 40-second supplier budget', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  // Native AbortSignal.timeout owns a clock outside Vitest's fake timers.
+  // Keep its abort behavior while routing its deadline through the test clock.
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(new DOMException('signal timed out', 'TimeoutError')), milliseconds)
+    return controller.signal
+  })
+  fetchMock.mockResolvedValueOnce(json({ data: pending })).mockImplementationOnce(
+    (_url, options: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        options.signal!.addEventListener('abort', () => reject(options.signal!.reason), { once: true })
+        setTimeout(
+          () => resolve(json({ data: { auth_json: { access_token: 'fixture-token' }, warnings: [] } })),
+          70_000,
+        )
+      }),
+  )
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  try {
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    await wrapper.get('#claude-authorization-result').setValue('code#test')
+    await wrapper.get('.oauth-exchange').trigger('click')
+    await vi.advanceTimersByTimeAsync(45_001)
+    expect(wrapper.text()).not.toContain('请求超时')
+    expect(wrapper.emitted('busy')?.at(-1)).toEqual([true])
+    await vi.advanceTimersByTimeAsync(24_999)
+    await flushPromises()
+    expect(wrapper.emitted('authorized')?.[0]?.[0]).toEqual({
+      auth_json: { access_token: 'fixture-token' },
+      warnings: [],
+    })
+    expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
+  } finally {
+    wrapper.unmount()
+  }
 })

@@ -122,6 +122,23 @@ func AsStatusError(err error) (*StatusError, bool) {
 	return nil, false
 }
 
+// ResponseError identifies unusable response data without retaining any
+// upstream body. At the token stage the authorization code may be consumed.
+// At the profile stage it also identifies expired or invalid cached tokens.
+type ResponseError struct{ Op string }
+
+func (e *ResponseError) Error() string {
+	return "Claude 授权数据无效或已过期，请重新授权"
+}
+
+func AsResponseError(err error) (*ResponseError, bool) {
+	var re *ResponseError
+	if errors.As(err, &re) {
+		return re, true
+	}
+	return nil, false
+}
+
 func parseRetryAfter(h http.Header, now time.Time) time.Duration {
 	raw := strings.TrimSpace(h.Get("Retry-After"))
 	if raw == "" {
@@ -187,7 +204,7 @@ func request(ctx context.Context, client *http.Client, method, endpoint, token, 
 	}
 	data, err = io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 || json.Unmarshal(data, out) != nil {
-		return errors.New("Claude 授权服务响应格式异常，请重新授权")
+		return &ResponseError{Op: op}
 	}
 	return nil
 }
@@ -211,7 +228,7 @@ func Exchange(ctx context.Context, client *http.Client, code, state, verifier st
 		return Result{}, err
 	}
 	if tokens.Access == "" || tokens.Refresh == "" || tokens.Expires <= 0 || tokens.Expires > 366*24*3600 {
-		return Result{}, errors.New("Claude 未返回完整且有效的令牌，请重新授权")
+		return Result{}, &ResponseError{Op: "token"}
 	}
 	now := time.Now().UTC()
 	result := Result{Auth: map[string]any{"id_token": tokens.ID, "access_token": tokens.Access, "refresh_token": tokens.Refresh, "last_refresh": now.Format(time.RFC3339), "expired": now.Add(time.Duration(tokens.Expires) * time.Second).Format(time.RFC3339), "type": "claude", "verification_status": "not_required"}, Warnings: []string{}}
@@ -224,21 +241,56 @@ func Exchange(ctx context.Context, client *http.Client, code, state, verifier st
 	set("account_uuid", tokens.Account.UUID)
 	set("organization_uuid", tokens.Organization.UUID)
 	set("organization_name", tokens.Organization.Name)
+	return CompleteProfile(ctx, client, result)
+}
+
+// CompleteProfile resumes profile loading after a successful token exchange.
+// A profile 429 preserves the tokens for a later retry; 401/403 discard them.
+// Result maps and slices are copied so callers can retain an untouched cache.
+func CompleteProfile(ctx context.Context, client *http.Client, result Result) (Result, error) {
+	access, _ := result.Auth["access_token"].(string)
+	refresh, _ := result.Auth["refresh_token"].(string)
+	expired, _ := result.Auth["expired"].(string)
+	expiresAt, err := time.Parse(time.RFC3339, expired)
+	if access == "" || refresh == "" || err != nil || !expiresAt.After(time.Now()) {
+		return Result{}, &ResponseError{Op: "profile"}
+	}
+	copyClient := *client
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &copyClient
+	auth := make(map[string]any, len(result.Auth))
+	for key, value := range result.Auth {
+		auth[key] = value
+	}
+	result.Auth = auth
+	warnings := make([]string, len(result.Warnings))
+	copy(warnings, result.Warnings)
+	result.Warnings = warnings
+	set := func(key, value string) {
+		if strings.TrimSpace(value) != "" {
+			result.Auth[key] = value
+		}
+	}
+	accountUUID, _ := result.Auth["account_uuid"].(string)
+	organizationUUID, _ := result.Auth["organization_uuid"].(string)
 	var profile struct {
 		Account      identity     `json:"account"`
 		Organization organization `json:"organization"`
 	}
-	profileErr := request(ctx, client, "GET", profileURL, tokens.Access, "profile", nil, &profile)
+	profileErr := request(ctx, client, "GET", profileURL, access, "profile", nil, &profile)
 	if profileErr != nil {
 		if profileRestrictive(profileErr) {
+			if se, _ := AsStatusError(profileErr); se.Status == http.StatusTooManyRequests {
+				return result, profileErr
+			}
 			return Result{}, profileErr
 		}
 		result.Warnings = append(result.Warnings, "令牌已获取，但账号资料暂时无法读取，请补充缺失资料。")
 		return result, nil
 	}
 	profileOK := profile.Account.UUID != "" && profile.Organization.UUID != "" &&
-		(tokens.Account.UUID == "" || profile.Account.UUID == tokens.Account.UUID) &&
-		(tokens.Organization.UUID == "" || profile.Organization.UUID == tokens.Organization.UUID)
+		(accountUUID == "" || profile.Account.UUID == accountUUID) &&
+		(organizationUUID == "" || profile.Organization.UUID == organizationUUID)
 	if !profileOK {
 		result.Warnings = append(result.Warnings, "账号资料不完整或与授权身份不一致，未自动填充资料。")
 		// Do not call roles after identity mismatch; roles 429 is ignored and
@@ -266,7 +318,7 @@ func Exchange(ctx context.Context, client *http.Client, code, state, verifier st
 		var roles struct {
 			Name string `json:"organization_name"`
 		}
-		if err := request(ctx, client, "GET", rolesURL, tokens.Access, "roles", nil, &roles); err == nil {
+		if err := request(ctx, client, "GET", rolesURL, access, "roles", nil, &roles); err == nil {
 			set("organization_name", roles.Name)
 		}
 	}

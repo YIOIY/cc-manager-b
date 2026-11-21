@@ -43,7 +43,7 @@
       </div>
       <div class="oauth-link-caption">
         <span>{{ copied ? '链接已复制' : '本次链接 30 分钟内有效，重新获取后旧链接失效。' }}</span
-        ><el-button text :disabled="busy" @click="start(true)">重新获取链接</el-button>
+        ><el-button text :disabled="busy || disabled || retryAfter > 0" @click="start(true)">重新获取链接</el-button>
       </div>
       <label class="oauth-label" for="claude-authorization-result">授权结果</label>
       <el-input
@@ -77,11 +77,11 @@
           <span v-for="part in summaryMetaParts" :key="part">{{ part }}</span>
         </p>
       </div>
-      <el-button text :loading="busy" :disabled="disabled" class="oauth-done-action" @click="start()"
+      <el-button text :loading="busy" :disabled="disabled || retryAfter > 0" class="oauth-done-action" @click="start()"
         >重新授权</el-button
       >
     </div>
-    <el-button v-else type="primary" :loading="busy" :disabled="disabled" @click="start()">{{
+    <el-button v-else type="primary" :loading="busy" :disabled="disabled || retryAfter > 0" @click="start()">{{
       completed ? '重新授权' : '登录 Claude'
     }}</el-button>
   </div>
@@ -189,7 +189,7 @@ function reset() {
 // refresh=false reuses the server-side link when one is still waiting, so
 // reopening the panel does not mint a fresh PKCE round trip every time.
 async function start(refresh = false) {
-  if (busy.value || props.disabled) return
+  if (busy.value || props.disabled || retryAfter.value > 0) return
   generation++
   const current = generation
   // A refresh retires the old link server-side; tell the server too so the
@@ -239,7 +239,8 @@ async function start(refresh = false) {
   }
 }
 async function exchange() {
-  if (!pending.value || busy.value || props.disabled || !authorizationResult.value.trim()) return
+  if (!pending.value || busy.value || props.disabled || retryAfter.value > 0 || !authorizationResult.value.trim())
+    return
   const current = generation
   const id = pending.value.id
   setBusy(true)
@@ -249,7 +250,8 @@ async function exchange() {
     const { data } = await api<OAuthResult>('/claude-oauth/sessions/' + id + '/exchange', {
       method: 'POST',
       body: JSON.stringify({ result: authorizationResult.value.trim() }),
-      timeoutMs: 45000,
+      // The server may queue for 30s before spending up to 40s on exchange.
+      timeoutMs: 75_000,
     })
     if (current !== generation) return
     pending.value = null
@@ -262,10 +264,9 @@ async function exchange() {
     error.value = errorMessage(e)
     proxyProblem.value = isProxyProblem(e)
     retryWait(e)
-    // Only a dead link needs a new authorization. A typo, a rate limit, a
-    // supplier 5xx or a broken exit all keep the pasted code and the link, so
-    // the user retries the same attempt instead of redoing the browser login.
-    if (e instanceof ApiError && deadLinkCodes.has(e.code)) {
+    // The explicit flag covers terminal upstream failures that share an error
+    // code with retryable failures. Local input errors keep the link and paste.
+    if (e instanceof ApiError && (deadLinkCodes.has(e.code) || e.details?.oauth_session_expired === true)) {
       pending.value = null
       authorizationResult.value = ''
     }
