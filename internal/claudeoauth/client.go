@@ -100,15 +100,26 @@ type Result struct {
 
 // StatusError is a non-200 Claude OAuth HTTP response. The message never
 // includes the upstream body (tokens and codes can appear there).
+//
+// Intercepted marks a token-stage 401/403 whose body was present but not JSON:
+// the OAuth server always answers in JSON, so such a page came from a proxy,
+// WAF or captive portal in front of it and the one-time code never reached
+// the provider. Callers keep the session for a retry instead of retiring it as
+// a rejected identity. An empty body stays unclassified and is treated as the
+// provider's own rejection.
 type StatusError struct {
-	Op         string
-	Status     int
-	RetryAfter time.Duration
+	Op          string
+	Status      int
+	RetryAfter  time.Duration
+	Intercepted bool
 }
 
 func (e *StatusError) Error() string {
 	switch e.Status {
 	case http.StatusUnauthorized, http.StatusForbidden:
+		if e.Intercepted {
+			return fmt.Sprintf("Claude 授权请求被网络出口拦截（HTTP %d）", e.Status)
+		}
 		return fmt.Sprintf("Claude 授权服务拒绝访问（HTTP %d）", e.Status)
 	case http.StatusTooManyRequests:
 		return fmt.Sprintf("Claude 授权服务暂时限流（HTTP %d）", e.Status)
@@ -215,7 +226,14 @@ func request(ctx context.Context, client *http.Client, method, endpoint, token, 
 	}
 	return observeResponse(ctx, client, r, op, func(res *http.Response) error {
 		if res.StatusCode != http.StatusOK {
-			return &StatusError{Op: op, Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
+			se := &StatusError{Op: op, Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
+			if op == "token" && (res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden) {
+				// Same rule as Reachable: a JSON body reached the OAuth server,
+				// anything else is an interception page. Bounded read, never kept.
+				page, readErr := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
+				se.Intercepted = readErr == nil && len(page) > 0 && len(page) <= 64<<10 && !json.Valid(page)
+			}
+			return se
 		}
 		data, err = io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 		if err != nil || len(data) > 1<<20 || json.Unmarshal(data, out) != nil {

@@ -67,10 +67,10 @@
 | `NO_RETRY_ITEMS` | validation | 422 | 否 | none | 没有仍在可查窗口内的失败项 | 账单重试 |
 | `OAUTH_BUSY` | rate_limit | 429 | 是 | wait | 授权会话较多 | 待授权链接数达到上限、同一会话正在兑换或提交、排队 30 秒（全局闸门、单出口闸门与出口间隔共用这一预算）未获额度，或排队期间请求被取消；details.retry_after_seconds 与 Retry-After 头一致；允许调用方自定义文案 |
 | `OAUTH_EXCHANGE_FAILED` | validation | 422 | 否 | fix_input | 授权码兑换失败 | 授权码无效、过期、已使用（400/404/409），或成功响应数据无效；终止会话时 details.oauth_session_expired=true，前端须清除失效链接；details.upstream_status 为上游状态（如有），不含上游响应；允许调用方自定义文案 |
-| `OAUTH_IDENTITY_REJECTED` | upstream | 403 | 否 | reauthorize | Claude 拒绝了当前身份 | 兑换（token 阶段）返回 401/403：同一授权码重放不会成功，会话终止并带 details.oauth_session_expired=true，需重新生成链接；资料读取（profile/roles 阶段）返回 401/403：令牌与会话保留，可按阶段重试或手动补填。details.upstream_status 为上游状态；不据此推断封号原因 |
+| `OAUTH_IDENTITY_REJECTED` | upstream | 403 | 否 | reauthorize | Claude 拒绝了当前身份 | 兑换（token 阶段）返回 JSON 错误体的 401/403：同一授权码重放不会成功，会话终止并带 details.oauth_session_expired=true，需重新生成链接（非 JSON 拦截页归 OAUTH_PROXY_UNREACHABLE）；资料读取（profile/roles 阶段）返回 401/403：令牌与会话保留，可按阶段重试或手动补填。details.upstream_status 为上游状态；不据此推断封号原因 |
 | `OAUTH_PROXY_CHANGED` | conflict | 409 | 否 | reauthorize | 授权出口已变化，请显式重新授权 | 授权期间代理指纹改变；pending 保留但提交需用原出口或重新开始；允许调用方自定义文案 |
 | `OAUTH_PROXY_INVALID` | validation | 422 | 否 | fix_input | 授权使用的代理不可用 | ；允许调用方自定义文案 |
-| `OAUTH_PROXY_UNREACHABLE` | validation | 422 | 否 | fix_input | 所选代理连不上 Claude | 经所选代理对令牌端点 GET 探测失败：连接失败、超时、5xx 或非 JSON 响应（疑似拦截）；文案带阶段；允许调用方自定义文案 |
+| `OAUTH_PROXY_UNREACHABLE` | validation | 422 | 否 | fix_input | 所选代理连不上 Claude | 出口问题：探测阶段连接失败、超时、5xx 或非 JSON 响应（疑似拦截）；兑换阶段连接失败，或 token 请求收到非 JSON 体的 401/403（代理/WAF 拦截页，授权码未到达上游，会话保留可重试）。details.oauth_stage 为阶段，upstream_status 为上游状态；允许调用方自定义文案 |
 | `OAUTH_RATE_LIMITED` | rate_limit | 429 | 是 | wait | Claude 授权暂时限流 | 上游 429（探测、兑换或资料读取）或本地冷却命中；details.retry_after_seconds 与 Retry-After 头一致。冷却键：已有账号按账号 ID，兑换返回邮箱后另按邮箱，新账号在拿到邮箱前按已登录浏览器会话；兑换成功后只对账号 ID/邮箱播种 60 秒冷却，不影响同一操作者的下一个新账号。等待不少于 60 秒且不设业务时长上限；命中时保留链接，profile 限流保留已取得令牌，重试只读取资料；开始接口可 200 返回原链接加 retry_after_seconds，刷新或取消不能清除冷却；允许调用方自定义文案 |
 | `OAUTH_RESPONSE_INVALID` | upstream | 502 | 是 | retry | 授权响应格式异常，请按当前阶段重试 | 响应不是 JSON 或字段缺失；保留 pending 以便重试同一段；允许调用方自定义文案 |
 | `OAUTH_RESULT_INVALID` | validation | 422 | 否 | fix_input | 授权结果无法识别 | 本地解析错误，文案由解析器给出；允许调用方自定义文案 |

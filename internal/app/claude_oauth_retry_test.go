@@ -202,7 +202,13 @@ func TestOAuthRetryTerminalFailureMarksSessionExpired(t *testing.T) {
 	for _, status := range []int{400, 401, 403, 404, 409} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			a, _, _, _ := deliveryFixture(t)
-			retryOAuthProxy(t, a, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "fixture terminal failure", status) })
+			// The provider answers in JSON; a non-JSON 401/403 is an interception
+			// and keeps the session (TestOAuthTokenInterceptedKeepsSession).
+			retryOAuthProxy(t, a, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				w.Write([]byte(`{"error":"fixture terminal failure"}`))
+			})
 			retrySeedPending(a, "")
 			res := retryExchange(a)
 			var env struct {
@@ -216,6 +222,43 @@ func TestOAuthRetryTerminalFailureMarksSessionExpired(t *testing.T) {
 			}
 			if _, ok := a.oauth.items["review"]; ok {
 				t.Fatal("terminal pending survived")
+			}
+		})
+	}
+}
+
+// A proxy, WAF or captive portal answering the token POST with its own block
+// page never forwarded the code. The session must survive so the operator can
+// retry or switch exits without redoing the browser login.
+func TestOAuthTokenInterceptedKeepsSession(t *testing.T) {
+	for _, status := range []int{401, 403} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			a, _, _, _ := deliveryFixture(t)
+			retryOAuthProxy(t, a, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(status)
+				w.Write([]byte("<html><body>Access denied by gateway</body></html>"))
+			})
+			retrySeedPending(a, "")
+			res := retryExchange(a)
+			var env struct {
+				Error struct {
+					Code    string         `json:"code"`
+					Details map[string]any `json:"details"`
+				} `json:"error"`
+			}
+			json.Unmarshal(res.Body.Bytes(), &env)
+			if env.Error.Code != "OAUTH_PROXY_UNREACHABLE" {
+				t.Fatalf("interception blamed on identity: %d %s", res.Code, res.Body.String())
+			}
+			if env.Error.Details["oauth_session_expired"] == true || env.Error.Details["oauth_stage"] != "token" || env.Error.Details["upstream_status"] != float64(status) {
+				t.Fatalf("details: %v", env.Error.Details)
+			}
+			if strings.Contains(res.Body.String(), "Access denied") {
+				t.Fatal("block page leaked into response")
+			}
+			if _, ok := a.oauth.items["review"]; !ok {
+				t.Fatal("intercepted exchange retired the pending")
 			}
 		})
 	}

@@ -682,9 +682,14 @@ func (a *App) writeOAuthResult(w http.ResponseWriter, id string, result claudeoa
 func oauthTerminalStatus(status int) bool {
 	return status == 400 || status == 401 || status == 403 || status == 404 || status == 409
 }
+
+// An intercepted 401/403 (non-JSON page from the exit, see
+// StatusError.Intercepted) never reached the OAuth server: the code is still
+// unspent, so the session survives and the failure is the exit's, not the
+// identity's.
 func oauthTerminalError(err error) bool {
 	if se, ok := claudeoauth.AsStatusError(err); ok {
-		return se.Op == "token" && oauthTerminalStatus(se.Status)
+		return se.Op == "token" && oauthTerminalStatus(se.Status) && !se.Intercepted
 	}
 	if re, ok := claudeoauth.AsResponseError(err); ok {
 		return re.Op == "token"
@@ -724,6 +729,8 @@ func (a *App) oauthFailure(w http.ResponseWriter, r *http.Request, p oauthPendin
 			a.noteOAuth429(r, p, id, stage)
 			a.writeOAuthRateLimited(w, r, a.extendOAuthCooldown(p, se.RetryAfter))
 			return
+		case se.Intercepted:
+			code = "OAUTH_PROXY_UNREACHABLE"
 		case status == 401 || status == 403:
 			code = "OAUTH_IDENTITY_REJECTED"
 		case status >= 500:

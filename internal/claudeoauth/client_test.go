@@ -445,3 +445,45 @@ func TestExchangeTokenTransportFailureDoesNotClaimAResponse(t *testing.T) {
 		t.Fatalf("transport failure was classified as an invalid response: %v", err)
 	}
 }
+
+// A token-stage 401/403 is a rejected identity only when the OAuth server said
+// so in JSON. An HTML block page from a proxy or WAF never consumed the code.
+func TestTokenClassifiesInterceptedAccessRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      int
+		body        string
+		intercepted bool
+	}{
+		{"json forbidden", http.StatusForbidden, `{"error":{"type":"forbidden","message":"Request not allowed"}}`, false},
+		{"json unauthorized", http.StatusUnauthorized, `{"error":"invalid_client"}`, false},
+		{"empty body", http.StatusForbidden, ``, false},
+		{"html block page", http.StatusForbidden, `<html><body>Access denied</body></html>`, true},
+		{"text block page", http.StatusUnauthorized, `Proxy Authentication Required`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
+			})}
+			_, err := Token(context.Background(), c, "code", "state", "verifier")
+			se, ok := AsStatusError(err)
+			if !ok || se.Op != "token" || se.Status != tc.status {
+				t.Fatalf("err=%v", err)
+			}
+			if se.Intercepted != tc.intercepted {
+				t.Fatalf("intercepted=%v want %v", se.Intercepted, tc.intercepted)
+			}
+			if strings.Contains(err.Error(), "Access denied") || strings.Contains(err.Error(), "Proxy Authentication") {
+				t.Fatalf("body leaked into error: %q", err.Error())
+			}
+		})
+	}
+	// Profile-stage refusals keep their classification: tokens survive anyway.
+	c := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader(`<html>blocked</html>`)), Header: make(http.Header)}, nil
+	})}
+	_, err := CompleteProfile(context.Background(), c, Result{Auth: map[string]any{"access_token": "a", "refresh_token": "r", "expired": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}})
+	if se, ok := AsStatusError(err); !ok || se.Op != "profile" || se.Intercepted {
+		t.Fatalf("profile stage changed: %v", err)
+	}
+}
