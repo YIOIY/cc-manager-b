@@ -48,6 +48,16 @@ func (a *App) billRoutes(w http.ResponseWriter, r *http.Request, path string) bo
 			a.billModelsSync(w, r)
 		}
 		return true
+	case "/channel-usage":
+		if requireBillMethod(w, r, "GET") {
+			a.channelUsage(w, r)
+		}
+		return true
+	case "/channel-usage/accounts":
+		if requireBillMethod(w, r, "GET") {
+			a.channelUsageAccounts(w, r)
+		}
+		return true
 	case "/bills/sync":
 		if requireBillMethod(w, r, "POST") {
 			var in billSyncRequest

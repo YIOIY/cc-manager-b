@@ -3,14 +3,14 @@
     <div>
       <div class="eyebrow">{{ eyebrow }}</div>
       <h1>{{ title }}</h1>
-      <p class="muted">{{ description }}</p>
+      <p v-if="description" class="muted">{{ description }}</p>
     </div>
     <div class="page-actions"><slot /></div>
   </div>
 </template>
 
 <script setup lang="ts">
-defineProps<{ eyebrow: string; title: string; description: string }>()
+defineProps<{ eyebrow: string; title: string; description?: string }>()
 </script>
 
 <style scoped>

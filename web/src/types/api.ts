@@ -342,6 +342,58 @@ export interface BillModelsResponse {
   total: number
 }
 
+/** Upstream delivery option for 渠道用量 filters. */
+export interface ChannelUsageAccount {
+  upstream_id: string
+  /** Same display id as /accounts cards (aid, else delivery id). */
+  platform_account_id: string
+  account: string
+  account_id: string
+  owner_user_id: string
+  owner_nickname: string
+  owner_username: string
+}
+
+export interface ChannelUsageOwner {
+  id: string
+  nickname: string
+  username: string
+}
+
+export interface ChannelUsageAccountsResponse {
+  list: ChannelUsageAccount[]
+  /** Present for admins only. */
+  owners?: ChannelUsageOwner[]
+}
+
+export interface ChannelUsageRow {
+  bill_date: string
+  upstream_id: string
+  platform_account_id: string
+  account: string
+  owner_user_id: string
+  owner_nickname: string
+  owner_username: string
+  cost_fen: number
+  cost_usd_cents: number
+  cost_usd: string
+  final: boolean
+}
+
+export interface ChannelUsageResponse {
+  list: ChannelUsageRow[]
+  total_cost_fen: number
+  total_cost_usd: string
+  total_usd_cents: number
+  usd_cny_rate: number
+  page: number
+  page_size: number
+  total: number
+  from: string
+  to: string
+  connection_id: string
+}
+
 export interface UsageHistoryPoint {
   observed_at: string
   cost_fen: number

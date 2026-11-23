@@ -5,6 +5,7 @@ import {
   Network,
   ListChecks,
   ChartNoAxesCombined,
+  ChartPie,
   SlidersHorizontal,
   ShieldCheck,
   UserCog,
@@ -59,6 +60,18 @@ export const routes: RouteRecordRaw[] = [
       list: 'proxies',
       nav: true,
       permission: 'proxies.view',
+    },
+  },
+  {
+    path: '/channel-usage',
+    name: 'channelUsage',
+    component: () => import('./views/ChannelUsageView.vue'),
+    meta: {
+      title: '渠道用量',
+      icon: ChartPie,
+      eyebrow: 'CHANNEL USAGE',
+      nav: true,
+      permission: 'bills.view',
     },
   },
   {
