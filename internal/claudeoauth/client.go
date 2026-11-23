@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -93,6 +94,8 @@ type Result struct {
 	Plan         string         `json:"plan,omitempty"`
 	RegisterTime string         `json:"register_time,omitempty"`
 	Warnings     []string       `json:"warnings"`
+	// ProfileLoaded is internal recovery state; never accepted from HTTP input.
+	ProfileLoaded bool `json:"-"`
 }
 
 // StatusError is a non-200 Claude OAuth HTTP response. The message never
@@ -144,9 +147,19 @@ func parseRetryAfter(h http.Header, now time.Time) time.Duration {
 	if raw == "" {
 		return 0
 	}
-	if secs, err := strconv.Atoi(raw); err == nil {
-		if secs <= 0 {
-			return 0
+	numeric := true
+	for _, ch := range raw {
+		if ch < '0' || ch > '9' {
+			numeric = false
+			break
+		}
+	}
+	if numeric {
+		secs, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || secs > uint64(math.MaxInt64/int64(time.Second)) {
+			// Saturate the representation, never wrap a long wait into zero or
+			// a negative duration. This is not a business-policy cooldown cap.
+			return time.Duration(math.MaxInt64)
 		}
 		return time.Duration(secs) * time.Second
 	}
@@ -194,41 +207,40 @@ func request(ctx context.Context, client *http.Client, method, endpoint, token, 
 	if token != "" {
 		r.Header.Set("Authorization", "Bearer "+token)
 	}
-	res, err := client.Do(r)
-	if err != nil {
-		return errors.New("无法连接 Claude 授权服务，请检查代理后重新授权")
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return &StatusError{Op: op, Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
-	}
-	data, err = io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
-	if err != nil || len(data) > 1<<20 || json.Unmarshal(data, out) != nil {
-		return &ResponseError{Op: op}
-	}
-	return nil
+	return observeResponse(ctx, client, r, op, func(res *http.Response) error {
+		if res.StatusCode != http.StatusOK {
+			return &StatusError{Op: op, Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
+		}
+		data, err = io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
+		if err != nil || len(data) > 1<<20 || json.Unmarshal(data, out) != nil {
+			return &ResponseError{Op: op}
+		}
+		if tokens, ok := out.(*tokenResponse); ok && (tokens.Access == "" || tokens.Refresh == "" || tokens.Expires <= 0 || tokens.Expires > 366*24*3600) {
+			return &ResponseError{Op: op}
+		}
+		return nil
+	})
 }
 
-func profileRestrictive(err error) bool {
-	se, ok := AsStatusError(err)
-	if !ok {
-		return false
-	}
-	return se.Status == http.StatusUnauthorized || se.Status == http.StatusForbidden || se.Status == http.StatusTooManyRequests
-}
-
+// Exchange is the convenience entry point. Stateful callers should save Token's
+// successful result before calling CompleteProfile, so a later error cannot
+// force the one-time authorization code to be exchanged again.
 func Exchange(ctx context.Context, client *http.Client, code, state, verifier string) (Result, error) {
-	// Do not allow redirects to carry codes or Authorization to another host.
-	copyClient := *client
-	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	client = &copyClient
+	result, err := Token(ctx, client, code, state, verifier)
+	if err != nil {
+		return Result{}, err
+	}
+	return CompleteProfile(ctx, client, result)
+}
+
+// Token exchanges only the one-time code. The returned tokens are a resumable
+// stage and must remain server-side until profile completion and final submit.
+func Token(ctx context.Context, client *http.Client, code, state, verifier string) (Result, error) {
+	client = withoutRedirects(client)
 	var tokens tokenResponse
 	err := request(ctx, client, "POST", tokenURL, "", "token", map[string]string{"grant_type": "authorization_code", "code": code, "state": state, "code_verifier": verifier, "client_id": ClientID, "redirect_uri": RedirectURL}, &tokens)
 	if err != nil {
 		return Result{}, err
-	}
-	if tokens.Access == "" || tokens.Refresh == "" || tokens.Expires <= 0 || tokens.Expires > 366*24*3600 {
-		return Result{}, &ResponseError{Op: "token"}
 	}
 	now := time.Now().UTC()
 	result := Result{Auth: map[string]any{"id_token": tokens.ID, "access_token": tokens.Access, "refresh_token": tokens.Refresh, "last_refresh": now.Format(time.RFC3339), "expired": now.Add(time.Duration(tokens.Expires) * time.Second).Format(time.RFC3339), "type": "claude", "verification_status": "not_required"}, Warnings: []string{}}
@@ -241,13 +253,25 @@ func Exchange(ctx context.Context, client *http.Client, code, state, verifier st
 	set("account_uuid", tokens.Account.UUID)
 	set("organization_uuid", tokens.Organization.UUID)
 	set("organization_name", tokens.Organization.Name)
-	return CompleteProfile(ctx, client, result)
+	return result, nil
 }
 
-// CompleteProfile resumes profile loading after a successful token exchange.
-// A profile 429 preserves the tokens for a later retry; 401/403 discard them.
+// CompleteProfile resumes after a successful token exchange. All remote errors
+// preserve the successful token stage, even an access refusal. The caller can
+// decide whether to wait, retry a later stage or explicitly reauthorize.
 // Result maps and slices are copied so callers can retain an untouched cache.
-func CompleteProfile(ctx context.Context, client *http.Client, result Result) (Result, error) {
+//
+// Optional opts configure inter-stage pacing; production callers rely on the
+// default DefaultProductionPause so profile and roles calls do not arrive
+// back-to-back. Passing WithStagePause(nil) restores the unpaced behaviour
+// used by focused unit tests.
+func CompleteProfile(ctx context.Context, client *http.Client, result Result, opts ...ProfileOption) (Result, error) {
+	pause := DefaultProductionPause
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&pause)
+		}
+	}
 	access, _ := result.Auth["access_token"].(string)
 	refresh, _ := result.Auth["refresh_token"].(string)
 	expired, _ := result.Auth["expired"].(string)
@@ -255,9 +279,7 @@ func CompleteProfile(ctx context.Context, client *http.Client, result Result) (R
 	if access == "" || refresh == "" || err != nil || !expiresAt.After(time.Now()) {
 		return Result{}, &ResponseError{Op: "profile"}
 	}
-	copyClient := *client
-	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	client = &copyClient
+	client = withoutRedirects(client)
 	auth := make(map[string]any, len(result.Auth))
 	for key, value := range result.Auth {
 		auth[key] = value
@@ -271,56 +293,58 @@ func CompleteProfile(ctx context.Context, client *http.Client, result Result) (R
 			result.Auth[key] = value
 		}
 	}
-	accountUUID, _ := result.Auth["account_uuid"].(string)
-	organizationUUID, _ := result.Auth["organization_uuid"].(string)
-	var profile struct {
-		Account      identity     `json:"account"`
-		Organization organization `json:"organization"`
+	if pauseErr := sleepStage(ctx, pause, "profile"); pauseErr != nil {
+		return result, pauseErr
 	}
-	profileErr := request(ctx, client, "GET", profileURL, access, "profile", nil, &profile)
-	if profileErr != nil {
-		if profileRestrictive(profileErr) {
-			if se, _ := AsStatusError(profileErr); se.Status == http.StatusTooManyRequests {
-				return result, profileErr
-			}
-			return Result{}, profileErr
+	if !result.ProfileLoaded {
+		accountUUID, _ := result.Auth["account_uuid"].(string)
+		organizationUUID, _ := result.Auth["organization_uuid"].(string)
+		var profile struct {
+			Account      identity     `json:"account"`
+			Organization organization `json:"organization"`
 		}
-		result.Warnings = append(result.Warnings, "令牌已获取，但账号资料暂时无法读取，请补充缺失资料。")
-		return result, nil
+		profileErr := request(ctx, client, "GET", profileURL, access, "profile", nil, &profile)
+		if profileErr != nil {
+			return result, profileErr
+		}
+		profileOK := profile.Account.UUID != "" && profile.Organization.UUID != "" &&
+			(accountUUID == "" || profile.Account.UUID == accountUUID) &&
+			(organizationUUID == "" || profile.Organization.UUID == organizationUUID)
+		if !profileOK {
+			result.Warnings = append(result.Warnings, "账号资料不完整或与授权身份不一致，未自动填充资料。")
+			// Do not merge metadata from an untrusted identity or query its roles.
+			return result, nil
+		}
+		set("email", profile.Account.Email)
+		set("account_uuid", profile.Account.UUID)
+		set("organization_uuid", profile.Organization.UUID)
+		set("organization_name", profile.Organization.Name)
+		if created, e := time.Parse(time.RFC3339, profile.Account.CreatedAt); e == nil {
+			result.RegisterTime = created.UTC().Format("2006-01-02")
+		}
+		switch profile.Organization.RateLimitTier {
+		case "default_claude_max_5x":
+			result.Plan = "claude/cc-max-5x"
+		case "default_claude_max_20x":
+			result.Plan = "claude/cc-max-20x"
+		case "default_claude_pro":
+			result.Plan = "claude/cc-pro"
+		}
+		result.ProfileLoaded = true
 	}
-	profileOK := profile.Account.UUID != "" && profile.Organization.UUID != "" &&
-		(accountUUID == "" || profile.Account.UUID == accountUUID) &&
-		(organizationUUID == "" || profile.Organization.UUID == organizationUUID)
-	if !profileOK {
-		result.Warnings = append(result.Warnings, "账号资料不完整或与授权身份不一致，未自动填充资料。")
-		// Do not call roles after identity mismatch; roles 429 is ignored and
-		// would not feed account cooldown in this release.
-		return result, nil
-	}
-	set("email", profile.Account.Email)
-	set("account_uuid", profile.Account.UUID)
-	set("organization_uuid", profile.Organization.UUID)
-	set("organization_name", profile.Organization.Name)
-	if created, e := time.Parse(time.RFC3339, profile.Account.CreatedAt); e == nil {
-		result.RegisterTime = created.UTC().Format("2006-01-02")
-	}
-	switch profile.Organization.RateLimitTier {
-	case "default_claude_max_5x":
-		result.Plan = "claude/cc-max-5x"
-	case "default_claude_max_20x":
-		result.Plan = "claude/cc-max-20x"
-	case "default_claude_pro":
-		result.Plan = "claude/cc-pro"
-	}
-	// Roles only after a fully trusted profile; failures are ignored and do not
-	// trigger OAuth account cooldown in this release.
+	// Persist ProfileLoaded before a fallible roles call. A resumed request
+	// can now fetch roles without repeating the profile or token stages.
 	if result.Auth["organization_name"] == nil {
+		if pauseErr := sleepStage(ctx, pause, "roles"); pauseErr != nil {
+			return result, pauseErr
+		}
 		var roles struct {
 			Name string `json:"organization_name"`
 		}
-		if err := request(ctx, client, "GET", rolesURL, access, "roles", nil, &roles); err == nil {
-			set("organization_name", roles.Name)
+		if err := request(ctx, client, "GET", rolesURL, access, "roles", nil, &roles); err != nil {
+			return result, err
 		}
+		set("organization_name", roles.Name)
 	}
 	return result, nil
 }
@@ -339,42 +363,28 @@ func AsReachBusy(err error) (*ReachBusy, bool) {
 	return nil, false
 }
 
-// Reachable checks that this proxy can really talk to the token endpoint. It
-// uses GET rather than HEAD (some exits and CDNs answer HEAD badly) and reads
-// the status, so a broken exit, a captive portal and a throttling edge all
-// become distinguishable before the user opens a browser:
-//
-//   - transport error        -> error (swap the exit)
-//   - 429                    -> *ReachBusy (wait)
-//   - 401/403/405            -> nil; the host answered, exchange may still work
-//   - 5xx / other            -> error naming the status
-//   - 200 but not JSON       -> error (likely an intercepting exit)
+// Reachable probes the real token endpoint without consuming a code. A 405
+// proves GET reached it; an access refusal, rate limit, upstream failure and
+// invalid response remain distinct from a connection failure.
 func Reachable(ctx context.Context, client *http.Client) error {
-	copyClient := *client
-	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL, nil)
 	if err != nil {
-		return errors.New("授权请求无法创建")
+		return &ResponseError{Op: "reach"}
 	}
-	req.Header.Set("Accept", "application/json")
-	res, err := copyClient.Do(req)
-	if err != nil {
-		return errors.New("无法连接 Claude 授权服务")
-	}
-	defer res.Body.Close()
-	switch {
-	case res.StatusCode == http.StatusTooManyRequests:
-		return &ReachBusy{RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
-	case res.StatusCode == http.StatusUnauthorized, res.StatusCode == http.StatusForbidden, res.StatusCode == http.StatusMethodNotAllowed:
-		return nil
-	case res.StatusCode >= 500:
-		return &StatusError{Op: "reach", Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
-	case res.StatusCode != http.StatusOK:
-		return &StatusError{Op: "reach", Status: res.StatusCode}
-	}
-	data, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-	if err != nil || !json.Valid(data) {
-		return errors.New("所选代理返回的不是 Claude 响应，可能被中间设备拦截")
-	}
-	return nil
+	return observeResponse(ctx, withoutRedirects(client), req, "reach", func(res *http.Response) error {
+		switch res.StatusCode {
+		case http.StatusTooManyRequests:
+			return &ReachBusy{RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
+		case http.StatusMethodNotAllowed:
+			return nil
+		case http.StatusOK:
+			data, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
+			if err != nil || len(data) > 64<<10 || !json.Valid(data) {
+				return &ResponseError{Op: "reach"}
+			}
+			return nil
+		default:
+			return &StatusError{Op: "reach", Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
+		}
+	})
 }

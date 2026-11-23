@@ -136,14 +136,14 @@ func TestExchangeDoesNotLeakUpstreamSecretsOrInventIdentity(t *testing.T) {
 		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	result, err := Exchange(context.Background(), c, "code", "state", "verifier")
-	if err != nil || len(result.Warnings) == 0 || result.Auth["email"] != nil || result.Auth["organization_name"] != nil {
+	if err == nil || result.Auth["access_token"] != "a" || result.Auth["email"] != nil || result.Auth["organization_name"] != nil {
 		t.Fatalf("partial result: %+v %v", result, err)
 	}
 	if rolesCalls != 0 {
 		t.Fatalf("roles called after profile failure: %d", rolesCalls)
 	}
-	if se, ok := AsStatusError(err); ok {
-		t.Fatalf("unexpected status error: %v", se)
+	if se, ok := AsStatusError(err); !ok || se.Op != "profile" || se.Status != 503 {
+		t.Fatalf("profile stage not exposed: %v", err)
 	}
 }
 
@@ -174,8 +174,8 @@ func TestExchangeRejectsRestrictiveProfileStatuses(t *testing.T) {
 		if status == http.StatusTooManyRequests && se.RetryAfter != 12*time.Second {
 			t.Fatalf("retry-after: %v", se.RetryAfter)
 		}
-		if status != http.StatusTooManyRequests && result.Auth != nil {
-			t.Fatalf("rejected profile status %d retained tokens", status)
+		if result.Auth["access_token"] != "a" {
+			t.Fatalf("profile status %d discarded completed token stage", status)
 		}
 		if strings.Contains(err.Error(), "denied") {
 			t.Fatalf("leaked body: %v", err)
@@ -389,7 +389,7 @@ func TestCompleteProfileTransientFailuresKeepIsolatedPartialResults(t *testing.T
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("secret-token in upstream body"))}, nil
 			})}
 			result, err := CompleteProfile(context.Background(), client, cached)
-			if err != nil || result.Auth["access_token"] != "cached-access" || len(result.Warnings) != 2 || calls != 1 {
+			if err == nil || result.Auth["access_token"] != "cached-access" || len(result.Warnings) != 1 || calls != 1 {
 				t.Fatalf("transient profile failure lost the partial result: err=%v requests=%d", err, calls)
 			}
 			if strings.Contains(strings.Join(result.Warnings, " "), "secret-token") {
@@ -421,7 +421,7 @@ func TestCompleteProfileDoesNotFollowRedirects(t *testing.T) {
 		}),
 	}
 	result, err := CompleteProfile(context.Background(), client, cached)
-	if err != nil || requests != 1 || callerRedirects != 0 || result.Auth["access_token"] != "cached-access" || len(result.Warnings) != 1 {
+	if err == nil || requests != 1 || callerRedirects != 0 || result.Auth["access_token"] != "cached-access" {
 		t.Fatalf("profile redirect was followed or lost the partial result: err=%v requests=%d redirects=%d", err, requests, callerRedirects)
 	}
 	if err := client.CheckRedirect(nil, nil); err != nil || callerRedirects != 1 {
