@@ -54,10 +54,16 @@ func accountPreheatMetaSource(metaRaw string) string {
 
 // persistOAuthPreheat rewrites only the additive not_before_at key so queued
 // work keeps its connection and submit version after a restart.
+// persistOAuthPreheat stores the stamp at second precision, rounded up: a
+// truncated stamp would land up to a second early and let a configured 1 s
+// preheat collapse to nothing.
 func persistOAuthPreheat(payload string, notBefore time.Time) (string, error) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(payload), &m); err != nil {
 		return "", err
+	}
+	if rounded := notBefore.Truncate(time.Second); rounded.Before(notBefore) {
+		notBefore = rounded.Add(time.Second)
 	}
 	m["not_before_at"] = notBefore.UTC().Format(time.RFC3339)
 	out, err := json.Marshal(m)
