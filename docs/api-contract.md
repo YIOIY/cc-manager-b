@@ -441,6 +441,13 @@ Token受控轮换、允许套餐和启停修改仍增加版本，已排队上传
 
 `POST /claude-oauth/sessions` 可额外传 `account_id`，在未选择代理池时使用该账号密封凭证中的代理进行 OAuth。生成链接和兑换时均校验账号写权限，旧凭证和代理认证信息不会回传前端。
 
+OAuth 会话与账号写入的配合（详见 [授权录入说明](claude-oauth-onboarding.md)）：
+
+- 兑换成功响应带 `oauth_session_id`；`POST /accounts/onboard`、`POST /accounts/{id}/reauthorize` 提交时应原样带上，服务端据此核对凭证来自该会话、出口代理未改变（否则 `409 OAUTH_PROXY_CHANGED`），并在提交完成后把结果缓存在会话内供重放。不带该字段时视为手动凭证，不做核对。
+- 已绑定代理池记录的账号只能在原代理上发起 OAuth，换代理返回 `409 PROXY_BINDING_CHANGED`；改绑只能通过 `PATCH /accounts/{id}` 的 `proxy_id` 完成。账号存在活动 OAuth 会话期间，针对该账号的 `PATCH` / `reauthorize` / 归档等写操作返回 `409 ACCOUNT_IN_PROGRESS`，需先 `DELETE /claude-oauth/sessions/{id}` 释放。
+- 管理会话内同时只允许一条活动的待授权链接；为另一账号或出口再次生成时返回 `409 OAUTH_SESSION_CONFLICT`，前端应先取消旧链接。
+- `GET /oauth-settings`（需 `oauth.settings.view`）与 `PUT /oauth-settings`（需 `oauth.settings`）管理 OAuth 调度参数：全局并发 1–10、单出口并发 1–5、出口间隔 0–60 秒、探测缓存 0–30 秒、手动/批量预热范围（手动 0–3、批量 0–15 秒，上限 0 关闭）、UA 池（≤8 条、每条 ≤120 字符）；`PUT` 需带当前 `version`，冲突返回 `409 VERSION_CONFLICT`。
+
 ## 附录：2026-11-08 实现变更
 
 - `POST /auth/login`：失败按来源 IP + 用户名指数退避，超限返回 `429 AUTH_RATE_LIMITED` 并带 `Retry-After`；请求体上限 16KB。
