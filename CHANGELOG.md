@@ -14,6 +14,13 @@
 - 生成链接：同一浏览器会话的活动链接绑定了别的出口或账号时返回 409 `OAUTH_SESSION_CONFLICT`（details 给出该链接），不再静默返回旧链接；前端据此切换为「作废并重新获取」并以 `refresh` 重发。
 - `OAUTH_BUSY` 带 `details.oauth_busy_reason`，`retry_after_seconds` 随原因变化（同会话在途 2 秒、同浏览器并发 5 秒、排队预算用尽约 10 秒带抖动、链接满 15 秒、请求已取消 1 秒），`/metrics` 新增 `cc_manager_oauth_busy_total{reason}`。
 - 移除无调用方的 `OAuthStorageBackend` 接口草案及其测试。
+- 修复：上号调度设置面板按后端契约发送 `version` 与 JSON 字符串形式的 `ua_pool_json`（此前发送 `expected_version` 与数组，保存必然 400/409，UA 池数量显示为字符串长度）。
+- 修复：全局/单出口并发在进程启动时从已保存设置加载，不再重启后回退为内置的 3/2。
+- 修复：探测阶段除 429 外的任何失败一律归 `OAUTH_PROXY_UNREACHABLE`，不再把非 JSON 401/403、5xx、200 非 JSON 误报为身份被拒、供应商拒绝或响应异常。
+- 修复：重新授权在平台已接收、本地版本冲突时返回带 `details.platform_updated=true` 的 409，OAuth 写保护据此结束会话并缓存结果，同一授权不会被第二次推送；前端据此进入核对模式。
+- 修复：出口间隔排队者取消时恢复到上一槽位而不是自己的到达时间，后续兑换不再早于配置间隔。
+- 修复：显式刷新链接时只在旧会话仍持有租约的情况下接管，否则重新加锁，避免并发取消后新会话失去账号写锁。
+- 待授权会话记录的邮箱统一小写去空格；`OAUTH_RESPONSE_INVALID` / `OAUTH_PROXY_UNREACHABLE` 错误码说明按实际行为改写。
 
 ## Unreleased（2026-11-09 账号页解耦、代理编辑删除）
 

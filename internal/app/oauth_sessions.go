@@ -262,6 +262,7 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, storageError(err, "账号读取失败"))
 			return
 		}
+		p.email = strings.ToLower(strings.TrimSpace(p.email))
 	}
 	if wait := a.oauthRemaining(p); wait > 0 {
 		a.writeOAuthRateLimited(w, r, wait)
@@ -500,8 +501,9 @@ func (a *App) cacheOAuthResult(id string, result claudeoauth.Result, codeHash [3
 		p.tokens = &result
 		p.codeHash = codeHash
 		p.ready = ready
-		if email, _ := result.Auth["email"].(string); email != "" {
-			p.email = email
+		// Stored in the same normalized form start uses for matching and keys.
+		if raw, _ := result.Auth["email"].(string); strings.TrimSpace(raw) != "" {
+			p.email = strings.ToLower(strings.TrimSpace(raw))
 		}
 		a.oauth.items[id] = p
 	}

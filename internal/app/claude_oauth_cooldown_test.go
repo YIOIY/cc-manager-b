@@ -241,3 +241,24 @@ func TestSelectPreviousPendingDeterministic(t *testing.T) {
 		t.Fatalf("empty-case: id=%q", id)
 	}
 }
+
+// The e-mail learned from an exchange is stored normalized, so the exact-match
+// rule in selectPreviousPending and the mail: cooldown key agree with what the
+// browser sends on the next start.
+func TestCacheOAuthResultNormalizesEmail(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	owner := [32]byte{3}
+	a.oauth.items = map[string]oauthPending{"s": {owner: owner, expires: time.Now().Add(time.Minute)}}
+	a.cacheOAuthResult("s", claudeoauth.Result{Auth: map[string]any{"email": "  Mixed.Case@Example.TEST "}}, [32]byte{}, false)
+	if got := a.oauth.items["s"].email; got != "mixed.case@example.test" {
+		t.Fatalf("email stored as %q", got)
+	}
+	id, _ := selectPreviousPending(a.oauth.items, owner, "", "", "MIXED.case@example.test")
+	if id != "s" {
+		t.Fatalf("normalized email did not match the live session: %q", id)
+	}
+	a.cacheOAuthResult("s", claudeoauth.Result{Auth: map[string]any{"email": "   "}}, [32]byte{}, false)
+	if got := a.oauth.items["s"].email; got != "mixed.case@example.test" {
+		t.Fatalf("blank email overwrote the stored one: %q", got)
+	}
+}
