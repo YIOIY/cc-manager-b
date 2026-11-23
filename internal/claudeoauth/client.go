@@ -142,6 +142,12 @@ func AsResponseError(err error) (*ResponseError, bool) {
 	return nil, false
 }
 
+// ErrTokenExpired reports that the tokens cached from an earlier exchange can
+// no longer be used to finish the profile stage: they are incomplete or their
+// validity has run out while the session waited. Retrying the same session
+// cannot succeed; only a fresh authorization can.
+var ErrTokenExpired = errors.New("已获取的令牌已过期，请重新授权")
+
 func parseRetryAfter(h http.Header, now time.Time) time.Duration {
 	raw := strings.TrimSpace(h.Get("Retry-After"))
 	if raw == "" {
@@ -277,7 +283,7 @@ func CompleteProfile(ctx context.Context, client *http.Client, result Result, op
 	expired, _ := result.Auth["expired"].(string)
 	expiresAt, err := time.Parse(time.RFC3339, expired)
 	if access == "" || refresh == "" || err != nil || !expiresAt.After(time.Now()) {
-		return Result{}, &ResponseError{Op: "profile"}
+		return Result{}, ErrTokenExpired
 	}
 	client = withoutRedirects(client)
 	auth := make(map[string]any, len(result.Auth))
@@ -363,8 +369,11 @@ func AsReachBusy(err error) (*ReachBusy, bool) {
 	return nil, false
 }
 
-// Reachable probes the real token endpoint without consuming a code. A 405
-// proves GET reached it; an access refusal, rate limit, upstream failure and
+// Reachable probes the real token endpoint without consuming a code. The
+// endpoint answers a bare GET with a JSON 403 ({"error":{"type":"forbidden"}})
+// from the API itself, so a 401/403/405 carrying a JSON body proves the exit
+// reaches Claude; a 401/403 without JSON is an intermediary (captive portal,
+// CDN block) answering in Claude's place. Rate limit, upstream failure and
 // invalid response remain distinct from a connection failure.
 func Reachable(ctx context.Context, client *http.Client) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL, nil)
@@ -377,10 +386,13 @@ func Reachable(ctx context.Context, client *http.Client) error {
 			return &ReachBusy{RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
 		case http.StatusMethodNotAllowed:
 			return nil
-		case http.StatusOK:
+		case http.StatusOK, http.StatusUnauthorized, http.StatusForbidden:
 			data, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
 			if err != nil || len(data) > 64<<10 || !json.Valid(data) {
-				return &ResponseError{Op: "reach"}
+				if res.StatusCode == http.StatusOK {
+					return &ResponseError{Op: "reach"}
+				}
+				return &StatusError{Op: "reach", Status: res.StatusCode, RetryAfter: parseRetryAfter(res.Header, time.Now().UTC())}
 			}
 			return nil
 		default:

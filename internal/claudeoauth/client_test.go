@@ -329,9 +329,13 @@ func TestCompleteProfileRejectsUnusableCachedTokensBeforeRequest(t *testing.T) {
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"account":{"uuid":"account-id"},"organization":{"uuid":"org-id","name":"Org"}}`))}, nil
 			})}
 			result, err := CompleteProfile(context.Background(), client, cached)
-			re, ok := AsResponseError(err)
-			if !ok || re.Op != "profile" || result.Auth != nil || calls != 0 {
+			// Unusable cached tokens are a terminal condition for the session,
+			// distinct from a malformed profile response (which is retryable).
+			if !errors.Is(err, ErrTokenExpired) || result.Auth != nil || calls != 0 {
 				t.Fatalf("expected terminal profile failure without a request; err=%v requests=%d", err, calls)
+			}
+			if _, isResponse := AsResponseError(err); isResponse {
+				t.Fatalf("expired cache must not look like a retryable response error: %v", err)
 			}
 			if strings.Contains(err.Error(), "cached-") {
 				t.Fatalf("cached credentials leaked: %v", err)

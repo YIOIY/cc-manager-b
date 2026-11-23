@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -53,12 +54,22 @@ func (g *exitGate) acquire(ctx context.Context, key string) (func(), error) {
 	}
 }
 
+// exitGatePointer lets saved settings swap the per-exit gate while exchanges
+// are reading it; like oauthGate, the new gate only governs later acquisitions.
+type exitGatePointer = *atomic.Pointer[exitGate]
+
+func newExitGateAtomic(size int, wait time.Duration) exitGatePointer {
+	p := &atomic.Pointer[exitGate]{}
+	p.Store(newExitGate(size, wait))
+	return p
+}
+
 // applyOAuthExitGate hot-swaps the per-exit gate after settings change.
 func (a *App) applyOAuthExitGate(size int) {
 	if size < 1 {
 		size = 1
 	}
-	a.oauthExitGate = newExitGate(size, oauthGateWait)
+	a.oauthExitGate.Store(newExitGate(size, oauthGateWait))
 }
 
 // exitExchangePacing spaces token exchanges through one exit. The gate above
@@ -97,13 +108,4 @@ func (p *exitExchangePacing) wait(ctx context.Context, key string, interval time
 		p.mu.Unlock()
 		return nil, ctx.Err()
 	}
-}
-
-func (g *exitGate) release() {
-	if g == nil {
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.slots = map[string]chan struct{}{}
 }

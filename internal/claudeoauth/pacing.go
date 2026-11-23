@@ -20,7 +20,9 @@ func noPause(context.Context, string) error { return nil }
 
 // UniformStagePause returns a StagePause that sleeps a uniformly distributed
 // duration in [min,max] before each stage. Context cancellation interrupts
-// the wait so shutdown or a request teardown is respected.
+// the wait so shutdown or a request teardown is respected. A nil rng uses the
+// package-level generator, which is safe for the concurrent handlers that
+// share one pause; a *rand.Rand is not, so only tests should pass one.
 func UniformStagePause(min, max time.Duration, rng *rand.Rand) StagePause {
 	if min < 0 {
 		min = 0
@@ -35,7 +37,11 @@ func UniformStagePause(min, max time.Duration, rng *rand.Rand) StagePause {
 		span := max - min
 		d := min
 		if span > 0 {
-			d += time.Duration(rng.Int64N(int64(span) + 1))
+			if rng != nil {
+				d += time.Duration(rng.Int64N(int64(span) + 1))
+			} else {
+				d += time.Duration(rand.Int64N(int64(span) + 1))
+			}
 		}
 		if d <= 0 {
 			return nil
@@ -54,10 +60,7 @@ func UniformStagePause(min, max time.Duration, rng *rand.Rand) StagePause {
 // DefaultProductionPause mirrors common UI dwell times: a user typically
 // spends hundreds of milliseconds between the token grant and opening the
 // profile screen, and again between loading profile and viewing roles.
-var DefaultProductionPause = func() StagePause {
-	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixMicro())))
-	return UniformStagePause(200*time.Millisecond, 1200*time.Millisecond, rng)
-}()
+var DefaultProductionPause = UniformStagePause(200*time.Millisecond, 1200*time.Millisecond, nil)
 
 // sleepStage invokes pause (falling back to noPause when nil), collapsing
 // context cancellation into the flow's usual error propagation.

@@ -281,9 +281,26 @@ func (a *App) guardOAuthSubmission(w http.ResponseWriter, r *http.Request, input
 	body, _ := json.Marshal(input)
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
+	// The checks above ran on a copy taken before the database reads. Claim
+	// the live entry, not the copy: a cancel or expiry sweep in between has
+	// already released its lease and client, and writing the copy back would
+	// resurrect a dropped session and submit under a lease nobody holds.
 	a.oauth.mu.Lock()
-	p.submitting = true
-	a.oauth.items[proof] = p
+	live, ok := a.oauth.items[proof]
+	if !ok || live.cancelled || !time.Now().Before(live.expires) {
+		a.oauth.mu.Unlock()
+		a.oauth.configMu.Unlock()
+		fail(w, 404, "OAUTH_SESSION_EXPIRED", "授权会话已失效，请重新授权")
+		return
+	}
+	if !live.ready || live.tokens == nil || live.exchanging || live.submitting || live.completed != nil {
+		a.oauth.mu.Unlock()
+		a.oauth.configMu.Unlock()
+		fail(w, 409, "OAUTH_SESSION_CONFLICT", "授权未完成或正在提交，请稍后再试")
+		return
+	}
+	live.submitting = true
+	a.oauth.items[proof] = live
 	a.oauth.mu.Unlock()
 	a.oauth.configMu.Unlock()
 	buffer := &oauthBufferedWriter{header: w.Header().Clone()}

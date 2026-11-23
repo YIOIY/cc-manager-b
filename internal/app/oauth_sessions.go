@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -85,6 +86,39 @@ func (a *App) oauthKeys(p oauthPending) []string {
 	return keys
 }
 
+// oauthIdentityKeys are the keys that name the authorized account itself:
+// the local account ID and the e-mail the exchange returned. The browser
+// owner key is deliberately absent — it stands in for an identity only while
+// a brand-new account has none, so a 429 can be attributed to someone. A
+// completed authorization must not throttle the same operator's next,
+// unrelated account.
+func oauthIdentityKeys(p oauthPending) []string {
+	var keys []string
+	if p.accountID != "" {
+		keys = append(keys, cooldownKey(p.accountID, p.owner))
+	}
+	if p.email != "" {
+		keys = append(keys, "mail:"+strings.ToLower(strings.TrimSpace(p.email)))
+	}
+	return keys
+}
+
+// oauthTypedProbeError reports whether a probe error already carries one of
+// the claudeoauth classifications oauthFailure understands.
+func oauthTypedProbeError(err error) bool {
+	if _, ok := claudeoauth.AsReachBusy(err); ok {
+		return true
+	}
+	if _, ok := claudeoauth.AsStatusError(err); ok {
+		return true
+	}
+	if _, ok := claudeoauth.AsResponseError(err); ok {
+		return true
+	}
+	_, ok := claudeoauth.AsTransportError(err)
+	return ok
+}
+
 // oauthExitJitterFraction spreads simultaneous cooldown expiries so several
 // accounts unlocked by the same retry window do not reopen the floodgate in
 // the same instant. Applied only at the read side: stored deadlines keep
@@ -94,8 +128,6 @@ const oauthExitJitterFraction = 0.15
 
 // oauthExitJitterCap bounds the additive delay on very long cooldowns.
 const oauthExitJitterCap = 30 * time.Second
-
-var oauthExitRNG = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixMicro())))
 
 func (a *App) oauthRemaining(p oauthPending) time.Duration {
 	var wait time.Duration
@@ -107,7 +139,8 @@ func (a *App) oauthRemaining(p oauthPending) time.Duration {
 	if wait <= 0 {
 		return 0
 	}
-	jitter := time.Duration(float64(wait) * oauthExitJitterFraction * oauthExitRNG.Float64())
+	// Package-level rand is safe for the concurrent handlers that call this.
+	jitter := time.Duration(float64(wait) * oauthExitJitterFraction * rand.Float64())
 	if jitter > oauthExitJitterCap {
 		jitter = oauthExitJitterCap
 	}
@@ -356,10 +389,11 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		// Raw probe errors are connectivity failures at the transport layer;
-		// typing them keeps the failure classification consistent with the
-		// built-in Reachable probe.
-		if _, typed := claudeoauth.AsTransportError(err); !typed {
+		// Reachable already classifies its outcomes (ReachBusy, StatusError,
+		// ResponseError, TransportError) and oauthFailure maps each one: a 429
+		// cools the identity down instead of blaming the exit. Only an untyped
+		// error — a test stub or a bare dial failure — is a transport failure.
+		if !oauthTypedProbeError(err) {
 			err = &claudeoauth.TransportError{Op: "reach"}
 		}
 		a.oauthFailure(w, r, p, id, err)
@@ -390,16 +424,6 @@ func oauthPendingResponse(id string, p oauthPending) map[string]any {
 		stage = "profile"
 	}
 	return map[string]any{"id": id, "authorization_url": p.flow.URL, "expires_at": p.expires.UTC().Format(time.RFC3339), "proxy_id": p.proxyID, "account_id": p.accountID, "stage": stage}
-}
-func (a *App) reusableOAuthPending(owner [32]byte, proxyID, accountID string, stamp time.Time) (string, oauthPending, bool) {
-	a.oauth.mu.Lock()
-	defer a.oauth.mu.Unlock()
-	for id, p := range a.oauth.items {
-		if p.owner == owner && !p.cancelled && p.completed == nil && stamp.Before(p.expires) {
-			return id, p, true
-		}
-	}
-	return "", oauthPending{}, false
 }
 func (a *App) claudeOAuthCancel(w http.ResponseWriter, r *http.Request) {
 	a.oauth.mu.Lock()
@@ -460,17 +484,26 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 		a.writeOAuthBusy(w, r, time.Second)
 		return
 	}
-	code, err := claudeoauth.ParseResult(in.Result, p.flow.State)
-	if err != nil {
-		a.oauth.mu.Unlock()
-		fail(w, 422, "OAUTH_RESULT_INVALID", err.Error())
-		return
-	}
-	hash := sha256.Sum256([]byte(code))
-	if p.tokens != nil && p.codeHash != hash {
-		a.oauth.mu.Unlock()
-		fail(w, 422, "OAUTH_RESULT_INVALID", "请使用本次授权结果")
-		return
+	// Once tokens are cached the code has been spent and is no longer needed:
+	// an empty result resumes the session (profile stage or a ready replay),
+	// which is what the browser sends when it recovers a session it cannot
+	// paste a code for. A non-empty result must still be this session's code.
+	var code string
+	var err error
+	hash := p.codeHash
+	if p.tokens == nil || strings.TrimSpace(in.Result) != "" {
+		code, err = claudeoauth.ParseResult(in.Result, p.flow.State)
+		if err != nil {
+			a.oauth.mu.Unlock()
+			fail(w, 422, "OAUTH_RESULT_INVALID", err.Error())
+			return
+		}
+		hash = sha256.Sum256([]byte(code))
+		if p.tokens != nil && p.codeHash != hash {
+			a.oauth.mu.Unlock()
+			fail(w, 422, "OAUTH_RESULT_INVALID", "请使用本次授权结果")
+			return
+		}
 	}
 	if p.ready {
 		result := *p.tokens
@@ -486,7 +519,11 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 		a.writeOAuthRateLimited(w, r, wait)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), oauthGateWait+oauthExchangeTimeout)
+	// One queue budget covers the global gate, the per-exit gate and the exit
+	// pacing together, so queueing can never add up to more than oauthGateWait.
+	// It follows the request: a browser that gives up while queued has not
+	// spent anything yet.
+	ctx, cancel := context.WithTimeout(r.Context(), oauthGateWait)
 	defer cancel()
 	at := time.Now()
 	release, err := a.oauthGate.Load().acquire(ctx, oauthGateWait)
@@ -500,8 +537,8 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	if p.network != nil && p.network.raw != "" {
 		exitKey = p.network.raw
 	}
-	if a.oauthExitGate != nil {
-		releaseExit, err := a.oauthExitGate.acquire(ctx, exitKey)
+	if gate := a.oauthExitGate.Load(); gate != nil {
+		releaseExit, err := gate.acquire(ctx, exitKey)
 		if err != nil {
 			a.writeOAuthBusy(w, r, time.Second)
 			return
@@ -558,7 +595,12 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 		a.oauth.items[id] = cur
 		a.oauth.mu.Unlock()
 	}
-	exchangeCtx, stop := context.WithTimeout(ctx, oauthExchangeTimeout)
+	// From here the one-time code is about to be consumed. The upstream calls
+	// are detached from the browser's connection: if the client times out or
+	// closes the tab mid-exchange, the exchange still completes and its result
+	// is cached on the pending, so the next request replays it instead of
+	// discovering that the code was spent for nothing.
+	exchangeCtx, stop := context.WithTimeout(context.WithoutCancel(r.Context()), oauthExchangeTimeout)
 	defer stop()
 	exchangeCtx = a.observeOAuthContext(exchangeCtx, r, p, id)
 	var result claudeoauth.Result
@@ -595,6 +637,14 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
+		// Cached tokens that expired while the session waited can never finish
+		// this session; retire it so the browser asks for a fresh authorization
+		// instead of retrying the same stage forever.
+		if errors.Is(err, claudeoauth.ErrTokenExpired) {
+			a.dropOAuthPending(id)
+			writeError(w, r, errs.New(errs.CodeOauthSessionExpired).WithDetail("oauth_session_expired", true))
+			return
+		}
 		// Never destroy a usable token because a later profile stage failed.
 		if p.tokens == nil && result.Auth == nil && oauthTerminalError(err) {
 			a.dropOAuthPending(id)
@@ -602,11 +652,15 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 		a.oauthFailure(w, r, p, id, err)
 		return
 	}
-	// Seed the post-success cooldown for every identity the exchange learned
+	// Seed the post-success cooldown for the identity the exchange learned
 	// (accountID and email), so a different browser session hitting start with
-	// the same account honors the same window. 429 extensions keep deadlines
-	// via oauthCooldown.extend's keep-the-later semantics.
-	a.extendOAuthCooldown(p, oauthCooldownDefault)
+	// the same account honors the same window. The owner key is left alone:
+	// it would otherwise throttle this operator's next, unrelated account
+	// ("继续添加下一个") as if Claude had rate-limited it. 429 extensions keep
+	// deadlines via oauthCooldown.extend's keep-the-later semantics.
+	for _, key := range oauthIdentityKeys(p) {
+		a.oauthCooldown.extend(key, time.Now(), oauthCooldownDefault)
+	}
 	if err := a.bindAccountProxy(p.accountID, p.proxyID); err != nil {
 		slog.Warn("oauth proxy binding write-back failed", "account", p.accountID, "err", err)
 	}
@@ -700,17 +754,6 @@ func (a *App) oauthFailure(w http.ResponseWriter, r *http.Request, p oauthPendin
 func (a *App) noteOAuth429(r *http.Request, p oauthPending, id, stage string) {
 	a.oauthStatCounters.rateLimited429.Add(1)
 	a.auditFor(r, "account.oauth.rate_limited", "account", p.accountID, "session="+id+" stage="+stage)
-}
-func (a *App) checkOAuthProxyReach(ctx context.Context, proxyID string) error {
-	client, closeClient, err := a.claudeOAuthHTTPClient(proxyID, "")
-	if err != nil {
-		return err
-	}
-	defer closeClient()
-	if a.probeOAuthReach != nil {
-		return a.probeOAuthReach(ctx, client)
-	}
-	return claudeoauth.Reachable(ctx, client)
 }
 
 // enforceOAuthProxyBinding pins a re-authorization to the account's bound

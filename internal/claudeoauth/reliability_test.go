@@ -92,9 +92,25 @@ func TestProbeClassifiesRejectionAndInvalidResponse(t *testing.T) {
 				t.Fatalf("invalid response misclassified: %v", err)
 			}
 		default:
+			// 401/403 without a JSON body: something other than Claude answered.
 			if se, ok := AsStatusError(err); !ok || se.Status != status || se.Op != "reach" {
 				t.Fatalf("probe status %d hidden: %v", status, err)
 			}
+		}
+	}
+}
+
+// The live token endpoint answers a bare GET with HTTP 403 and a JSON error
+// body from the API itself (verified 2026-11-23: {"error":{"type":"forbidden",
+// "message":"Request not allowed"}}). That is proof the exit reaches Claude,
+// not a blocked proxy; treating it as unreachable would refuse every pool proxy.
+func TestProbeAcceptsJSONAccessRefusalAsReachable(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"type":"forbidden","message":"Request not allowed"}}`))}, nil
+		})}
+		if err := Reachable(context.Background(), client); err != nil {
+			t.Fatalf("JSON %d from the API must count as reachable: %v", status, err)
 		}
 	}
 }

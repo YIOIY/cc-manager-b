@@ -73,7 +73,7 @@ func TestOAuthDispatchSettingsValidationVersionAndHotUpdate(t *testing.T) {
 	if got := cap(a.oauthGate.Load().slots); got != 5 {
 		t.Fatalf("global gate not hot-updated: %d", got)
 	}
-	if a.oauthExitGate == nil || a.oauthExitGate.size != 2 {
+	if gate := a.oauthExitGate.Load(); gate == nil || gate.size != 2 {
 		t.Fatalf("exit gate not hot-updated")
 	}
 }

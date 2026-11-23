@@ -35,7 +35,7 @@ type App struct {
 	oauthGate         oauthGatePointer
 	oauthStatCounters oauthStatCounters
 	oauthProbeCache   oauthProbeCache
-	oauthExitGate     *exitGate
+	oauthExitGate     exitGatePointer
 	accountLocks      accountLocks
 	billMutex         sync.Mutex
 	billFactory       func(string, string) (billSupplier, error)
@@ -140,7 +140,7 @@ func NewWithConfig(cfg Config, workers bool) (*App, error) {
 			return nil, err
 		}
 	}
-	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now(), oauthGate: newOAuthGateAtomic(oauthGateSize), oauthExitGate: newExitGate(2, oauthGateWait)}
+	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now(), oauthGate: newOAuthGateAtomic(oauthGateSize), oauthExitGate: newExitGateAtomic(2, oauthGateWait)}
 	if cfg.StubNetworkProbes {
 		slog.Warn("network probes are stubbed (CC_MANAGER_STUB_NETWORK_PROBES=1); use this for end-to-end tests only")
 	}
