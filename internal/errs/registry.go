@@ -87,7 +87,7 @@ func init() {
 		Def{Code: "OAUTH_SESSION_CONFLICT", Category: CategoryConflict, Status: 409, Action: ActionFixInput, Message: "授权会话与当前操作不一致", Doc: "同一 owner 已有进行中的 pending；重授权需显式 refresh 或 cancel", AllowCustomMessage: true},
 		Def{Code: "OAUTH_PROXY_CHANGED", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "授权出口已变化，请显式重新授权", Doc: "授权期间代理指纹改变；pending 保留但提交需用原出口或重新开始", AllowCustomMessage: true},
 		Def{Code: "PROXY_BINDING_CHANGED", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "凭证出口与代理绑定不一致，请重新授权", Doc: "已保存凭证 proxy_url 与当前选中代理不一致；需显式重签", AllowCustomMessage: true},
-		Def{Code: "CREDENTIAL_STALE", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "凭证早于已保存版本或新旧关系不明确", Doc: "推送凭证 last_refresh/expired 早于已有版本，防止旧快照回滚", AllowCustomMessage: true},
+		Def{Code: "CREDENTIAL_STALE", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "凭证早于已保存版本或新旧关系不明确", Doc: "防止旧快照回滚：以 last_refresh 为主序（本次更晚即接受），相同或缺失时比较 expired；两者都相同而令牌不同视为无法排序。details.field/saved/incoming 给出被比较的字段与两侧时间", AllowCustomMessage: true},
 		Def{Code: "OAUTH_RETRYABLE", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "授权请求暂时失败，请重试当前阶段", Doc: "未分类的瞬时上游失败；网络/协议阶段都能触发；不改变 pending", AllowCustomMessage: true},
 		Def{Code: "OAUTH_RESPONSE_INVALID", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "授权响应格式异常，请按当前阶段重试", Doc: "响应不是 JSON 或字段缺失；保留 pending 以便重试同一段", AllowCustomMessage: true},
 		Def{Code: "OAUTH_START_FAILED", Category: CategoryInternal, Status: 500, Retryable: true, Action: ActionRetry, Message: "无法生成授权链接", Hint: "请稍后重试", Doc: "随机数生成失败"},

@@ -81,11 +81,18 @@ func credentialDeviceIDs(raw any) ([]any, bool) {
 	}
 }
 
+// credentialFreshness refuses to roll a credential back to an older snapshot.
+// last_refresh is the primary order: a token refreshed later is newer whatever
+// its expiry says, because expired is derived from the refresh time plus the
+// provider's lifetime, and an imported record with a hand-written far-future
+// expiry must not block every later authorization. expired only decides when
+// last_refresh ties or cannot be parsed. Equal timestamps with different tokens
+// cannot be ordered at all and are rejected as ambiguous.
 func credentialFreshness(auth, saved map[string]any) *errs.Error {
 	if len(saved) == 0 {
 		return nil
 	}
-	newer, comparable := false, 0
+	comparable := 0
 	for _, field := range []string{"last_refresh", "expired"} {
 		incoming, e1 := time.Parse(time.RFC3339, str(auth, field))
 		previous, e2 := time.Parse(time.RFC3339, str(saved, field))
@@ -94,14 +101,16 @@ func credentialFreshness(auth, saved map[string]any) *errs.Error {
 		}
 		comparable++
 		if incoming.Before(previous) {
-			return errs.Adhoc("CREDENTIAL_STALE", http.StatusConflict, "凭证快照早于已保存凭证，请重新授权或使用最新凭证").WithDetail("field", field)
+			savedAt, incomingAt := previous.Format(time.RFC3339), incoming.Format(time.RFC3339)
+			return errs.Adhoc("CREDENTIAL_STALE", http.StatusConflict, fmt.Sprintf("凭证快照早于已保存凭证（%s 库内 %s，本次 %s），请重新授权或使用最新凭证", field, savedAt, incomingAt)).
+				WithDetail("field", field).WithDetail("saved", savedAt).WithDetail("incoming", incomingAt)
 		}
 		if incoming.After(previous) {
-			newer = true
+			return nil
 		}
 	}
 	// Equal timestamps do not establish which of two different tokens came last.
-	if comparable == 2 && !newer && str(auth, "access_token") != "" && str(auth, "refresh_token") != "" && str(saved, "access_token") != "" && str(saved, "refresh_token") != "" && (str(auth, "access_token") != str(saved, "access_token") || str(auth, "refresh_token") != str(saved, "refresh_token")) {
+	if comparable == 2 && str(auth, "access_token") != "" && str(auth, "refresh_token") != "" && str(saved, "access_token") != "" && str(saved, "refresh_token") != "" && (str(auth, "access_token") != str(saved, "access_token") || str(auth, "refresh_token") != str(saved, "refresh_token")) {
 		return errs.Adhoc("CREDENTIAL_STALE", http.StatusConflict, "凭证时间相同但令牌不同，无法确认新旧，请重新授权")
 	}
 	return nil

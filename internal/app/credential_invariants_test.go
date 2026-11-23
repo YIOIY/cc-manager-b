@@ -86,6 +86,56 @@ func TestReauthorizeRejectsOlderCredentialBeforePush(t *testing.T) {
 	}
 }
 
+// An imported record whose expiry was written far into the future must not
+// block every later authorization: the fresh token is refreshed later, and that
+// ordering wins over the derived expiry.
+func TestReauthorizeAcceptsNewerRefreshDespiteFarFutureSavedExpiry(t *testing.T) {
+	a, stub, admin := routesFixture(t)
+	id := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
+	saved := reauthAuth("one@example.test")
+	saved["proxy_url"] = "http://127.0.0.1:9090"
+	saved["last_refresh"] = time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339)
+	saved["expired"] = time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	sealAccountAuth(t, a, id, saved)
+	incoming := reauthAuth("one@example.test")
+	incoming["proxy_url"] = saved["proxy_url"]
+	incoming["access_token"] = "fresh-access"
+	incoming["last_refresh"] = time.Now().UTC().Format(time.RFC3339)
+	incoming["expired"] = time.Now().UTC().Add(8 * time.Hour).Format(time.RFC3339)
+	res := postReauth(t, admin, id, map[string]any{"auth_json": incoming})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("newer refresh rejected: %d %s", res.StatusCode, readBody(res))
+	}
+	res.Body.Close()
+	if len(stub.updates) != 1 {
+		t.Fatalf("updates=%d", len(stub.updates))
+	}
+	stored, err := a.loadCredential(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored["access_token"] != "fresh-access" {
+		t.Fatal("fresh credential was not saved")
+	}
+}
+
+func TestCredentialStaleReportsBothTimestamps(t *testing.T) {
+	stamp := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
+	saved := map[string]any{"last_refresh": stamp.Format(time.RFC3339)}
+	auth := map[string]any{"last_refresh": stamp.Add(-time.Hour).Format(time.RFC3339)}
+	got := credentialFreshness(auth, saved)
+	if got == nil {
+		t.Fatal("older refresh accepted")
+	}
+	details := got.Details()
+	if details["field"] != "last_refresh" || details["saved"] != stamp.Format(time.RFC3339) || details["incoming"] != stamp.Add(-time.Hour).Format(time.RFC3339) {
+		t.Fatalf("details=%v", details)
+	}
+	if !strings.Contains(got.Message(), "库内 2026-11-22T00:00:00Z") || !strings.Contains(got.Message(), "本次 2026-11-21T23:00:00Z") {
+		t.Fatalf("message=%q", got.Message())
+	}
+}
+
 func TestWorkerPersistsLegacyDeviceBeforeRetry(t *testing.T) {
 	var pushed []string
 	a, _, _, mode := deliveryFixture(t, func(body map[string]any) {
@@ -210,7 +260,8 @@ func TestCredentialFreshnessOrdering(t *testing.T) {
 		{"same snapshot", 0, time.Hour, "a", false},
 		{"same timestamps different token", 0, time.Hour, "b", true},
 		{"older refresh", -time.Minute, 2 * time.Hour, "b", true},
-		{"older expiry", time.Minute, 30 * time.Minute, "b", true},
+		{"newer refresh wins over shorter expiry", time.Minute, 30 * time.Minute, "b", false},
+		{"same refresh older expiry", 0, 30 * time.Minute, "b", true},
 		{"new refresh", time.Minute, time.Hour, "b", false},
 		{"new expiry", 0, 2 * time.Hour, "b", false},
 	} {

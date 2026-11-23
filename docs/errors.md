@@ -48,7 +48,7 @@
 | `CREDENTIALS_INCOMPLETE` | validation | — | 否 | fix_input | Claude 凭证字段不完整 | 预检：每个有问题的凭证字段一条，field 为路径，message 为字段文案 |
 | `CREDENTIALS_REQUIRED` | validation | 422 | 否 | fix_input | 缺少 Claude 凭证 | 上号前必须有凭证 |
 | `CREDENTIAL_EXPIRED` | validation | — | 否 | reauthorize | 访问令牌已过期 | 异步提交：排队或执行时发现凭证已过期；勿用未注册的 AUTH_EXPIRED_INVALID |
-| `CREDENTIAL_STALE` | conflict | 409 | 否 | reauthorize | 凭证早于已保存版本或新旧关系不明确 | 推送凭证 last_refresh/expired 早于已有版本，防止旧快照回滚；允许调用方自定义文案 |
+| `CREDENTIAL_STALE` | conflict | 409 | 否 | reauthorize | 凭证早于已保存版本或新旧关系不明确 | 防止旧快照回滚：以 last_refresh 为主序（本次更晚即接受），相同或缺失时比较 expired；两者都相同而令牌不同视为无法排序。details.field/saved/incoming 给出被比较的字段与两侧时间；允许调用方自定义文案 |
 | `CREDENTIAL_UNREADABLE` | config | — | 否 | fix_input | 已保存的凭证无法读取 | 阶段 2 并入 SECRET_UNREADABLE |
 | `CSRF_FAILED` | auth | 403 | 否 | retry | 页面会话已过期 | 缺少或不匹配的 X-CSRF-Token |
 | `DELIVERY_STATE_UNAVAILABLE` | validation | — | 否 | fix_input | 无法读取交付状态 | 预检 |

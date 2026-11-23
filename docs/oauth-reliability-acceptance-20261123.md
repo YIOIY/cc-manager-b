@@ -24,7 +24,7 @@
 
 - 租约生命周期：start 建立账号租约，cancel/expiry/成功 submit 释放；submit 成功幂等重放不重复推送。
 - 锁顺序：router account-write guard 先于 oauth 内部锁，避免普通写与 OAuth lease 互锁。
-- stale credential：提交前在账号锁内比较 `last_refresh`/`expired`，旧快照 409 `CREDENTIAL_STALE`。
+- stale credential：提交前在账号锁内比较时间戳，`last_refresh` 为主序（本次更晚即接受），相同或缺失时才比较 `expired`；旧快照 409 `CREDENTIAL_STALE`，`details.field/saved/incoming` 给出两侧时间。
 - 单出口绑定：direct 也是绑定（空 `proxy_url`），新号首次兑换成功把实际 `proxy_id` 写回账号。
 - 预热：手动 1–3 秒、批量 5–15 秒随机延迟（迁移 v19 默认值即此范围，v21 修正早期库中的 120/0/0/300/900），`not_before_at` 存在既有 job payload；等待发生在任务仍为 queued 时，重启不会把预热中的任务记为结果未知。
 - 管理配置：`OAuthSettingsPanel.vue` 在代理列表页，`oauth.settings.view` 可看、`oauth.settings` 可改。
