@@ -9,6 +9,11 @@
 - 账号写回：重新授权与重复上号的 UPDATE 只覆盖可选资料字段，保留 `_oauth_fp`、`_credential_devices`、`source` 等内部元数据；对话框内为已有账号切换代理时先释放 OAuth 会话再显式 `PATCH` 改绑（带 `expected_version`），被拒绝时选择器回退。
 - 路由与观测：OAuth 写保护中间件移到权限校验之后，无权限请求不再占用账号锁；`/metrics` 中 OAuth 指标按族输出各自的 HELP/TYPE 头。
 - 文档：`claude-oauth-onboarding.md`、`api-contract.md`、错误码说明与设置面板文案按实际实现对齐（时间预算、冷却键、探测规则、预热范围、`oauth_session_id` 与 409 语义）。
+- 凭证新鲜度：以 `last_refresh` 为主序，本次刷新更晚即接受，相同或缺失时才比较 `expired`，导入时写得过远的有效期不再永久阻塞该账号重授权；`CREDENTIAL_STALE` 的文案与 `details.saved/incoming` 给出两侧时间。
+- 兑换阶段 401/403 分型：只有 JSON 错误体才视为身份被拒并终止会话；代理/WAF 的非 JSON 拦截页判定为授权码未到达上游，返回 `OAUTH_PROXY_UNREACHABLE`（`oauth_stage=token`）并保留会话。
+- 生成链接：同一浏览器会话的活动链接绑定了别的出口或账号时返回 409 `OAUTH_SESSION_CONFLICT`（details 给出该链接），不再静默返回旧链接；前端据此切换为「作废并重新获取」并以 `refresh` 重发。
+- `OAUTH_BUSY` 带 `details.oauth_busy_reason`，`retry_after_seconds` 随原因变化（同会话在途 2 秒、同浏览器并发 5 秒、排队预算用尽约 10 秒带抖动、链接满 15 秒、请求已取消 1 秒），`/metrics` 新增 `cc_manager_oauth_busy_total{reason}`。
+- 移除无调用方的 `OAuthStorageBackend` 接口草案及其测试。
 
 ## Unreleased（2026-11-09 账号页解耦、代理编辑删除）
 

@@ -54,7 +54,7 @@
 ## 边界与未验收项
 
 - 模拟/单测不证明真实 Claude 授权或供应商接收；真实链路需用户账号另测。
-- 多副本部署仅预留 `OAuthStorageBackend` 抽象；pending 冷却仍进程内存，不跨实例。
+- 多副本部署暂不支持：pending 与冷却仅进程内存，不跨实例（早期预留的 `OAuthStorageBackend` 接口草案无调用方，已移除；设计记录见 `docs/superpowers/plans/2026-11-22-oauth-reliability.md`）。
 - 浏览器登录的网络不由服务端控制，只保证服务端 OAuth 调用同出口。
 - P95 汇总需外部 Prometheus/查询层从 histogram 计算。
 
