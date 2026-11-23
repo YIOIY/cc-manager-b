@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,6 +23,10 @@ type oauthGate struct {
 	slots chan struct{}
 	once  sync.Once
 }
+
+// oauthGatePointer lets saved settings change the gate size without restarting.
+// Tests can replace this with a narrow one without touching every call site.
+type oauthGatePointer = *atomic.Pointer[oauthGate]
 
 func newOAuthGate(size int) *oauthGate {
 	if size < 1 {
@@ -59,4 +64,10 @@ func (g *oauthGate) acquire(ctx context.Context, wait time.Duration) (func(), er
 	case <-timer.C:
 		return nil, errOAuthGateBusy
 	}
+}
+
+func newOAuthGateAtomic(size int) oauthGatePointer {
+	p := &atomic.Pointer[oauthGate]{}
+	p.Store(newOAuthGate(size))
+	return p
 }
