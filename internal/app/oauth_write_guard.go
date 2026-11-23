@@ -75,6 +75,15 @@ func (a *App) guardOAuthWrites(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
+		// proxy-settings changes the local detection path (direct vs upstream),
+		// not individual account/proxy data. It only needs configMu to prevent
+		// concurrent config writes — no per-account locks or OAuth conflict checks.
+		if path == "/api/v1/proxy-settings" {
+			a.oauth.configMu.Lock()
+			defer a.oauth.configMu.Unlock()
+			next(w, r)
+			return
+		}
 		id := ""
 		if accountRoute {
 			id = r.PathValue("id")
@@ -115,7 +124,7 @@ func (a *App) guardOAuthWrites(next http.HandlerFunc) http.HandlerFunc {
 			if p.cancelled || p.completed != nil {
 				continue
 			}
-			if (id != "" && p.accountID == id) || (email != "" && strings.EqualFold(p.email, email)) || (proxyID != "" && p.proxyID == proxyID) || (path == "/api/v1/proxy-settings") {
+			if (id != "" && p.accountID == id) || (email != "" && strings.EqualFold(p.email, email)) || (proxyID != "" && p.proxyID == proxyID) {
 				conflict = true
 				break
 			}
