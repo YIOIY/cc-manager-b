@@ -58,14 +58,26 @@
         @keyup.enter.prevent="exchange"
         @paste="onPaste"
       />
-      <p class="oauth-paste-hint">粘贴完整的回调地址或 code#state 会自动确认。</p>
+      <p class="oauth-paste-hint">
+        {{
+          resumable
+            ? '令牌已获取，正在补读账号资料；可直接点「继续获取资料」，无需再次粘贴。'
+            : '粘贴完整的回调地址或 code#state 会自动确认。'
+        }}
+      </p>
       <el-button
         type="primary"
         :loading="busy"
-        :disabled="!authorizationResult.trim() || disabled || retryAfter > 0 || bindingChanged"
+        :disabled="(!authorizationResult.trim() && !resumable) || disabled || retryAfter > 0 || bindingChanged"
         class="oauth-exchange"
         @click="exchange"
-        >{{ retryAfter > 0 ? `确认授权结果（${retryAfter}s）` : '确认授权结果' }}</el-button
+        >{{
+          retryAfter > 0
+            ? `${resumable ? '继续获取资料' : '确认授权结果'}（${retryAfter}s）`
+            : resumable
+              ? '继续获取资料'
+              : '确认授权结果'
+        }}</el-button
       >
     </template>
     <div v-else-if="summary" class="oauth-done">
@@ -205,6 +217,10 @@ function retryWait(e: unknown) {
 
 /** Authorized and idle: show the compact card instead of the walkthrough. */
 const compact = computed(() => !!props.summary && !pending.value)
+/** The server already holds tokens for this session (profile stage or a
+ * finished exchange whose response was lost), so it can be resumed without
+ * pasting the one-time code again. */
+const resumable = computed(() => pending.value?.stage === 'ready' || pending.value?.stage === 'profile')
 const summaryMetaParts = computed(() =>
   [props.summary?.organization, props.summary?.plan, props.summary?.expiry].filter((v): v is string => !!v),
 )
@@ -300,7 +316,7 @@ async function exchange() {
     props.disabled ||
     retryAfter.value > 0 ||
     bindingChanged.value ||
-    (!authorizationResult.value.trim() && pending.value.stage !== 'ready')
+    (!authorizationResult.value.trim() && !resumable.value)
   )
     return
   const current = generation
@@ -312,8 +328,11 @@ async function exchange() {
     const { data } = await api<OAuthResult>('/claude-oauth/sessions/' + id + '/exchange', {
       method: 'POST',
       body: JSON.stringify({ result: authorizationResult.value.trim() }),
-      // The server may queue for 30s before spending up to 40s on exchange.
-      timeoutMs: 75_000,
+      // The server queues for at most 30 s and then spends up to 60 s on the
+      // exchange itself, so a legitimate request can take ~90 s. Giving up
+      // earlier is harmless to the code — the server finishes and caches the
+      // result — but it would make the user wait for nothing.
+      timeoutMs: 95_000,
     })
     if (current !== generation) return
     pending.value = null

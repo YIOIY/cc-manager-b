@@ -792,13 +792,16 @@ test('linked reauth OAuth without device ids mints a UUID and skips the device s
 
 test('changing a saved credential proxy requires reauthorization before submission', async () => {
   const w = setupReauth()
+  // The only request allowed here is the explicit rebind of the bound exit.
+  fetchMock.mockResolvedValueOnce(response({ id: 'acc-1', updated: true, version: 3 }))
   await w.get('#field-proxy select').setValue('px2')
   await flushPromises()
   expect(w.text()).toContain('代理已变更')
   expect(w.find('.fake-oauth').exists()).toBe(true)
   expect(w.get('[data-next]').attributes('disabled')).toBeDefined()
   expect(w.find('[data-submit]').exists()).toBe(false)
-  expect(fetchMock).not.toHaveBeenCalled()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock.mock.calls[0]![1].method).toBe('PATCH')
 })
 
 test('linked reauth credential gaps open step 2 and review can return there to edit', async () => {
@@ -951,4 +954,36 @@ test('fresh explicit device IDs take precedence over retained device IDs', async
   await w.get('[data-submit]').trigger('click')
   await flushPromises()
   expect(JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json.claude_device_ids).toEqual(['real-device'])
+})
+
+test('changing the proxy of an existing account rebinds it explicitly before any new authorization', async () => {
+  const w = setupReauth(linkedAccount({ proxy_id: 'px', version: 2 }))
+  await flushPromises()
+  fetchMock.mockResolvedValueOnce(response({ id: 'acc-1', updated: true, version: 3 }))
+  await w.get('#field-proxy select').setValue('px2')
+  await flushPromises()
+  // The server refuses an OAuth start on any exit other than the bound one, so
+  // the dialog performs the designed explicit rebind (PATCH) first.
+  const patch = fetchMock.mock.calls.find((c) => c[1]?.method === 'PATCH')
+  expect(patch?.[0]).toBe('/api/v1/accounts/acc-1')
+  expect(JSON.parse(patch![1].body)).toEqual({ proxy_id: 'px2', expected_version: 2 })
+  expect((w.get('#field-proxy select').element as HTMLSelectElement).value).toBe('px2')
+  expect(w.text()).toContain('代理已变更')
+})
+
+test('a refused proxy rebind keeps the previous proxy selected and explains why', async () => {
+  const w = setupReauth(linkedAccount({ proxy_id: 'px', version: 2 }))
+  await flushPromises()
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({ error: { code: 'ACCOUNT_IN_PROGRESS', message: '账号正在授权，请完成或显式取消授权后再修改' } }),
+      { status: 409 },
+    ),
+  )
+  await w.get('#field-proxy select').setValue('px2')
+  await flushPromises()
+  // No rebind happened, so nothing asks for a re-authorization either.
+  expect(w.text()).toContain('账号正在授权')
+  expect(w.text()).not.toContain('代理已变更')
+  expect(fetchMock.mock.calls.filter((c) => c[1]?.method === 'PATCH')).toHaveLength(1)
 })

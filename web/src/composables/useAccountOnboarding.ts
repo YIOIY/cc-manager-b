@@ -359,8 +359,34 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     addedProxies.value.push(proxy)
     emit('proxy-created')
   }
-  function changeProxy(id: string) {
-    if (id === (edit.value.proxy_id || '')) return
+  async function changeProxy(id: string) {
+    if (id === (edit.value.proxy_id || '') || proxyBusy.value) return
+    if (edit.value.id) {
+      // An existing account is bound to its exit on the server: the OAuth
+      // start refuses any other proxy (PROXY_BINDING_CHANGED) and the worker
+      // refuses a credential whose proxy differs from the binding. The bound
+      // exit changes only through the explicit PATCH, which in turn requires
+      // the account to be free of a pending authorization, so release the
+      // session first. The picker is controlled by edit.proxy_id, so a failed
+      // rebind simply leaves the previous selection in place.
+      proxyBusy.value = true
+      try {
+        await releaseOAuthSession()
+        const { data } = await api<{ version: number }>('/accounts/' + edit.value.id, {
+          method: 'PATCH',
+          body: JSON.stringify({ proxy_id: id, expected_version: edit.value.version }),
+        })
+        edit.value.version = data.version
+        fieldErrors.value = { ...fieldErrors.value }
+        delete fieldErrors.value.proxy_id
+      } catch (e) {
+        notice.value = e
+        fieldErrors.value.proxy_id = errorMessage(e, '代理重绑失败')
+        return
+      } finally {
+        proxyBusy.value = false
+      }
+    }
     const keepSaved = linkedReauth.value && keepsSavedCredential(edit.value)
     const wasConnected = connected.value
     if (edit.value.claude_device_ids_text)
@@ -689,7 +715,9 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         const payload = buildReauthorizePayload(edit.value)
         const body: Record<string, unknown> = {
           proxy_id: payload.proxy_id,
-          expected_version: props.account?.version,
+          // A proxy rebind in this dialog already bumped the version; use the
+          // one the form tracks rather than the snapshot the dialog opened with.
+          expected_version: edit.value.version ?? props.account?.version,
         }
         if (payload.auth_json) body.auth_json = payload.auth_json
         if (payload.oauth_session_id) body.oauth_session_id = payload.oauth_session_id
