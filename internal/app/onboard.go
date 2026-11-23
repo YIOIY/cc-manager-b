@@ -310,17 +310,42 @@ func (a *App) writeOnboardAccount(tx *sql.Tx, req *onboardInput, accountID, stam
 		return 0, apiFail(409, code, message)
 	}
 	var archived, current int
-	if tx.QueryRow(`SELECT archived,version FROM accounts WHERE id=?`, req.existingID).Scan(&archived, &current) != nil || archived != 0 {
+	var existingMetadata string
+	if tx.QueryRow(`SELECT archived,version,COALESCE(metadata_json,'{}') FROM accounts WHERE id=?`, req.existingID).Scan(&archived, &current, &existingMetadata) != nil || archived != 0 {
 		return 0, apiFail(409, "ARCHIVED", "账号不存在或已归档")
 	}
 	if current != req.existingVersion {
 		return 0, apiFail(409, "VERSION_CONFLICT", "账号资料已更新，请刷新后重试")
 	}
 	version := current + 1
+	// The form only owns the supplier's optional fields. Everything else in
+	// metadata_json — the OAuth presentation anchor, the reserved device IDs,
+	// the batch-import marker — was written by other paths under the account
+	// lock and must survive a re-onboard, so merge instead of replacing.
+	metadataJSON, _ = json.Marshal(mergeOnboardMetadata(existingMetadata, pickMetadata(in)))
 	if _, err := tx.Exec(`UPDATE accounts SET plan=?,register_location=?,register_time=?,plan_start_time=?,plan_end_time=?,proxy_id=?,metadata_json=?,credentials_json=?,version=?,updated_at=? WHERE id=?`, req.plan, str(in, "register_location"), str(in, "register_time"), str(in, "plan_start_time"), str(in, "plan_end_time"), req.proxyID, string(metadataJSON), sealedAuth, version, stamp, accountID); err != nil {
 		return 0, dbStepConflict(err, "ACCOUNT_EXISTS", "账号已存在，请在账号详情查看上号状态", "账号保存失败")
 	}
 	return version, nil
+}
+
+// mergeOnboardMetadata overlays the submitted optional fields on the stored
+// metadata: each optional key is set when submitted and removed when omitted
+// (the form always sends the full set), while keys the form does not own stay.
+func mergeOnboardMetadata(existing string, picked map[string]any) map[string]any {
+	merged := map[string]any{}
+	_ = json.Unmarshal([]byte(existing), &merged)
+	if merged == nil {
+		merged = map[string]any{}
+	}
+	for _, key := range optionalMetadataKeys {
+		if value, ok := picked[key]; ok {
+			merged[key] = value
+		} else {
+			delete(merged, key)
+		}
+	}
+	return merged
 }
 
 func normalizeProxyURL(raw string) (string, error) {

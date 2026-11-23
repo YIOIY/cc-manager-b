@@ -53,6 +53,13 @@ func deliveryFixture(t *testing.T, validators ...func(map[string]any)) (*App, *a
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { a.DB.Close() })
+	// The production defaults make every first delivery wait 1–3 s (manual)
+	// or 5–15 s (batch). Worker tests run deliveries synchronously, so the
+	// fixture switches the preheat off; tests about the preheat itself
+	// re-enable it explicitly (see worker_preheat_test.go).
+	if _, e = a.DB.Exec(`UPDATE oauth_dispatch_settings SET manual_preheat_seconds_min=0,manual_preheat_seconds_max=0,batch_preheat_seconds_min=0,batch_preheat_seconds_max=0 WHERE id=1`); e != nil {
+		t.Fatal(e)
+	}
 	sealed, e := a.keys.Seal([]byte("fixture-openapi-token"), []byte("conn"))
 	if e != nil {
 		t.Fatal(e)
@@ -532,5 +539,44 @@ func TestPreflightChecksCarryMessagesAndFields(t *testing.T) {
 	}
 	if !seenPassword {
 		t.Fatalf("no PASSWORD_REQUIRED among %+v", checks)
+	}
+}
+
+// Re-onboarding rewrites the supplier's optional fields but must not wipe the
+// internal metadata other paths persisted under the account lock: the OAuth
+// presentation anchor, the reserved device IDs and the batch-import marker.
+func TestReonboardKeepsInternalMetadata(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	w := httptest.NewRecorder()
+	a.accounts(w, withAdminSession(httptest.NewRequest("POST", "/accounts", strings.NewReader(`{"account":"workflow@example.test","plan":"claude/cc-max-20x","remark":"old remark","balance":"50"}`))))
+	if w.Code != 201 {
+		t.Fatal(w.Body.String())
+	}
+	id := responseData(t, w)["id"].(string)
+	if _, err := a.DB.Exec(`UPDATE accounts SET metadata_json=json_set(metadata_json,'$._oauth_fp',json('{"email":"workflow@example.test","user_agent":"ua"}'),'$._credential_devices',json('{"email":"workflow@example.test","ids":["dev-1"]}'),'$.source','batch_import') WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	body := deliveryBody()
+	body["remark"] = "new remark"
+	delete(body, "balance")
+	if w = onboardRequest(a, body, "reonboard-metadata", id); w.Code != 202 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var raw string
+	if err := a.DB.QueryRow(`SELECT metadata_json FROM accounts WHERE id=?`, id).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(raw), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["remark"] != "new remark" {
+		t.Fatalf("submitted optional field not applied: %s", raw)
+	}
+	if _, kept := meta["balance"]; kept {
+		t.Fatalf("omitted optional field survived: %s", raw)
+	}
+	if meta["source"] != "batch_import" || meta["_oauth_fp"] == nil || meta["_credential_devices"] == nil {
+		t.Fatalf("internal metadata lost on re-onboard: %s", raw)
 	}
 }
