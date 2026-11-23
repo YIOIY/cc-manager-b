@@ -365,12 +365,25 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 		a.writeOAuthBusy(w, r, oauthBusyStoreFull)
 		return
 	}
-	// Explicit replacement retires the previous flow without releasing a reused lease.
+	// Explicit replacement retires the previous flow without releasing a reused
+	// lease. The lease observed in the snapshot is adopted only if the previous
+	// session still holds it now: a cancel from another tab during the database
+	// work above has already released it, and a session built on a released
+	// lease would run without the account write lock.
 	if previousID != "" {
-		old := a.oauth.items[previousID]
-		if sameLease {
-			old.lease = nil
-			a.oauth.items[previousID] = old
+		if sameLease && !a.oauth.adoptLeaseLocked(previousID, previous.lease) {
+			sameLease = false
+			p.lease = nil
+			var ok bool
+			unlock, ok = a.accountLocks.tryLock(p.accountID)
+			if !ok {
+				a.oauth.mu.Unlock()
+				a.oauth.configMu.Unlock()
+				cleanup()
+				fail(w, 409, "ACCOUNT_IN_PROGRESS", "账号正在授权或写入，请等待完成")
+				return
+			}
+			p.lease = &oauthLease{unlock: unlock}
 		}
 		a.oauth.dropLocked(previousID)
 	}

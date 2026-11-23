@@ -86,8 +86,14 @@ func (p *exitExchangePacing) wait(ctx context.Context, key string, interval time
 	if p == nil || interval <= 0 {
 		return func() {}, nil
 	}
+	// A caller that is already cancelled must not reserve a slot: with a zero
+	// wait the select below could pick the timer and report success anyway.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
-	next := p.last[key].Add(interval)
+	previous, had := p.last[key]
+	next := previous.Add(interval)
 	now := time.Now()
 	if next.Before(now) {
 		next = now
@@ -101,9 +107,17 @@ func (p *exitExchangePacing) wait(ctx context.Context, key string, interval time
 	case <-timer.C:
 		return func() {}, nil
 	case <-ctx.Done():
+		// Give the slot back only if nobody reserved after us, and restore the
+		// slot that was there before: the previous caller's time, not our own
+		// arrival, otherwise the next caller lands within the interval of the
+		// exchange that is still ahead of it.
 		p.mu.Lock()
 		if t, ok := p.last[key]; ok && t.Equal(next) {
-			p.last[key] = next.Add(-wait)
+			if had {
+				p.last[key] = previous
+			} else {
+				delete(p.last, key)
+			}
 		}
 		p.mu.Unlock()
 		return nil, ctx.Err()

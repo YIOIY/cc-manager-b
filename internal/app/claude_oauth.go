@@ -82,6 +82,21 @@ func (s *oauthPendingStore) dropLocked(id string) {
 		p.lease.release()
 	}
 }
+
+// adoptLeaseLocked hands the account lease of a live previous session to its
+// replacement. It succeeds only when that session still exists, is not
+// cancelled and still holds exactly the lease the caller observed earlier;
+// the entry is left without a lease so dropping it cannot release the lock
+// the replacement now owns. Callers hold s.mu.
+func (s *oauthPendingStore) adoptLeaseLocked(previousID string, observed *oauthLease) bool {
+	old, alive := s.items[previousID]
+	if !alive || old.cancelled || observed == nil || old.lease != observed {
+		return false
+	}
+	old.lease = nil
+	s.items[previousID] = old
+	return true
+}
 func (s *oauthPendingStore) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
