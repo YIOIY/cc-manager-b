@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -219,5 +221,98 @@ func TestOAuthQueueCancelDuringProfileDoesNotRestorePending(t *testing.T) {
 	}
 	if retry := retryExchange(a); retry.Code != http.StatusNotFound || tokenCalls.Load() != 1 || profileCalls.Load() != 1 {
 		t.Fatalf("profile cache restored canceled pending: %d %s; POSTs=%d GETs=%d", retry.Code, retry.Body.String(), tokenCalls.Load(), profileCalls.Load())
+	}
+}
+
+// OAUTH_BUSY must say why and give a hint that matches the cause: a client
+// that just burned the whole queue budget is told to come back in ~10 seconds
+// rather than one, while an abandoned request (cancelled context) keeps the
+// minimal hint because nobody is reading it.
+func TestOAuthBusyHintsFollowReason(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	type envelope struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	decode := func(w *httptest.ResponseRecorder) envelope {
+		var env envelope
+		json.Unmarshal(w.Body.Bytes(), &env)
+		return env
+	}
+	for _, tc := range []struct {
+		reason  oauthBusyReason
+		min     int
+		max     int
+		spreads bool
+	}{
+		{oauthBusySessionInFlight, 2, 2, false},
+		{oauthBusyOwnerLock, 5, 5, false},
+		{oauthBusyQueueTimeout, 10, 12, true},
+		{oauthBusyExitTimeout, 10, 12, true},
+		{oauthBusyPacingTimeout, 10, 12, true},
+		{oauthBusyStoreFull, 15, 15, false},
+		{oauthBusyCancelled, 1, 1, false},
+	} {
+		w := httptest.NewRecorder()
+		a.writeOAuthBusy(w, retryExchangeRequest(), tc.reason)
+		env := decode(w)
+		secs, _ := env.Error.Details["retry_after_seconds"].(float64)
+		if w.Code != http.StatusTooManyRequests || env.Error.Code != "OAUTH_BUSY" || env.Error.Details["oauth_busy_reason"] != string(tc.reason) {
+			t.Fatalf("%s: %d %s", tc.reason, w.Code, w.Body.String())
+		}
+		if int(secs) < tc.min || int(secs) > tc.max {
+			t.Fatalf("%s: retry_after_seconds=%v want %d..%d", tc.reason, secs, tc.min, tc.max)
+		}
+		if w.Header().Get("Retry-After") != strconv.Itoa(int(secs)) {
+			t.Fatalf("%s: header %q != body %v", tc.reason, w.Header().Get("Retry-After"), secs)
+		}
+	}
+
+	// Attribution: a deadline is the budget running out, a cancellation is the client leaving.
+	expired, cancelExpired := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancelExpired()
+	<-expired.Done()
+	if got := oauthQueueBusy(expired, oauthBusyQueueTimeout); got != oauthBusyQueueTimeout {
+		t.Fatalf("deadline attributed to %s", got)
+	}
+	gone, cancelGone := context.WithCancel(context.Background())
+	cancelGone()
+	if got := oauthQueueBusy(gone, oauthBusyExitTimeout); got != oauthBusyCancelled {
+		t.Fatalf("cancellation attributed to %s", got)
+	}
+	if got := oauthQueueBusy(context.Background(), oauthBusyPacingTimeout); got != oauthBusyPacingTimeout {
+		t.Fatalf("live context attributed to %s", got)
+	}
+
+	// Every reason is counted under its own label for the metrics endpoint.
+	var b strings.Builder
+	a.writeOAuthReliabilityMetrics(&b)
+	for _, reason := range oauthBusyReasons {
+		if !strings.Contains(b.String(), `cc_manager_oauth_busy_total{reason="`+string(reason)+`"} 1`) {
+			t.Fatalf("metrics missing %s:\n%s", reason, b.String())
+		}
+	}
+}
+
+// The real exchange path attributes a concurrent request to the in-flight
+// session and a client that left the queue to cancellation.
+func TestOAuthExchangeBusyReasonsOnQueuePath(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	retryOAuthProxy(t, a, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fixture temporary failure", http.StatusServiceUnavailable)
+	})
+	retrySeedPending(a, "")
+	done, release, cancel := queuedOAuthExchange(t, a)
+	second := retryExchange(a)
+	if second.Code != http.StatusTooManyRequests || !strings.Contains(second.Body.String(), `"oauth_busy_reason":"session_in_flight"`) || second.Header().Get("Retry-After") != "2" {
+		t.Fatalf("concurrent exchange: %d %s", second.Code, second.Body.String())
+	}
+	cancel()
+	release()
+	first := queuedOAuthResponse(t, done)
+	if first.Code != http.StatusTooManyRequests || !strings.Contains(first.Body.String(), `"oauth_busy_reason":"cancelled"`) {
+		t.Fatalf("abandoned queue wait: %d %s", first.Code, first.Body.String())
 	}
 }

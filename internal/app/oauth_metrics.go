@@ -26,6 +26,16 @@ type oauthMeasurement struct {
 type oauthStatCounters struct {
 	rateLimited429  atomic.Uint64
 	reauthorization atomic.Uint64
+	busy            [len(oauthBusyReasons)]atomic.Uint64
+}
+
+func (c *oauthStatCounters) noteBusy(reason oauthBusyReason) {
+	for i, known := range oauthBusyReasons {
+		if known == reason {
+			c.busy[i].Add(1)
+			return
+		}
+	}
 }
 
 type oauthStatistics struct {
@@ -123,4 +133,9 @@ func (a *App) writeOAuthReliabilityMetrics(b *strings.Builder) {
 	fmt.Fprintln(b, "# HELP cc_manager_oauth_reauthorization_total Linked-account reauthorize submissions.")
 	fmt.Fprintln(b, "# TYPE cc_manager_oauth_reauthorization_total counter")
 	fmt.Fprintf(b, "cc_manager_oauth_reauthorization_total %d\n", a.oauthStatCounters.reauthorization.Load())
+	fmt.Fprintln(b, "# HELP cc_manager_oauth_busy_total OAUTH_BUSY responses by reason.")
+	fmt.Fprintln(b, "# TYPE cc_manager_oauth_busy_total counter")
+	for i, reason := range oauthBusyReasons {
+		fmt.Fprintf(b, "cc_manager_oauth_busy_total{reason=\"%s\"} %d\n", reason, a.oauthStatCounters.busy[i].Load())
+	}
 }

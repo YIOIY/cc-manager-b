@@ -65,7 +65,7 @@
 | `NOT_FOUND` | not_found | 404 | 否 | none | 资源不存在或已被删除 | details.resource 指明资源类型；允许调用方自定义文案 |
 | `NO_LINKED_ACCOUNTS` | validation | 422 | 否 | none | 所选范围没有可同步的关联账号 | 账单同步范围 |
 | `NO_RETRY_ITEMS` | validation | 422 | 否 | none | 没有仍在可查窗口内的失败项 | 账单重试 |
-| `OAUTH_BUSY` | rate_limit | 429 | 是 | wait | 授权会话较多 | 待授权链接数达到上限、同一会话正在兑换或提交、排队 30 秒（全局闸门、单出口闸门与出口间隔共用这一预算）未获额度，或排队期间请求被取消；details.retry_after_seconds 与 Retry-After 头一致；允许调用方自定义文案 |
+| `OAUTH_BUSY` | rate_limit | 429 | 是 | wait | 授权会话较多 | details.oauth_busy_reason 说明原因并决定 retry_after_seconds（与 Retry-After 头一致）：session_in_flight 同一会话正在兑换或提交（2 秒）、owner_lock 同一浏览器会话并发生成链接（5 秒）、queue_timeout / exit_timeout / pacing_timeout 排队 30 秒预算（全局闸门、单出口闸门、出口间隔共用）用尽（约 10 秒并带抖动）、store_full 待授权链接达 512 上限（15 秒）、cancelled 排队期间请求被取消（1 秒）；允许调用方自定义文案 |
 | `OAUTH_EXCHANGE_FAILED` | validation | 422 | 否 | fix_input | 授权码兑换失败 | 授权码无效、过期、已使用（400/404/409），或成功响应数据无效；终止会话时 details.oauth_session_expired=true，前端须清除失效链接；details.upstream_status 为上游状态（如有），不含上游响应；允许调用方自定义文案 |
 | `OAUTH_IDENTITY_REJECTED` | upstream | 403 | 否 | reauthorize | Claude 拒绝了当前身份 | 兑换（token 阶段）返回 JSON 错误体的 401/403：同一授权码重放不会成功，会话终止并带 details.oauth_session_expired=true，需重新生成链接（非 JSON 拦截页归 OAUTH_PROXY_UNREACHABLE）；资料读取（profile/roles 阶段）返回 401/403：令牌与会话保留，可按阶段重试或手动补填。details.upstream_status 为上游状态；不据此推断封号原因 |
 | `OAUTH_PROXY_CHANGED` | conflict | 409 | 否 | reauthorize | 授权出口已变化，请显式重新授权 | 授权期间代理指纹改变；pending 保留但提交需用原出口或重新开始；允许调用方自定义文案 |

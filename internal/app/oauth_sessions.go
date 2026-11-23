@@ -204,7 +204,7 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	unlockOwner, err := a.oauth.starts.lock(ctx, fmt.Sprintf("%x", owner))
 	if err != nil {
-		a.writeOAuthBusy(w, r, time.Second)
+		a.writeOAuthBusy(w, r, oauthQueueBusy(ctx, oauthBusyOwnerLock))
 		return
 	}
 	defer unlockOwner()
@@ -223,7 +223,7 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if previousID != "" && (previous.exchanging || previous.submitting) {
-		a.writeOAuthBusy(w, r, time.Second)
+		a.writeOAuthBusy(w, r, oauthBusySessionInFlight)
 		return
 	}
 	p := oauthPending{owner: owner, expires: time.Now().Add(oauthSessionTTL), proxyID: strings.TrimSpace(in.ProxyID), accountID: strings.TrimSpace(in.AccountID), email: strings.ToLower(strings.TrimSpace(in.Email))}
@@ -335,7 +335,7 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 		a.oauth.mu.Unlock()
 		a.oauth.configMu.Unlock()
 		cleanup()
-		a.writeOAuthBusy(w, r, time.Second)
+		a.writeOAuthBusy(w, r, oauthBusyStoreFull)
 		return
 	}
 	// Explicit replacement retires the previous flow without releasing a reused lease.
@@ -356,7 +356,7 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 	a.oauth.stats.observe("queue", 0, time.Since(queueStart), err == nil)
 	if err != nil {
 		a.dropOAuthPending(id)
-		a.writeOAuthBusy(w, r, time.Second)
+		a.writeOAuthBusy(w, r, oauthQueueBusy(ctx, oauthBusyQueueTimeout))
 		return
 	}
 	defer release()
@@ -481,7 +481,7 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.exchanging || p.submitting {
 		a.oauth.mu.Unlock()
-		a.writeOAuthBusy(w, r, time.Second)
+		a.writeOAuthBusy(w, r, oauthBusySessionInFlight)
 		return
 	}
 	// Once tokens are cached the code has been spent and is no longer needed:
@@ -529,7 +529,7 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	release, err := a.oauthGate.Load().acquire(ctx, oauthGateWait)
 	a.oauth.stats.observe("queue", 0, time.Since(at), err == nil)
 	if err != nil {
-		a.writeOAuthBusy(w, r, time.Second)
+		a.writeOAuthBusy(w, r, oauthQueueBusy(ctx, oauthBusyQueueTimeout))
 		return
 	}
 	defer release()
@@ -540,7 +540,7 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	if gate := a.oauthExitGate.Load(); gate != nil {
 		releaseExit, err := gate.acquire(ctx, exitKey)
 		if err != nil {
-			a.writeOAuthBusy(w, r, time.Second)
+			a.writeOAuthBusy(w, r, oauthQueueBusy(ctx, oauthBusyExitTimeout))
 			return
 		}
 		defer releaseExit()
@@ -548,7 +548,7 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 	if s, e := a.loadOAuthDispatchSettings(); e == nil {
 		releasePacing, err := oauthExitPacing.wait(ctx, exitKey, time.Duration(s.ExchangeIntervalSeconds)*time.Second)
 		if err != nil {
-			a.writeOAuthBusy(w, r, time.Second)
+			a.writeOAuthBusy(w, r, oauthQueueBusy(ctx, oauthBusyPacingTimeout))
 			return
 		}
 		defer releasePacing()
@@ -566,7 +566,7 @@ func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ctx.Err() != nil {
-		a.writeOAuthBusy(w, r, time.Second)
+		a.writeOAuthBusy(w, r, oauthQueueBusy(ctx, oauthBusyQueueTimeout))
 		return
 	}
 	if p.accountID != "" && !a.requireMutable(w, r, "accounts", p.accountID, "账号不存在") {
@@ -696,9 +696,71 @@ func oauthTerminalError(err error) bool {
 	}
 	return false
 }
-func (a *App) writeOAuthBusy(w http.ResponseWriter, r *http.Request, wait time.Duration) {
+
+// oauthBusyReason names why an OAUTH_BUSY was returned and how long waiting
+// is likely to help. The hints are deliberately coarse: a client that just
+// spent the whole queue budget must not re-enter one second later, because a
+// hundred such clients keep the gate saturated and the order random.
+type oauthBusyReason string
+
+const (
+	oauthBusySessionInFlight oauthBusyReason = "session_in_flight" // this session is already exchanging or submitting
+	oauthBusyOwnerLock       oauthBusyReason = "owner_lock"        // another start of the same browser session holds the owner lock
+	oauthBusyQueueTimeout    oauthBusyReason = "queue_timeout"     // global gate not acquired within oauthGateWait
+	oauthBusyExitTimeout     oauthBusyReason = "exit_timeout"      // per-exit gate not acquired within the budget
+	oauthBusyPacingTimeout   oauthBusyReason = "pacing_timeout"    // exit interval not reached within the budget
+	oauthBusyStoreFull       oauthBusyReason = "store_full"        // pending store at its 512 cap; the sweeper runs every minute
+	oauthBusyCancelled       oauthBusyReason = "cancelled"         // the request context ended while queued; the client is gone
+)
+
+// oauthBusyReasons fixes the metric label order. The array length also sizes
+// the per-reason counters.
+var oauthBusyReasons = [...]oauthBusyReason{oauthBusySessionInFlight, oauthBusyOwnerLock, oauthBusyQueueTimeout, oauthBusyExitTimeout, oauthBusyPacingTimeout, oauthBusyStoreFull, oauthBusyCancelled}
+
+// oauthBusyQueueRetry is the hint after a queue budget ran out: a third of
+// the budget, jittered, so waiting clients drift apart instead of returning
+// as one burst.
+const oauthBusyQueueRetry = 10 * time.Second
+
+func (reason oauthBusyReason) retryAfter() time.Duration {
+	switch reason {
+	case oauthBusySessionInFlight:
+		return 2 * time.Second
+	case oauthBusyOwnerLock:
+		return 5 * time.Second
+	case oauthBusyQueueTimeout, oauthBusyExitTimeout, oauthBusyPacingTimeout:
+		return oauthBusyQueueRetry
+	case oauthBusyStoreFull:
+		return 15 * time.Second
+	default:
+		return time.Second
+	}
+}
+
+// spreads reports whether the hint should carry jitter: only budget timeouts
+// have many clients waking at the same moment.
+func (reason oauthBusyReason) spreads() bool {
+	return reason == oauthBusyQueueTimeout || reason == oauthBusyExitTimeout || reason == oauthBusyPacingTimeout
+}
+
+// oauthQueueBusy attributes a failed wait. A context ended by cancellation was
+// abandoned by the client (or the server is stopping); anything else is the
+// budget running out at the named stage.
+func oauthQueueBusy(ctx context.Context, timeout oauthBusyReason) oauthBusyReason {
+	if err := ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		return oauthBusyCancelled
+	}
+	return timeout
+}
+
+func (a *App) writeOAuthBusy(w http.ResponseWriter, r *http.Request, reason oauthBusyReason) {
+	wait := reason.retryAfter()
+	if reason.spreads() {
+		wait += time.Duration(float64(wait) * oauthExitJitterFraction * rand.Float64())
+	}
+	a.oauthStatCounters.noteBusy(reason)
 	secs := int(oauthRetryAfterSeconds(wait) / time.Second)
-	writeError(w, r, errs.New(errs.CodeOauthBusy).WithDetail("retry_after_seconds", secs))
+	writeError(w, r, errs.New(errs.CodeOauthBusy).WithDetail("retry_after_seconds", secs).WithDetail("oauth_busy_reason", string(reason)))
 }
 
 // Kept for callers/tests that classify an error without an active session.
