@@ -2,6 +2,32 @@
 
 实现日期：2026-11-09。此功能把“新建并上号”的主要入口改为浏览器授权，再补充供应商资料。生成链接、回填、校验和失败分支已在本地测试；尚未使用真实 Claude 账号授权或执行真实供应商交付。
 
+## 总览
+
+上号链路分五段：前端向导 → OAuth 会话（仅服务端内存）→ 提交接口 → 后台工作器 → 列表状态派生。下文各节是每段的细节，本节只给主干。
+
+```mermaid
+flowchart LR
+  W[向导：连接 → 资料 → 确认] -->|start / exchange| O[OAuth 会话]
+  O -->|auth_json + oauth_session_id| W
+  W -->|POST /accounts/onboard| H[提交接口]
+  H -->|accounts / jobs queued / deliveries queued| J[(SQLite)]
+  J --> R[工作器 runOne]
+  R -->|supplier 推送| P[供应商平台]
+  R -->|accepted / rejected / unknown| J
+  J --> L[账号列表状态]
+```
+
+**前端向导**（`AccountFormDialog` + `useAccountOnboarding`）三步：① 连接账号——选平台连接与代理池条目，再用「登录 Claude」（OAuth）、「粘贴凭证 JSON」或手动填写三种方式拿到凭证；② 补充资料——补齐密码、套餐起止、设备标识等缺项（已有账号重授权时为「补充设备与凭证」）；③ 确认上号——提交 `POST /accounts/onboard`（带 `Idempotency-Key`；已有账号走 `/accounts/{id}/onboard` 并带 `expected_version`），凭证来自 OAuth 时附 `oauth_session_id`。成功后「继续添加下一个」保留连接与代理、清空其余字段。
+
+**OAuth 会话**（`oauth_sessions.go`）：`start` 先看同一浏览器会话（owner）是否已有活动链接——绑定（出口、账号）相同则 200 复用并带 `stage`，不同则 409 `OAUTH_SESSION_CONFLICT`，显式 `refresh` 才替换；新建链接依次过冷却检查、代理绑定检查（已绑定代理池条目的账号只能在原代理授权）、账号租约（期间其他写操作 409 `ACCOUNT_IN_PROGRESS`）、UA 指纹、全局闸门排队（≤30 秒）与出口探测。`exchange` 校验授权码与 state、冷却，排队 ≤30 秒后访问上游（token → profile → roles，合计 ≤60 秒，与浏览器连接解耦）：成功则缓存结果、对账号 ID/邮箱播种 60 秒冷却、回写代理绑定并返回 `auth_json` 与 `oauth_session_id`；429 记入冷却并保留链接；token 阶段的 JSON 4xx 终止会话；拦截页、网络错误与 5xx 保留会话可重试；令牌已取得后可空 `result` 续取。会话 30 分钟过期，最多 512 条，不落库、不跨实例。
+
+**提交接口**（`onboard.go` + `oauth_write_guard.go`）：带 `oauth_session_id` 时由写保护中间件核对会话归属、账号、凭证指纹、邮箱与出口一致，并借用会话已持有的账号锁，否则按普通账号写入加锁；随后补默认值、解析代理、校验输入、检查连接；已有账号读旧凭证并应用凭证不变量（新鲜度以 `last_refresh` 为主序，设备 ID 显式 > 已存 > 生成）；事务内幂等键命中则回放原任务，否则写入/更新 `accounts`（UPDATE 只覆盖可选资料字段，保留内部元数据）、密封凭证与密码、插入 `jobs(account.submit, queued)` 与 `deliveries(queued)`，返回 202 `{account_id, job_id, state: queued}`。授权成功本身不创建账号、不向供应商上传。
+
+**后台工作器**（`worker.go`，串行取最早的 queued 任务）：先按来源算一次预热延迟（手动 1–3 秒、批量 5–15 秒，可配，0 关闭）写入 payload 的 `not_before_at`，任务保持 queued 等待，重排队不再等；认领为 running，账号锁拿不到则重排队；前置检查：已 accepted → `succeeded/ALREADY_LINKED`，已有 unknown 投递 → `unknown`，版本冲突、已归档、连接停用、密钥缺失、凭证不可读 → `failed`；解析代理（凭证里已有不同 `proxy_url` → `PROXY_BINDING_CHANGED`，无代理 → `PROXY_REQUIRED`）；应用凭证不变量并预留设备 ID（失败重试沿用同一 ID）；最后向供应商推送（关机也跑完）：成功写 `deliveries/platform_links = accepted`，明确拒绝 → `failed/rejected`，网络不确定 → `unknown`（不自动重试，需人工处理）。
+
+**列表状态**（`account_delivery.go`，按页派生）：`pending`（无任务）→ `submitting`（queued/running）→ `linked`（有 accepted 链接）/ `failed` / `unknown`（结果不确定或成功但本地链接缺失）；卡片带 `submission_job` 的错误码、提示与允许动作（重试 / 放弃）。
+
 ## 使用流程
 
 1. 打开账号管理 → 新建账号，选择已有代理。若暂不选代理，授权请求使用服务端直连或代理池配置的前置代理；交付前仍需选择代理或提供真实 `proxy_url`。
