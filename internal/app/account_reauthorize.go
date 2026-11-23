@@ -243,11 +243,19 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	// finish even if the client cancelled, matching completeProfileUpdate.
 	a.oauthStatCounters.reauthorization.Add(1)
 	if err = a.completeReauthorize(ctx, id, actor, detail, sealed, proxyID, writeExpected); err != nil {
+		// details.platform_updated is the structured signal that the provider
+		// already holds the new credential: the OAuth write guard retires the
+		// session on it so the same authorization is never pushed twice, and
+		// the browser switches to reconciliation instead of a plain retry.
+		// VERSION_CONFLICT keeps the registry wording, so the hint carries the
+		// explanation.
 		if errors.Is(err, errReauthorizeLocalConflict) {
-			fail(w, http.StatusConflict, errs.CodeVersionConflict, "平台已更新凭证，但本地版本冲突，请刷新后重试")
+			writeError(w, r, errs.New(errs.CodeVersionConflict).
+				WithHint("平台已更新凭证，但本地版本冲突，请刷新后核对").
+				WithDetail("platform_updated", true))
 			return
 		}
-		writeError(w, r, storageError(err, "平台已更新凭证，但本地保存失败，请刷新后重试"))
+		writeError(w, r, storageError(err, "平台已更新凭证，但本地保存失败，请刷新后重试").WithDetail("platform_updated", true))
 		return
 	}
 	source := "replaced"

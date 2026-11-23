@@ -316,7 +316,9 @@ func (a *App) guardOAuthSubmission(w http.ResponseWriter, r *http.Request, input
 		current.submitting = false
 		completed := buffer.status >= 200 && buffer.status < 300
 		// A remote success followed by local failure must never be re-pushed.
-		partial := strings.Contains(buffer.body.String(), "平台已更新凭证")
+		// The handler marks that outcome with details.platform_updated; the
+		// message match stays as a fallback for responses without details.
+		partial := oauthResponsePlatformUpdated(buffer.body.Bytes()) || strings.Contains(buffer.body.String(), "平台已更新凭证")
 		if completed || partial {
 			current.completed = &oauthSubmission{status: buffer.status, body: append([]byte(nil), buffer.body.Bytes()...), hash: digest, path: r.URL.Path}
 			current.tokens = nil
@@ -341,6 +343,17 @@ func (a *App) guardOAuthSubmission(w http.ResponseWriter, r *http.Request, input
 	}
 	next(buffer, r.WithContext(context.WithValue(r.Context(), accountWriteContext{}, held)))
 	buffer.flush(w)
+}
+
+// oauthResponsePlatformUpdated reads the structured marker a handler sets once
+// the provider has accepted the credential even though the local write failed.
+func oauthResponsePlatformUpdated(body []byte) bool {
+	var env struct {
+		Error struct {
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(body, &env) == nil && env.Error.Details["platform_updated"] == true
 }
 
 var _ = errs.CodeAccountInProgress

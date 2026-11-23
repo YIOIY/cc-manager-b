@@ -826,17 +826,21 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         await jumpTo(anchorForKey(keys[0]!))
         return
       }
-      if (e instanceof ApiError && e.status === 409) {
+      if (
+        e instanceof ApiError &&
+        (e.details?.platform_updated === true ||
+          e.message.includes('平台已更新凭证') ||
+          e.code === 'STORAGE_UNAVAILABLE') &&
+        linkedReauth.value
+      ) {
+        // Platform accepted the push but local persist failed — require
+        // reconciliation. Checked before the generic 409 branch because a
+        // local version conflict after the push also arrives as 409.
+        pushBlocked.value = true
         pushFailed.value = false
         return
       }
-      if (
-        e instanceof ApiError &&
-        (e.message.includes('平台已更新凭证') || e.code === 'STORAGE_UNAVAILABLE') &&
-        linkedReauth.value
-      ) {
-        // Platform accepted the push but local persist failed — require reconciliation.
-        pushBlocked.value = true
+      if (e instanceof ApiError && e.status === 409) {
         pushFailed.value = false
         return
       }
