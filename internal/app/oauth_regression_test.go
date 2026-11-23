@@ -259,3 +259,48 @@ func TestOAuthStartConflictsOnDifferentBinding(t *testing.T) {
 		t.Fatal("refresh left the old session alive")
 	}
 }
+
+// Every non-429 probe failure is the exit's problem: nothing identifying the
+// user has been sent yet, so "identity rejected", "supplier rejected" and
+// "response invalid" would all point the operator at the wrong fix. Only the
+// 429 keeps its own meaning (cooldown).
+func TestOAuthStartBlamesExitForEveryProbeFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"html 403", &claudeoauth.StatusError{Op: "reach", Status: http.StatusForbidden}},
+		{"html 401", &claudeoauth.StatusError{Op: "reach", Status: http.StatusUnauthorized}},
+		{"bad gateway", &claudeoauth.StatusError{Op: "reach", Status: http.StatusBadGateway}},
+		{"teapot", &claudeoauth.StatusError{Op: "reach", Status: http.StatusTeapot}},
+		{"portal 200", &claudeoauth.ResponseError{Op: "reach"}},
+		{"dial failure", &claudeoauth.TransportError{Op: "reach"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _, _, _ := deliveryFixture(t)
+			a.probeOAuthReach = func(context.Context, *http.Client) error { return tc.err }
+			if _, err := a.DB.Exec(`INSERT INTO proxies(id,scheme,host,port,enabled) VALUES('blocked-proxy','http','127.0.0.1',9090,1)`); err != nil {
+				t.Fatal(err)
+			}
+			c := newTestClient(t, a)
+			c.login("workflow-test-password")
+			got := startSession(t, c, `{"proxy_id":"blocked-proxy"}`)
+			if got.data["code"] != "OAUTH_PROXY_UNREACHABLE" {
+				t.Fatalf("probe failure misclassified: %d %v", got.status, got.data)
+			}
+			details, _ := got.data["details"].(map[string]any)
+			if details["oauth_stage"] != "reach" || details["oauth_session_expired"] == true {
+				t.Fatalf("details: %v", details)
+			}
+			if se, ok := tc.err.(*claudeoauth.StatusError); ok && details["upstream_status"] != float64(se.Status) {
+				t.Fatalf("upstream_status lost: %v", details)
+			}
+			a.oauth.mu.Lock()
+			live := len(a.oauth.items)
+			a.oauth.mu.Unlock()
+			if live != 0 {
+				t.Fatalf("failed probe left %d pending sessions", live)
+			}
+		})
+	}
+}

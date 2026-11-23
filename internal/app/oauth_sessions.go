@@ -821,7 +821,11 @@ func (a *App) oauthFailure(w http.ResponseWriter, r *http.Request, p oauthPendin
 			a.noteOAuth429(r, p, id, stage)
 			a.writeOAuthRateLimited(w, r, a.extendOAuthCooldown(p, se.RetryAfter))
 			return
-		case se.Intercepted:
+		case stage == "reach", se.Intercepted:
+			// The probe only asks whether the exit reaches Claude. A non-JSON
+			// 401/403, a 5xx or any other unexpected status there says the
+			// exit is blocked or broken, never that an identity was rejected:
+			// no code or token has been presented yet.
 			code = "OAUTH_PROXY_UNREACHABLE"
 		case status == 401 || status == 403:
 			code = "OAUTH_IDENTITY_REJECTED"
@@ -840,6 +844,11 @@ func (a *App) oauthFailure(w http.ResponseWriter, r *http.Request, p oauthPendin
 	if re, ok := claudeoauth.AsResponseError(err); ok {
 		stage = re.Op
 		code = "OAUTH_RESPONSE_INVALID"
+		if stage == "reach" {
+			// A 200 that is not JSON came from a portal or filter in front of
+			// Claude, not from Claude: that is the exit's fault.
+			code = "OAUTH_PROXY_UNREACHABLE"
+		}
 	}
 	e := errs.Adhoc(code, 0, "").WithDetail("oauth_stage", stage).WithDetail("upstream_status", status)
 	if id != "" {
