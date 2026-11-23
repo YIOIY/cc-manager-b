@@ -145,7 +145,8 @@ function conditionLabel(field: FilterField) {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 13px 15px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, #fff 0%, #fafbfc 100%);
 }
 
 :global(.search-row > .el-input) {
@@ -178,9 +179,9 @@ function conditionLabel(field: FilterField) {
 }
 
 .filter-panel {
-  padding: 14px 15px;
+  padding: 14px 16px 16px;
   border-top: 1px solid var(--line-soft);
-  background: var(--surface-soft);
+  background: #f5f8fb;
 }
 
 .filter-grid {

@@ -263,7 +263,7 @@ onMounted(async () => {
 .cu-note {
   margin: 0 0 14px;
   font-size: 12px;
-  color: var(--text-tertiary, #909399);
+  color: var(--muted-strong);
 }
 .cu-table {
   width: 100%;

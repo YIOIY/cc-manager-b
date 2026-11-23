@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -109,6 +110,23 @@ func TestOwnershipScopesAccountsProxiesJobsDashboard(t *testing.T) {
 	if dash.Data.Accounts.Total != 1 || dash.Data.Proxies.Enabled != 1 || dash.Data.Jobs.Succeeded != 1 || dash.Data.Jobs.Failed != 0 {
 		t.Fatalf("opsA dashboard=%+v", dash.Data)
 	}
+
+	// Admin can filter accounts by owner; operators ignore the param (still scoped to self).
+	var meA struct {
+		Data struct {
+			User struct {
+				ID string `json:"id"`
+			} `json:"user"`
+		} `json:"data"`
+	}
+	_ = jsonDecode(opsA.do(http.MethodGet, "/api/v1/auth/session", ""), &meA)
+	q := url.Values{"page": {"1"}, "page_size": {"20"}, "owner_user_id": {meA.Data.User.ID}}
+	assertListIDs(t, admin.do(http.MethodGet, "/api/v1/accounts?"+q.Encode(), ""), []string{accA})
+	q.Set("owner_user_id", "unassigned")
+	assertListIDs(t, admin.do(http.MethodGet, "/api/v1/accounts?"+q.Encode(), ""), []string{"orphan"})
+	q.Set("owner_user_id", meA.Data.User.ID)
+	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/accounts?"+q.Encode(), ""), []string{accA})
+	assertListIDs(t, opsB.do(http.MethodGet, "/api/v1/accounts?"+q.Encode(), ""), []string{accB})
 }
 
 func TestOwnershipScopesBillAccounts(t *testing.T) {
@@ -168,6 +186,16 @@ func TestSpendSummaryAndDeleteUserRespectOwnership(t *testing.T) {
 	accounts, _ := spend["cost_by_account"].([]map[string]any)
 	if len(accounts) != 1 || accounts[0]["account_id"] != accA {
 		t.Fatalf("opsA spend=%v", accounts)
+	}
+	if spend["total_model_cost_fen"] != int64(100) {
+		t.Fatalf("opsA total=%v want 100", spend["total_model_cost_fen"])
+	}
+	adminSpend, err := a.spendSummary(context.Background(), mustParseTime(day+"T12:00:00Z"), ownershipScope{Admin: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adminSpend["total_model_cost_fen"] != int64(200) {
+		t.Fatalf("admin total=%v want 200", adminSpend["total_model_cost_fen"])
 	}
 
 	var created struct {

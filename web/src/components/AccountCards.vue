@@ -656,20 +656,22 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-monitor .platform-card-grid {
-  padding: 12px;
-  gap: 12px;
-  background: transparent;
+  padding: 14px;
+  gap: 14px;
+  background: linear-gradient(180deg, #f3f6fa 0%, #eef2f7 100%);
   border-top: 1px solid var(--line);
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
   align-items: stretch;
 }
 
 .platform-monitor .usage-card {
-  padding: 12px 14px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  box-shadow: none;
+  padding: 14px 16px 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow:
+    0 1px 2px rgba(28, 31, 35, 0.04),
+    0 8px 20px rgba(28, 31, 35, 0.04);
   display: flex;
   flex-direction: column;
 }
@@ -679,33 +681,36 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-monitor .usage-card:hover {
-  transform: none;
-  border-color: var(--accent);
-  box-shadow: none;
-  background: var(--tint-50);
+  transform: translateY(-1px);
+  border-color: #c9daf0;
+  box-shadow: 0 4px 16px rgba(0, 119, 250, 0.08);
+  background: #fff;
 }
 
 :global(.platform-monitor .usage-identity strong) {
   color: var(--ink);
   font-family: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.4;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
 }
 
 .platform-monitor .health-dot {
+  width: 8px;
+  height: 8px;
   background: var(--line-strong);
   box-shadow: none;
 }
 
 .platform-monitor .health-dot.online {
   background: #3bb346;
-  box-shadow: none;
+  box-shadow: 0 0 0 3px rgba(59, 179, 70, 0.16);
 }
 
 .platform-monitor .health-dot.attention {
   background: #fc8800;
-  box-shadow: none;
+  box-shadow: 0 0 0 3px rgba(252, 136, 0, 0.16);
 }
 
 .platform-monitor .usage-card-rule {
@@ -737,8 +742,8 @@ const cards = computed<Card[]>(() =>
 .platform-monitor .usage-card-foot {
   color: var(--muted);
   margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid var(--line-soft);
+  padding-top: 12px;
+  border-top: 1px solid #edf1f5;
   line-height: 1.5;
   gap: 6px;
   font-family: inherit;
@@ -752,36 +757,51 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-monitor .mini-badge {
-  border: 1px solid var(--line);
-  border-radius: 3px;
+  border: 0;
+  border-radius: 999px;
   font-family: inherit;
-  font-weight: 500;
-  background: var(--surface-soft);
+  font-weight: 600;
+  background: #f1f4f8;
   color: var(--ink-mid);
 }
 
 .platform-monitor .mini-badge.green {
-  background: rgba(59, 179, 70, 0.1);
+  background: rgba(59, 179, 70, 0.12);
   border-color: transparent;
-  color: #3bb346;
+  color: #2f9e3a;
 }
 
 .platform-monitor .mini-badge.teal {
-  background: var(--tint-50);
+  background: #eaf5ff;
   border-color: transparent;
-  color: var(--accent);
+  color: var(--accent-deep);
 }
 
 .platform-monitor .mini-badge.yellow {
-  background: rgba(252, 136, 0, 0.1);
+  background: #fff4e5;
   border-color: transparent;
-  color: #fc8800;
+  color: #c56a00;
 }
 
 .platform-monitor .mini-badge.creator {
-  background: var(--surface-soft);
-  color: var(--ink-mid);
-  border-color: var(--line);
+  background: #eef2ff;
+  color: #4355a5;
+  border-color: transparent;
+}
+
+.platform-monitor .mini-badge.proxy {
+  background: #f0f7f4;
+  color: #2f6b57;
+}
+
+.platform-monitor .mini-badge.tag {
+  background: #f7f2ff;
+  color: #6b4ea3;
+}
+
+.platform-monitor .mini-badge.attention {
+  background: #ffece9;
+  color: #d94836;
 }
 
 .platform-monitor .platform-empty {
@@ -839,8 +859,48 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-monitor .usage-identity {
-  padding-top: 4px;
+  padding-top: 2px;
   flex: 1;
+}
+
+.platform-monitor .platform-profile {
+  margin-top: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f7f9fc;
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.platform-monitor .platform-reason {
+  background: #fff1ee;
+  border: 1px solid #ffd8d0;
+}
+
+.platform-monitor .platform-reauth-hint {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #9a6b00;
+}
+
+:global(.platform-monitor .platform-usage-block) {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #f7f9fc;
+  border: 1px solid #e8eef5;
+}
+
+:global(.platform-monitor .usage-track) {
+  background: #e6edf5;
+  height: 7px;
+}
+
+:global(.platform-monitor .usd-number) {
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .account-card-identity {
@@ -848,10 +908,13 @@ const cards = computed<Card[]>(() =>
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 7px;
-  margin: 4px 0 8px;
-  color: #82929a;
-  font-size: 11px;
+  gap: 8px;
+  margin: 6px 0 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  color: var(--muted-strong);
+  font-size: 12px;
 }
 
 :global(.account-card-identity > span:first-child) {
@@ -860,9 +923,13 @@ const cards = computed<Card[]>(() =>
 }
 
 .account-platform-id {
-  font-family: inherit;
-  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
   color: var(--muted);
+  background: #fff;
+  border: 1px solid #e6ebf0;
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 
 .account-card-badges {
@@ -870,13 +937,15 @@ const cards = computed<Card[]>(() =>
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+  margin-bottom: 2px;
 }
 
 .account-card-badges .mini-badge {
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.35;
+  padding: 3px 9px;
 }
 
 .account-delivery-placeholder {
@@ -884,13 +953,13 @@ const cards = computed<Card[]>(() =>
   align-items: center;
   flex-direction: column;
   justify-content: center;
-  min-height: 165px;
-  margin-top: 14px;
+  min-height: 148px;
+  margin-top: 12px;
   padding: 18px 16px;
-  border: 1px dashed #e5e9e7;
-  border-radius: 9px;
-  background: #fcfdfc;
-  color: #9aab9f;
+  border: 1px solid #e7edf3;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f8fafc 0%, #f3f6fa 100%);
+  color: var(--muted);
   text-align: center;
   box-sizing: border-box;
 }

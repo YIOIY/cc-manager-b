@@ -20,6 +20,10 @@
     <div class="stat" data-stat="today_cost">
       <span>今日消费</span>
       <b class="money">{{ usd(todayFen) || '—' }}</b>
+      <p class="stat-total">
+        <span>总消费</span>
+        <strong>{{ usd(totalFen) || '—' }}</strong>
+      </p>
       <small
         >7 天 {{ usd(weekFen) || '—' }} · 日均 {{ usd(dailyAverage) || '—'
         }}<template v-if="change"
@@ -28,11 +32,7 @@
           ></template
         ></small
       >
-      <small class="stat-foot"
-        >今日未出齐，约 2 小时延迟<template v-if="insights">
-          · 累计 {{ usd(insights.fleet.cost_fen_total) || '—' }}</template
-        ></small
-      >
+      <small class="stat-foot">今日未出齐，约 2 小时延迟</small>
     </div>
     <div class="stat" data-stat="action" :class="{ attention: actionTotal > 0 }">
       <span>需要动手</span>
@@ -62,14 +62,13 @@
     </div>
   </div>
 
-  <div class="dashboard-grid">
-    <AttentionList
-      ref="attentionPanel"
-      :items="attention?.items || []"
-      :counts="attention?.counts || {}"
-      :loading="attentionLoading"
-      :failed="attentionFailed"
-      @open="openAttention"
+  <div class="dashboard-grid wide-left">
+    <QuotaBoard
+      :rows="insights?.quota || []"
+      :loading="insightsLoading"
+      :failed="insightsFailed"
+      :usd-rate="insights?.usd_cny_rate ?? undefined"
+      @open="(row) => go({ q: row.account || row.alias })"
       @all="go({})"
     />
     <SpendPanel
@@ -80,13 +79,14 @@
     />
   </div>
 
-  <div class="dashboard-grid wide-left">
-    <QuotaBoard
-      :rows="insights?.quota || []"
-      :loading="insightsLoading"
-      :failed="insightsFailed"
-      :usd-rate="insights?.usd_cny_rate ?? undefined"
-      @open="(row) => go({ q: row.account || row.alias })"
+  <div class="dashboard-grid">
+    <AttentionList
+      ref="attentionPanel"
+      :items="attention?.items || []"
+      :counts="attention?.counts || {}"
+      :loading="attentionLoading"
+      :failed="attentionFailed"
+      @open="openAttention"
       @all="go({})"
     />
     <IdleAccounts
@@ -208,6 +208,7 @@ const bannedCount = computed(() =>
 const nearLimit = computed(() => dash.value?.platform.near_limit_accounts ?? 0)
 const todayFen = computed(() => dash.value?.platform.today_model_cost_fen ?? 0)
 const weekFen = computed(() => dash.value?.platform.week_model_cost_fen ?? 0)
+const totalFen = computed(() => dash.value?.platform.total_model_cost_fen ?? 0)
 const days = computed(() => dash.value?.platform.cost_by_day || [])
 const dailyAverage = computed(() => dailyAverageFen(days.value))
 const change = computed(() => dayChange(days.value))
@@ -346,6 +347,30 @@ onMounted(load)
 }
 .stat b.money {
   font-size: 26px;
+}
+.stat-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f3f8ff;
+  border: 1px solid #d6eaff;
+  line-height: 1.2;
+}
+.stat-total span {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-deep, #004fb3);
+}
+.stat-total strong {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--accent);
 }
 .stat:nth-child(1) {
   background: linear-gradient(180deg, #f3f8ff 0%, #fff 70%);

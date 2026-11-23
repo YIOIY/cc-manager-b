@@ -45,6 +45,7 @@ const (
 	PermBillsView            Permission = "bills.view"
 	PermBillsQuery           Permission = "bills.query"
 	PermBillsSync            Permission = "bills.sync"
+	PermChannelUsageView     Permission = "channel_usage.view"
 	PermConnectionsView      Permission = "connections.view"
 	PermConnectionsCreate    Permission = "connections.create"
 	PermConnectionsUpdate    Permission = "connections.update"
@@ -93,6 +94,9 @@ var permissionCatalogue = []permissionModule{
 		{PermBillsView, "查看已同步账单与用量", ""},
 		{PermBillsQuery, "向平台查询区间账单", "会消耗平台接口额度"},
 		{PermBillsSync, "发起 / 重试账单同步", ""},
+	}},
+	{"channel_usage", "渠道用量", "渠道用量", []permissionDef{
+		{PermChannelUsageView, "查看渠道用量", "按日与交付汇总的网页账单"},
 	}},
 	{"connections", "平台设置", "平台设置", []permissionDef{
 		{PermConnectionsView, "查看平台连接", "Token 永不回显"},
@@ -185,6 +189,7 @@ func builtinRoles() []builtinRole {
 			string(PermProxiesView), string(PermProxiesCreate), string(PermProxiesUpdate), string(PermProxiesArchive), string(PermProxiesDelete), string(PermProxiesTest), string(PermProxiesSettings),
 			string(PermJobsView),
 			string(PermBillsView), string(PermBillsQuery), string(PermBillsSync),
+			string(PermChannelUsageView),
 			string(PermConnectionsView), string(PermAuditView),
 		}},
 		{roleViewerID, "只读", "只能查看页面与记录，不能执行任何修改", append(viewPermissionKeys(), string(PermAccountsUsage))},

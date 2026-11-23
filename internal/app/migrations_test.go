@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"testing"
 )
@@ -143,5 +144,66 @@ func TestOAuthDispatchDefaultsMigrationRepairsOutOfRangeRow(t *testing.T) {
 				t.Fatalf("after v21: %v want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+
+func TestChannelUsagePermissionMigrationGrantsExistingBillViewers(t *testing.T) {
+	db, err := sql.Open("sqlite", t.TempDir()+"/cu-perm.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(baseSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err = runMigrations(db, 21); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pre-split DB: strip channel_usage.view from operator and seed
+	// a custom bills.view role that never had the new page permission.
+	if _, err = db.Exec(`UPDATE roles SET permissions_json='["bills.view","jobs.view"]' WHERE id=?`, roleOperatorID); err != nil {
+		t.Fatal(err)
+	}
+	stamp := strftimeNow()
+	for _, row := range []struct{ id, perms string }{
+		{"role-with-bills", `["bills.view","jobs.view"]`},
+		{"role-without", `["jobs.view"]`},
+	} {
+		if _, err = db.Exec(`INSERT INTO roles(id,name,description,builtin,permissions_json,version,created_at,updated_at) VALUES(?,?,?,0,?,1,?,?)`, row.id, row.id, "", row.perms, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = runMigrations(db, 22); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"role-with-bills", roleOperatorID} {
+		var encoded string
+		if err = db.QueryRow(`SELECT permissions_json FROM roles WHERE id=?`, id).Scan(&encoded); err != nil {
+			t.Fatal(err)
+		}
+		var perms []string
+		_ = json.Unmarshal([]byte(encoded), &perms)
+		found := false
+		for _, p := range perms {
+			if p == string(PermChannelUsageView) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("%s missing channel_usage.view: %v", id, perms)
+		}
+	}
+	var encoded string
+	if err = db.QueryRow(`SELECT permissions_json FROM roles WHERE id=?`, "role-without").Scan(&encoded); err != nil {
+		t.Fatal(err)
+	}
+	var perms []string
+	_ = json.Unmarshal([]byte(encoded), &perms)
+	for _, p := range perms {
+		if p == string(PermChannelUsageView) {
+			t.Fatalf("role-without unexpectedly gained channel_usage.view: %v", perms)
+		}
 	}
 }

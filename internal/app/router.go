@@ -79,7 +79,7 @@ func (a *App) Handler() http.Handler {
 	// Lookups expose only names and ids so account and bill screens can offer
 	// pickers without granting the proxies/connections modules themselves.
 	needAny("GET /api/v1/lookups/proxies", a.lookupProxies, PermAccountsView, PermAccountsOnboard)
-	needAny("GET /api/v1/lookups/platform-connections", a.lookupConnections, PermAccountsView, PermBillsView)
+	needAny("GET /api/v1/lookups/platform-connections", a.lookupConnections, PermAccountsView, PermBillsView, PermChannelUsageView)
 	need("POST /api/v1/proxies/{id}/test", PermProxiesTest, a.proxyTest)
 	need("GET /api/v1/proxies/{id}/checks", PermProxiesView, func(w http.ResponseWriter, r *http.Request) { a.proxyChecks(w, r, r.PathValue("id")) })
 
@@ -118,9 +118,12 @@ func (a *App) Handler() http.Handler {
 	return a.observe(mux)
 }
 
-// billPermission distinguishes read, supplier interval queries and sync
-// writes under /platform-usage.
+// billPermission distinguishes channel-usage, bill reads, supplier interval
+// queries and sync writes under /platform-usage.
 func billPermission(r *http.Request) Permission {
+	if strings.Contains(r.URL.Path, "/channel-usage") {
+		return PermChannelUsageView
+	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		return PermBillsView
 	}

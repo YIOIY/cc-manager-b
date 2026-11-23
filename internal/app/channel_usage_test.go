@@ -19,6 +19,24 @@ func TestFenToUsdCents(t *testing.T) {
 	}
 }
 
+func TestChannelUsageRequiresOwnPermission(t *testing.T) {
+	a, admin := rbacApp(t)
+	var role struct {
+		Data struct{ ID string }
+	}
+	_ = jsonDecode(admin.do(http.MethodPost, "/api/v1/roles", `{"name":"仅离线账单","permissions":["bills.view"]}`), &role)
+	_ = jsonDecode(admin.do(http.MethodPost, "/api/v1/users", `{"username":"bills-only","password":"bills-only-pass-1","role_ids":["`+role.Data.ID+`"]}`), &struct{ Data struct{ ID string } }{})
+	c := newTestClient(t, a)
+	c.loginAs("bills-only", "bills-only-pass-1")
+	assertEnvelope(t, c.do(http.MethodGet, "/api/v1/platform-usage/channel-usage/accounts?connection_id=x", ""), http.StatusForbidden, "PERMISSION_DENIED")
+
+	_ = jsonDecode(admin.do(http.MethodPost, "/api/v1/roles", `{"name":"仅渠道用量","permissions":["channel_usage.view"]}`), &role)
+	_ = jsonDecode(admin.do(http.MethodPost, "/api/v1/users", `{"username":"cu-only","password":"cu-only-pass-1","role_ids":["`+role.Data.ID+`"]}`), &struct{ Data struct{ ID string } }{})
+	cu := newTestClient(t, a)
+	cu.loginAs("cu-only", "cu-only-pass-1")
+	assertEnvelope(t, cu.do(http.MethodGet, "/api/v1/platform-usage/channel-usage/accounts", ""), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
+}
+
 func TestChannelUsageEndpoints(t *testing.T) {
 	a, stub, admin := routesFixture(t)
 	loc, _ := time.LoadLocation("Asia/Shanghai")

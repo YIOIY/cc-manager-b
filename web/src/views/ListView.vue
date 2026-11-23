@@ -279,7 +279,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { FileJson, Plus, RefreshCw, Network, UsersRound, ListChecks, SearchX, MoreHorizontal } from 'lucide-vue-next'
@@ -297,7 +297,7 @@ import RemoteAccountsDrawer from '../components/RemoteAccountsDrawer.vue'
 import ProxyNetworkPanel from '../components/ProxyNetworkPanel.vue'
 import OAuthSettingsPanel from '../components/OAuthSettingsPanel.vue'
 import { api, errorMessage } from '../api'
-import { listConfigs, states, type Column } from '../list-model'
+import { listConfigs, states, type Choice, type Column } from '../list-model'
 import { deliveryState, outcomeText } from '../account-workflow'
 import { useListPage } from '../composables/useListPage'
 import { useSession } from '../composables/useSession'
@@ -312,6 +312,7 @@ import type {
   PlatformProfileResult,
   Proxy,
   ProxyOption,
+  User,
 } from '../types/api'
 
 const route = useRoute()
@@ -327,12 +328,35 @@ const canCreate = computed(
 )
 const canImportAccounts = computed(() => can('accounts.import') && onboardAllowed())
 const onboardBlockedMessage = '当前账号已被禁止上号，请联系管理员'
-const config = computed(() => listConfigs[listKey.value] || listConfigs.accounts!)
+const ownerChoices = ref<Choice[]>([{ label: '未分配', value: 'unassigned' }])
+const config = computed(() => {
+  const base = listConfigs[listKey.value] || listConfigs.accounts!
+  const filters = base.filters
+    .filter((f) => !f.adminOnly || isAdmin.value)
+    .map((f) => (f.key === 'owner_user_id' ? { ...f, options: ownerChoices.value } : f))
+  return { ...base, filters }
+})
 
 const proxies = ref<ProxyOption[]>([])
 const connections = ref<ConnectionOption[]>([])
 const reconcileOpen = ref(false)
 const reconcileConnection = computed(() => connections.value.find((c) => c.web_configured && c.enabled) || null)
+async function loadOwnerChoices() {
+  if (!isAdmin.value || listKey.value !== 'accounts') return
+  try {
+    const res = await api<User[]>('/users')
+    const users = (res.data || [])
+      .slice()
+      .sort((a, b) => (a.nickname || a.username).localeCompare(b.nickname || b.username, 'zh'))
+      .map((u) => ({
+        label: u.nickname ? `${u.nickname}（${u.username}）` : u.username,
+        value: u.id,
+      }))
+    ownerChoices.value = [{ label: '未分配', value: 'unassigned' }, ...users]
+  } catch {
+    // Keep the unassigned option; filter still works for that case.
+  }
+}
 async function loadLookups() {
   if (listKey.value !== 'accounts') return
   // Lookups only need accounts.view, so this page never depends on the proxies / connections modules.
@@ -342,7 +366,11 @@ async function loadLookups() {
   ])
   proxies.value = p.data
   connections.value = c.data
+  await loadOwnerChoices()
 }
+watch(isAdmin, () => {
+  void loadOwnerChoices()
+})
 async function refreshOnboardingProxies() {
   try {
     await loadLookups()
@@ -687,7 +715,14 @@ onMounted(async () => {
 
 .list-workspace {
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: 10px;
+}
+
+.list-workspace.platform-monitor {
+  border-color: #dde5ee;
+  box-shadow:
+    0 1px 2px rgba(28, 31, 35, 0.03),
+    0 10px 28px rgba(28, 31, 35, 0.04);
 }
 
 .list-heading {

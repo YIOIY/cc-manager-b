@@ -386,8 +386,8 @@ func TestDashboardSpendFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spend["today_model_cost_fen"] != int64(3521) || spend["week_model_cost_fen"] != int64(13613) {
-		t.Fatalf("today=%v week=%v", spend["today_model_cost_fen"], spend["week_model_cost_fen"])
+	if spend["today_model_cost_fen"] != int64(3521) || spend["week_model_cost_fen"] != int64(13613) || spend["total_model_cost_fen"] != int64(113612) {
+		t.Fatalf("today=%v week=%v total=%v", spend["today_model_cost_fen"], spend["week_model_cost_fen"], spend["total_model_cost_fen"])
 	}
 	days, _ := spend["cost_by_day"].([]map[string]any)
 	if len(days) != 7 || days[6]["date"] != today || days[6]["final"] != false || days[6]["cost_fen"] != int64(3521) || days[5]["date"] != yesterday || days[5]["final"] != true || days[5]["cost_fen"] != int64(10092) || days[0]["cost_fen"] != int64(0) {

@@ -26,6 +26,7 @@ export type Permission =
   | 'bills.view'
   | 'bills.query'
   | 'bills.sync'
+  | 'channel_usage.view'
   | 'connections.view'
   | 'connections.create'
   | 'connections.update'
@@ -514,6 +515,8 @@ export interface DashboardPlatform {
   near_limit_accounts?: number
   today_model_cost_fen?: number
   week_model_cost_fen?: number
+  /** All-time bill total for the caller's ownership scope (admin = all). */
+  total_model_cost_fen?: number
   cost_by_day?: SpendDay[]
   cost_by_model?: { model_name: string; cost_fen: number }[]
   cost_by_account?: { account_id: string; account: string; cost_fen: number }[]

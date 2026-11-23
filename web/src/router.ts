@@ -71,7 +71,7 @@ export const routes: RouteRecordRaw[] = [
       icon: ChartPie,
       eyebrow: 'CHANNEL USAGE',
       nav: true,
-      permission: 'bills.view',
+      permission: 'channel_usage.view',
     },
   },
   {

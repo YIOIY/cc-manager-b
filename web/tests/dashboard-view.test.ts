@@ -58,6 +58,7 @@ function dashboard(overrides: Partial<Dashboard['platform']> = {}, accounts = 8)
       near_limit_accounts: 2,
       today_model_cost_fen: 1488278,
       week_model_cost_fen: 4950682,
+      total_model_cost_fen: 720000,
       cost_by_day: [
         { date: '2026-11-06', cost_fen: 100000, final: true },
         { date: '2026-11-07', cost_fen: 200000, final: true },
@@ -250,6 +251,7 @@ test('without the web channel the top row falls back to local counts with a hint
       near_limit_accounts: 0,
       today_model_cost_fen: 0,
       week_model_cost_fen: 0,
+      total_model_cost_fen: 0,
       cost_by_day: [],
       cost_by_model: [],
       cost_by_account: [],
@@ -264,12 +266,14 @@ test('without the web channel the top row falls back to local counts with a hint
   expect(text).toContain('暂无账单数据')
 })
 
-test('amounts are shown only in dollars, with the daily average and the cumulative total', async () => {
-  const text = (await render(dashboard())).text()
+test('amounts are shown only in dollars, with the daily average and the total spend', async () => {
+  const w = await render(dashboard())
+  const text = w.text()
   expect(text).toContain('$2,067.05') // ¥14,882.78 ÷ 7.2
   expect(text).toContain('$6,875.95') // ¥49,506.82 ÷ 7.2
   expect(text).toContain('日均')
-  expect(text).toContain('累计 $1,000.00')
+  expect(w.get('.stat-total').text()).toContain('总消费')
+  expect(w.get('.stat-total').text()).toContain('$1,000.00')
   expect(text).not.toContain('¥')
 })
 

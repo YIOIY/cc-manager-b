@@ -9,6 +9,8 @@ export interface FilterField {
   type: 'select' | 'text' | 'date' | 'number'
   operator?: 'min' | 'max'
   options?: Choice[]
+  /** Only shown to admins (e.g. 所属人 on the accounts list). */
+  adminOnly?: boolean
 }
 export interface Column {
   field: string
@@ -76,6 +78,14 @@ export const listConfigs: Record<string, ListConfig> = {
     ],
     placeholder: '搜索账号、平台账号 ID、别名、状态或套餐',
     filters: [
+      {
+        key: 'owner_user_id',
+        label: '所属人',
+        field: 'created_by_user_id',
+        type: 'select',
+        adminOnly: true,
+        options: [{ label: '未分配', value: 'unassigned' }],
+      },
       {
         key: 'onboarding_state',
         label: '上号状态',

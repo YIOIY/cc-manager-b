@@ -40,6 +40,17 @@ var migrations = []migration{
 	{19, "oauth-dispatch-settings", migrateOAuthDispatchV19},
 	{20, "oauth-ua-pool", migrateOAuthUAPoolV20},
 	{21, "oauth-dispatch-defaults", migrateOAuthDispatchDefaultsV21},
+	{22, "channel-usage-permission", migrateChannelUsagePermissionV22},
+}
+
+// migrateChannelUsagePermissionV22 splits 渠道用量 out of bills.view so the
+// role editor can toggle that nav page on its own. Roles that already had
+// bills.view keep access; the builtin operator gets it even without bills.
+func migrateChannelUsagePermissionV22(tx *sql.Tx) error {
+	if err := grantRolesHaving(tx, string(PermBillsView), string(PermChannelUsageView)); err != nil {
+		return err
+	}
+	return grantBuiltinRolePermissions(tx, roleOperatorID, string(PermChannelUsageView))
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -277,25 +288,81 @@ func grantBuiltinRolePermissions(tx *sql.Tx, roleID string, extra ...string) err
 	if err != nil {
 		return err
 	}
+	return writeRolePermissions(tx, roleID, unionPermissions(encoded, extra...))
+}
+
+// grantRolesHaving adds extra to every role that already holds required.
+func grantRolesHaving(tx *sql.Tx, required string, extra ...string) error {
+	rows, err := tx.Query(`SELECT id,permissions_json FROM roles`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, encoded string
+		if err = rows.Scan(&id, &encoded); err != nil {
+			return err
+		}
+		var current []string
+		_ = json.Unmarshal([]byte(encoded), &current)
+		have := false
+		for _, p := range current {
+			if p == required {
+				have = true
+				break
+			}
+		}
+		if !have {
+			continue
+		}
+		if err = writeRolePermissions(tx, id, unionPermissions(encoded, extra...)); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func unionPermissions(encoded string, extra ...string) []string {
 	var current []string
 	_ = json.Unmarshal([]byte(encoded), &current)
 	have := map[string]bool{}
 	for _, p := range current {
 		have[p] = true
 	}
-	changed := false
 	for _, p := range extra {
 		if !have[p] {
 			current = append(current, p)
 			have[p] = true
-			changed = true
 		}
 	}
-	if !changed {
-		return nil
+	return current
+}
+
+func writeRolePermissions(tx *sql.Tx, roleID string, permissions []string) error {
+	var encoded string
+	if err := tx.QueryRow(`SELECT permissions_json FROM roles WHERE id=?`, roleID).Scan(&encoded); err != nil {
+		return err
 	}
-	out, _ := json.Marshal(current)
-	_, err = tx.Exec(`UPDATE roles SET permissions_json=?,version=version+1,updated_at=? WHERE id=?`, string(out), strftimeNow(), roleID)
+	var before []string
+	_ = json.Unmarshal([]byte(encoded), &before)
+	if len(before) == len(permissions) {
+		same := true
+		have := map[string]bool{}
+		for _, p := range before {
+			have[p] = true
+		}
+		for _, p := range permissions {
+			if !have[p] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return nil
+		}
+	}
+	out, _ := json.Marshal(permissions)
+	_, err := tx.Exec(`UPDATE roles SET permissions_json=?,version=version+1,updated_at=? WHERE id=?`, string(out), strftimeNow(), roleID)
 	return err
 }
 

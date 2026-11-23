@@ -475,6 +475,56 @@ func accountListFilter(w http.ResponseWriter, q url.Values) (listFilter, bool) {
 	return f, true
 }
 
+// applyAccountOwnerFilter limits the list to selected owners. Admins only;
+// non-admins already have their own created_by scope and the param is ignored.
+// owner_user_id / owner_user_ids accept user ids (comma-separated) or
+// "unassigned" for rows with an empty created_by_user_id.
+func applyAccountOwnerFilter(f *listFilter, q url.Values, admin bool) {
+	if !admin {
+		return
+	}
+	raw := strings.TrimSpace(q.Get("owner_user_id"))
+	if raw == "" {
+		raw = strings.TrimSpace(q.Get("owner_user_ids"))
+	}
+	if raw == "" {
+		return
+	}
+	var ids []string
+	var unassigned bool
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if part == "unassigned" {
+			unassigned = true
+			continue
+		}
+		ids = append(ids, part)
+	}
+	switch {
+	case unassigned && len(ids) == 0:
+		f.where = append(f.where, "t.created_by_user_id=''")
+	case !unassigned && len(ids) == 1:
+		f.equals("t.created_by_user_id", ids[0])
+	case !unassigned && len(ids) > 1:
+		args := make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+		f.where = append(f.where, "t.created_by_user_id IN ("+marks(len(ids))+")")
+		f.args = append(f.args, args...)
+	case unassigned && len(ids) > 0:
+		args := make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+		f.where = append(f.where, "(t.created_by_user_id='' OR t.created_by_user_id IN ("+marks(len(ids))+"))")
+		f.args = append(f.args, args...)
+	}
+}
+
 func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 	page, size, paged, ok := pageParams(w, r)
 	if !ok {
@@ -484,7 +534,9 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ownershipFrom(r).filterCreatedBy(&f, "t.created_by_user_id")
+	scope := ownershipFrom(r)
+	scope.filterCreatedBy(&f, "t.created_by_user_id")
+	applyAccountOwnerFilter(&f, r.URL.Query(), scope.Admin)
 	ctx := r.Context()
 	total := 0
 	limit, offset := unpagedAccountLimit, 0

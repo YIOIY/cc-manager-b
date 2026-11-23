@@ -383,7 +383,8 @@ const spendWindowDays = 7
 
 // spendSummary aggregates the per-model bills of every enabled connection
 // over its own local "today" and the 6 days before, merging connections by
-// local date string.
+// local date string. total_model_cost_fen is the all-time scoped sum (admin =
+// every row; others = accounts they created).
 func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipScope) (map[string]any, error) {
 	rows, err := a.DB.QueryContext(ctx, `SELECT id,timezone FROM platform_connections WHERE enabled=1`)
 	if err != nil {
@@ -415,6 +416,10 @@ func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipSco
 	var today, week int64
 	latestToday, latestStart := "", ""
 	ownerSQL, ownerArgs := scope.sqlAnd("acc.created_by_user_id")
+	var total int64
+	if err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(b.cost_fen),0) FROM platform_bill_models b LEFT JOIN accounts acc ON acc.id=b.account_id WHERE 1=1`+ownerSQL, ownerArgs...).Scan(&total); err != nil {
+		return nil, err
+	}
 	for _, c := range conns {
 		if c.today > latestToday {
 			latestToday, latestStart = c.today, c.start
@@ -494,7 +499,7 @@ func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipSco
 	for _, m := range accounts {
 		m["account"] = emails[m["account_id"].(string)]
 	}
-	return map[string]any{"today_model_cost_fen": today, "week_model_cost_fen": week, "cost_by_day": days, "cost_by_model": topN(byModel, "model_name"), "cost_by_account": accounts}, nil
+	return map[string]any{"today_model_cost_fen": today, "week_model_cost_fen": week, "total_model_cost_fen": total, "cost_by_day": days, "cost_by_model": topN(byModel, "model_name"), "cost_by_account": accounts}, nil
 }
 
 func intOf(v any) int {
