@@ -20,6 +20,8 @@ const settings = {
   manual_preheat_seconds_max: 0,
   batch_preheat_seconds_min: 5,
   batch_preheat_seconds_max: 9,
+  // The server returns the pool as a JSON string, exactly as stored.
+  ua_pool_json: '["Mozilla/5.0 fixture-a","Mozilla/5.0 fixture-b","Mozilla/5.0 fixture-c"]',
   version: 4,
 }
 
@@ -59,6 +61,8 @@ test('loads current settings and saves with the expected version', async () => {
   await flushPromises()
   expect(wrapper.text()).toContain('全局并发')
   expect(wrapper.text()).toContain('手动预热')
+  // Three UA strings, not the character count of the JSON string.
+  expect(wrapper.text()).toContain('3 个版本')
   await wrapper.get('button').trigger('click')
   await flushPromises()
 
@@ -75,10 +79,18 @@ test('loads current settings and saves with the expected version', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(2)
   expect(fetchMock.mock.calls[1]![0]).toBe('/api/v1/oauth-settings')
   expect(fetchMock.mock.calls[1]![1].method).toBe('PUT')
-  expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toMatchObject({
-    global_concurrency: 5,
-    expected_version: 4,
-  })
+  // Wire contract of PUT /oauth-settings (internal/app/oauth_dispatch_settings.go):
+  // `version` for the optimistic lock and the pool as a JSON string.
+  const body = JSON.parse(fetchMock.mock.calls[1]![1].body)
+  expect(body).toMatchObject({ global_concurrency: 5, version: 4 })
+  expect(body.expected_version).toBeUndefined()
+  expect(body.ua_pool_json_text).toBeUndefined()
+  expect(typeof body.ua_pool_json).toBe('string')
+  expect(JSON.parse(body.ua_pool_json)).toEqual([
+    'Mozilla/5.0 fixture-a',
+    'Mozilla/5.0 fixture-b',
+    'Mozilla/5.0 fixture-c',
+  ])
   wrapper.unmount()
 })
 

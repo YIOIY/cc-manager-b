@@ -34,7 +34,7 @@
         ><strong>{{ preheatLabel(settings.batch_preheat_seconds_min, settings.batch_preheat_seconds_max) }}</strong>
       </div>
       <div class="oauth-settings-item ua-pool-item">
-        <span>UA 池</span><strong>{{ (settings.ua_pool_json || []).length }} 个版本</strong>
+        <span>UA 池</span><strong>{{ poolSize }} 个版本</strong>
       </div>
     </div>
   </section>
@@ -112,15 +112,16 @@ type Settings = {
   manual_preheat_seconds_max: number
   batch_preheat_seconds_min: number
   batch_preheat_seconds_max: number
-  ua_pool_json: string[]
-  ua_pool_json_text?: string
+  /** The server stores and returns the pool as a JSON string (DB column mirror). */
+  ua_pool_json: string
   version: number
 }
+type Draft = Settings & { ua_pool_json_text: string }
 
 const emit = defineEmits<{ changed: [] }>()
 const { can } = useSession()
 const settings = ref<Settings>()
-const draft = ref<Settings>()
+const draft = ref<Draft>()
 const loading = ref(false)
 const loadError = ref('')
 const settingsOpen = ref(false)
@@ -128,6 +129,17 @@ const saving = ref(false)
 const saveError = ref('')
 
 const preheatLabel = (min: number, max: number) => (max > min ? `${min}–${max}s` : `${min}s`)
+/** Decode the server's JSON-string pool; anything unparsable counts as empty. */
+function parsePool(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.filter((ua): ua is string => typeof ua === 'string')
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((ua): ua is string => typeof ua === 'string') : []
+  } catch {
+    return []
+  }
+}
 const uaPoolIsValid = (value: string) => {
   try {
     const parsed = JSON.parse(value)
@@ -140,6 +152,7 @@ const uaPoolIsValid = (value: string) => {
     return false
   }
 }
+const poolSize = computed(() => parsePool(settings.value?.ua_pool_json).length)
 const draftDirty = computed(() => {
   const s = settings.value
   const d = draft.value
@@ -154,7 +167,7 @@ const draftDirty = computed(() => {
     'batch_preheat_seconds_min',
     'batch_preheat_seconds_max',
   ] as const
-  const poolChanged = JSON.stringify(draftPool()) !== JSON.stringify(s.ua_pool_json || [])
+  const poolChanged = JSON.stringify(draftPool()) !== JSON.stringify(parsePool(s.ua_pool_json))
   return poolChanged || fields.some((field) => d[field] !== s[field])
 })
 async function load() {
@@ -170,7 +183,7 @@ async function load() {
 }
 function draftPool(): string[] {
   const raw = draft.value?.ua_pool_json_text
-  if (raw == null) return draft.value?.ua_pool_json || []
+  if (raw == null) return parsePool(draft.value?.ua_pool_json)
   try {
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed : []
@@ -180,7 +193,10 @@ function draftPool(): string[] {
 }
 function openSettings() {
   if (!settings.value) return
-  draft.value = { ...settings.value, ua_pool_json_text: JSON.stringify(settings.value.ua_pool_json || [], null, 2) }
+  draft.value = {
+    ...settings.value,
+    ua_pool_json_text: JSON.stringify(parsePool(settings.value.ua_pool_json), null, 2),
+  }
   saveError.value = ''
   settingsOpen.value = true
 }
@@ -189,16 +205,19 @@ async function save() {
   saving.value = true
   saveError.value = ''
   try {
-    const { version, ...body } = draft.value
+    const body: Record<string, unknown> = { ...draft.value }
+    delete body.ua_pool_json_text
     const uaPool = draftPool()
     if (!uaPoolIsValid(JSON.stringify(uaPool))) {
-      saveError.value = 'UA 池必须是 1–8 条、每条不超过 120 字符的非空字符串'
+      saveError.value = 'UA 池必须是不超过 8 条、每条不超过 120 字符的非空字符串'
       return
     }
+    // Contract of PUT /oauth-settings: the pool travels as a JSON string and the
+    // optimistic-lock field is `version`, mirroring what GET returned.
     settings.value = (
       await api<Settings>('/oauth-settings', {
         method: 'PUT',
-        body: JSON.stringify({ ...body, ua_pool_json: uaPool, expected_version: version }),
+        body: JSON.stringify({ ...body, ua_pool_json: JSON.stringify(uaPool) }),
       })
     ).data
     settingsOpen.value = false

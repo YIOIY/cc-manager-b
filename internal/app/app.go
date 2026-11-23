@@ -154,6 +154,13 @@ func NewWithConfig(cfg Config, workers bool) (*App, error) {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap admin: %w", err)
 	}
+	// The gates above start from the built-in sizes; the saved dispatch
+	// settings must win from the first request, not from the next PUT.
+	if s, e := a.loadOAuthDispatchSettings(); e == nil {
+		a.applyOAuthDispatchSettings(s)
+	} else {
+		slog.Warn("oauth dispatch settings unavailable, using built-in gate sizes", "error", e)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	if workers {

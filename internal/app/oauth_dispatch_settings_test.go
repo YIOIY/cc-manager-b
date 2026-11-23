@@ -124,3 +124,32 @@ func TestExitExchangePacingSpacesCalls(t *testing.T) {
 		t.Fatalf("second exchange returned too early: %v", d)
 	}
 }
+
+// Saved concurrency limits must survive a restart: an operator who lowered the
+// global gate to protect the provider would otherwise silently run at the
+// built-in size until someone re-saves the settings page.
+func TestOAuthDispatchSettingsAppliedAtStartup(t *testing.T) {
+	t.Setenv("CC_MANAGER_ADMIN_PASSWORD", "oauth-settings-password")
+	path := t.TempDir() + "/restart.db"
+	a, err := newApp(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.Exec(`UPDATE oauth_dispatch_settings SET global_concurrency=1, exit_concurrency=4, version=version+1 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newApp(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if got := cap(restarted.oauthGate.Load().slots); got != 1 {
+		t.Fatalf("global gate after restart = %d, want 1", got)
+	}
+	if gate := restarted.oauthExitGate.Load(); gate == nil || gate.size != 4 {
+		t.Fatalf("exit gate after restart = %+v, want size 4", gate)
+	}
+}
