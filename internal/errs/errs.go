@@ -74,7 +74,7 @@ const (
 var allowedDetailKeys = map[string]bool{
 	"resource": true, "permission": true, "secret": true, "retry_after_seconds": true,
 	"upstream_status": true, "job_id": true, "stage": true, "field": true, "next_attempt_at": true,
-	"oauth_session_expired": true, "oauth_stage": true, "oauth_status": true, "oauth_ms": true, "attempt": true,
+	"oauth_session_id": true, "oauth_session_expired": true, "oauth_stage": true, "oauth_status": true, "oauth_ms": true, "attempt": true,
 }
 
 // Error is a registered error with optional per-occurrence data.
