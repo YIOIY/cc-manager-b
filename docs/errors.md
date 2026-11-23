@@ -75,7 +75,7 @@
 | `OAUTH_RESPONSE_INVALID` | upstream | 502 | 是 | retry | 授权响应格式异常，请按当前阶段重试 | 响应不是 JSON 或字段缺失；保留 pending 以便重试同一段；允许调用方自定义文案 |
 | `OAUTH_RESULT_INVALID` | validation | 422 | 否 | fix_input | 授权结果无法识别 | 本地解析错误，文案由解析器给出；允许调用方自定义文案 |
 | `OAUTH_RETRYABLE` | upstream | 502 | 是 | retry | 授权请求暂时失败，请重试当前阶段 | 未分类的瞬时上游失败；网络/协议阶段都能触发；不改变 pending；允许调用方自定义文案 |
-| `OAUTH_SESSION_CONFLICT` | conflict | 409 | 否 | fix_input | 授权会话与当前操作不一致 | 同一 owner 已有进行中的 pending；重授权需显式 refresh 或 cancel；允许调用方自定义文案 |
+| `OAUTH_SESSION_CONFLICT` | conflict | 409 | 否 | fix_input | 授权会话与当前操作不一致 | 同一浏览器会话已有另一账号或出口的待授权链接（details.oauth_session_id/proxy_id/account_id/stage 指出该链接），需显式 refresh 或 cancel；提交阶段表示 oauth_session_id 与提交的账号、凭证或邮箱不一致；允许调用方自定义文案 |
 | `OAUTH_SESSION_EXPIRED` | not_found | 404 | 否 | reauthorize | 授权链接已失效 | 链接过期、被替换、已取消、已完成提交或不属于当前会话；缓存令牌在会话等待期间过期时同样返回此码并带 details.oauth_session_expired=true |
 | `OAUTH_START_FAILED` | internal | 500 | 是 | retry | 无法生成授权链接 | 随机数生成失败 |
 | `OAUTH_SUPPLIER_REJECTED` | upstream | 502 | 是 | retry | Claude 授权服务暂时故障 | 兑换时上游 5xx；已有链接与授权码保留，可直接重试；允许调用方自定义文案 |

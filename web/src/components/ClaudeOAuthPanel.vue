@@ -95,8 +95,8 @@
         :loading="busy"
         :disabled="disabled || retryAfter > 0"
         class="oauth-done-action"
-        @click="start(!!sessionId)"
-        >{{ sessionId ? '作废并重新获取' : '重新授权' }}</el-button
+        @click="start(replaceable)"
+        >{{ replaceable ? '作废并重新获取' : '重新授权' }}</el-button
       >
     </div>
     <el-button
@@ -104,8 +104,8 @@
       type="primary"
       :loading="busy"
       :disabled="disabled || retryAfter > 0"
-      @click="start(!!sessionId)"
-      >{{ sessionId ? '作废并重新获取' : completed ? '重新授权' : '登录 Claude' }}</el-button
+      @click="start(replaceable)"
+      >{{ replaceable ? '作废并重新获取' : completed ? '重新授权' : '登录 Claude' }}</el-button
     >
   </div>
 </template>
@@ -166,12 +166,19 @@ let generation = 0
 let retryDeadline = 0
 const boundProxy = ref('')
 const boundAccount = ref('')
+/** The server refused to hand back the browser's live link because it was
+ * started for another exit or account (409 OAUTH_SESSION_CONFLICT). Only an
+ * explicit refresh replaces it, so the panel offers that instead of looping. */
+const conflict = ref<{ oauth_session_id?: string; proxy_id?: string; account_id?: string } | null>(null)
 const bindingChanged = computed(
   () =>
-    !!pending.value &&
-    (boundProxy.value !== (props.proxyId || '') ||
-      boundAccount.value !== (props.accountId || props.savedAccountId || '')),
+    !!conflict.value ||
+    (!!pending.value &&
+      (boundProxy.value !== (props.proxyId || '') ||
+        boundAccount.value !== (props.accountId || props.savedAccountId || ''))),
 )
+/** A live or conflicting link exists server-side: the primary action retires it. */
+const replaceable = computed(() => !!props.sessionId || !!conflict.value)
 
 /** Codes where the link itself is dead and only a new authorization helps. */
 const deadLinkCodes = new Set(['OAUTH_SESSION_EXPIRED'])
@@ -236,6 +243,7 @@ function reset() {
   generation++
   if (!props.sessionId) void cancel(pending.value?.id)
   pending.value = null
+  conflict.value = null
   authorizationResult.value = ''
   copied.value = false
   proxyProblem.value = false
@@ -282,6 +290,7 @@ async function start(refresh = false) {
     // The start endpoint atomically replaces the old session on explicit refresh.
     // Never issue a trailing DELETE that could race a reused session.
     if (data.id !== previous) authorizationResult.value = ''
+    conflict.value = null
     pending.value = data
     boundProxy.value = data.proxy_id ?? props.proxyId ?? ''
     boundAccount.value = data.account_id ?? props.accountId ?? props.savedAccountId ?? ''
@@ -300,9 +309,15 @@ async function start(refresh = false) {
     }
   } catch (e) {
     if (current === generation) {
-      error.value = errorMessage(e)
-      proxyProblem.value = isProxyProblem(e)
-      retryWait(e)
+      if (!refresh && e instanceof ApiError && e.code === 'OAUTH_SESSION_CONFLICT') {
+        conflict.value = e.details
+        emit('session', String(e.details.oauth_session_id ?? ''))
+        error.value = '代理或账号已变更，请点击「作废并重新获取」。'
+      } else {
+        error.value = errorMessage(e)
+        proxyProblem.value = isProxyProblem(e)
+        retryWait(e)
+      }
     }
   } finally {
     if (current === generation) setBusy(false)

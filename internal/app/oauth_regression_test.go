@@ -201,3 +201,61 @@ func TestOAuthProbeCacheIsSafeForConcurrentStarts(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// One live link per browser session: asking for another exit or account must
+// not silently hand back the old link (which the browser would then compare
+// client-side), nor mint a second one. The 409 names the live session so the
+// browser can refresh or cancel it; an explicit refresh replaces it.
+func TestOAuthStartConflictsOnDifferentBinding(t *testing.T) {
+	a, _, _, _ := deliveryFixture(t)
+	retryOAuthProxy(t, a, fixtureProvider("conflict@example.test"))
+	if _, err := a.DB.Exec(`INSERT INTO proxies(id,scheme,host,port,enabled) VALUES('other-proxy','http','127.0.0.1',9090,1)`); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, a)
+	c.login("workflow-test-password")
+	first := startSession(t, c, `{"proxy_id":"review-proxy"}`)
+	if first.status != http.StatusCreated {
+		t.Fatalf("first start: %d %v", first.status, first.data)
+	}
+	firstID := first.data["id"].(string)
+
+	same := startSession(t, c, `{"proxy_id":"review-proxy"}`)
+	if same.status != http.StatusOK || same.data["id"] != firstID {
+		t.Fatalf("same binding not reused: %d %v", same.status, same.data)
+	}
+	withEmail := startSession(t, c, `{"proxy_id":"review-proxy","email":"Conflict@Example.test"}`)
+	if withEmail.status != http.StatusOK || withEmail.data["id"] != firstID {
+		t.Fatalf("email learned later must not break reuse: %d %v", withEmail.status, withEmail.data)
+	}
+
+	other := startSession(t, c, `{"proxy_id":"other-proxy"}`)
+	if other.status != http.StatusConflict || other.data["code"] != "OAUTH_SESSION_CONFLICT" {
+		t.Fatalf("different exit: %d %v", other.status, other.data)
+	}
+	details, _ := other.data["details"].(map[string]any)
+	if details["oauth_session_id"] != firstID || details["proxy_id"] != "review-proxy" || details["account_id"] != "" || details["stage"] != "pending" {
+		t.Fatalf("conflict details: %v", details)
+	}
+	forAccount := startSession(t, c, `{"proxy_id":"review-proxy","account_id":"some-account"}`)
+	if forAccount.status != http.StatusConflict || forAccount.data["code"] != "OAUTH_SESSION_CONFLICT" {
+		t.Fatalf("different account: %d %v", forAccount.status, forAccount.data)
+	}
+	a.oauth.mu.Lock()
+	live := len(a.oauth.items)
+	a.oauth.mu.Unlock()
+	if live != 1 {
+		t.Fatalf("conflict minted a session: %d live", live)
+	}
+
+	replaced := startSession(t, c, `{"proxy_id":"other-proxy","refresh":true}`)
+	if replaced.status != http.StatusCreated || replaced.data["id"] == firstID || replaced.data["proxy_id"] != "other-proxy" {
+		t.Fatalf("refresh did not replace: %d %v", replaced.status, replaced.data)
+	}
+	a.oauth.mu.Lock()
+	_, oldAlive := a.oauth.items[firstID]
+	a.oauth.mu.Unlock()
+	if oldAlive {
+		t.Fatal("refresh left the old session alive")
+	}
+}

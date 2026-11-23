@@ -84,7 +84,7 @@ func init() {
 		Def{Code: "OAUTH_SUPPLIER_REJECTED", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "Claude 授权服务暂时故障", Hint: "稍后按原链接重试即可", Doc: "兑换时上游 5xx；已有链接与授权码保留，可直接重试", AllowCustomMessage: true},
 		Def{Code: "OAUTH_IDENTITY_REJECTED", Category: CategoryUpstream, Status: 403, Action: ActionReauthorize, Message: "Claude 拒绝了当前身份", Hint: "请检查账号授权状态，稍后重新授权", Doc: "兑换（token 阶段）返回 JSON 错误体的 401/403：同一授权码重放不会成功，会话终止并带 details.oauth_session_expired=true，需重新生成链接（非 JSON 拦截页归 OAUTH_PROXY_UNREACHABLE）；资料读取（profile/roles 阶段）返回 401/403：令牌与会话保留，可按阶段重试或手动补填。details.upstream_status 为上游状态；不据此推断封号原因"},
 		Def{Code: "ENCRYPTION_KEY_REQUIRED", Category: CategoryConfig, Status: 503, Action: ActionContactAdmin, Message: "服务尚未配置凭证加密密钥", Hint: "请联系管理员完成配置", Doc: "HTTP 与任务共用", AllowCustomMessage: true},
-		Def{Code: "OAUTH_SESSION_CONFLICT", Category: CategoryConflict, Status: 409, Action: ActionFixInput, Message: "授权会话与当前操作不一致", Doc: "同一 owner 已有进行中的 pending；重授权需显式 refresh 或 cancel", AllowCustomMessage: true},
+		Def{Code: "OAUTH_SESSION_CONFLICT", Category: CategoryConflict, Status: 409, Action: ActionFixInput, Message: "授权会话与当前操作不一致", Doc: "同一浏览器会话已有另一账号或出口的待授权链接（details.oauth_session_id/proxy_id/account_id/stage 指出该链接），需显式 refresh 或 cancel；提交阶段表示 oauth_session_id 与提交的账号、凭证或邮箱不一致", AllowCustomMessage: true},
 		Def{Code: "OAUTH_PROXY_CHANGED", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "授权出口已变化，请显式重新授权", Doc: "授权期间代理指纹改变；pending 保留但提交需用原出口或重新开始", AllowCustomMessage: true},
 		Def{Code: "PROXY_BINDING_CHANGED", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "凭证出口与代理绑定不一致，请重新授权", Doc: "已保存凭证 proxy_url 与当前选中代理不一致；需显式重签", AllowCustomMessage: true},
 		Def{Code: "CREDENTIAL_STALE", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "凭证早于已保存版本或新旧关系不明确", Doc: "防止旧快照回滚：以 last_refresh 为主序（本次更晚即接受），相同或缺失时比较 expired；两者都相同而令牌不同视为无法排序。details.field/saved/incoming 给出被比较的字段与两侧时间", AllowCustomMessage: true},
@@ -239,6 +239,7 @@ const (
 	CodeArchived                    = "ARCHIVED"
 	CodeAccountDelivered            = "ACCOUNT_DELIVERED"
 	CodeAccountInProgress           = "ACCOUNT_IN_PROGRESS"
+	CodeOauthSessionConflict        = "OAUTH_SESSION_CONFLICT"
 	CodeProxyInUse                  = "PROXY_IN_USE"
 	CodeConnectionInUse             = "CONNECTION_IN_USE"
 	CodeRoleInUse                   = "ROLE_IN_USE"

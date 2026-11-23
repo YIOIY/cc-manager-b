@@ -531,3 +531,37 @@ test('a reused ready session on another proxy requires explicit replacement befo
   expect(wrapper.emitted('authorized')).toBeUndefined()
   wrapper.unmount()
 })
+
+test('a 409 conflict for another exit offers "作废并重新获取" which resends with refresh', async () => {
+  fetchMock
+    .mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: 'OAUTH_SESSION_CONFLICT',
+            message: '当前浏览器已有另一账号或出口的授权链接，请先作废或显式刷新',
+            details: { oauth_session_id: 'stale', proxy_id: 'old-proxy', account_id: '', stage: 'pending' },
+          },
+        },
+        409,
+      ),
+    )
+    .mockResolvedValueOnce(json({ data: { ...pending, proxy_id: 'new-proxy' } }, 201))
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'new-proxy' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ proxy_id: 'new-proxy' })
+  expect(wrapper.text()).toContain('代理或账号已变更，请点击「作废并重新获取」')
+  // The stale link is reported upward so the wizard can release it, and the
+  // only action offered retires it instead of looping on the same 409.
+  expect(wrapper.emitted('session')?.[0]?.[0]).toBe('stale')
+  const button = wrapper.get('button')
+  expect(button.text()).toBe('作废并重新获取')
+  await button.trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ proxy_id: 'new-proxy', refresh: true })
+  expect(wrapper.text()).not.toContain('代理或账号已变更')
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  expect(wrapper.emitted('session')?.[1]?.[0]).toBe('flow')
+  wrapper.unmount()
+})

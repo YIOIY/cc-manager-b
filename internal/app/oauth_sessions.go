@@ -185,6 +185,23 @@ func selectPreviousPending(items map[string]oauthPending, owner [32]byte, proxyI
 	return chosenID, chosen
 }
 
+// oauthSameBinding reports whether the owner's reused pending was started for
+// the exit and account the browser asks for now. Both IDs must match; the
+// email is compared only for new accounts when both sides know it, because an
+// existing account's email comes from the same row on both sides and a new
+// account's pending may have learned its email from the exchange after the
+// browser last sent one.
+func oauthSameBinding(p oauthPending, proxyID, accountID, email string) bool {
+	if p.proxyID != strings.TrimSpace(proxyID) || p.accountID != strings.TrimSpace(accountID) {
+		return false
+	}
+	if p.accountID != "" {
+		return true
+	}
+	email = strings.TrimSpace(email)
+	return email == "" || p.email == "" || strings.EqualFold(p.email, email)
+}
+
 func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 	if a.keys == nil {
 		fail(w, 503, "ENCRYPTION_KEY_REQUIRED", "请先配置凭证加密密钥")
@@ -213,6 +230,16 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 	previousID, previous := selectPreviousPending(a.oauth.items, owner, in.ProxyID, in.AccountID, in.Email)
 	a.oauth.mu.Unlock()
 	if previousID != "" && !in.Refresh {
+		// Single flight per owner: a link for another account or exit is never
+		// handed back silently. The browser must retire it (refresh) or cancel
+		// it; the details name the live session so it can do either.
+		if !oauthSameBinding(previous, in.ProxyID, in.AccountID, in.Email) {
+			writeError(w, r, errs.New(errs.CodeOauthSessionConflict).
+				WithMessage("当前浏览器已有另一账号或出口的授权链接，请先作废或显式刷新").
+				WithDetail("oauth_session_id", previousID).WithDetail("proxy_id", previous.proxyID).
+				WithDetail("account_id", previous.accountID).WithDetail("stage", oauthPendingStage(previous)))
+			return
+		}
 		body := oauthPendingResponse(previousID, previous)
 		if wait := a.oauthRemaining(previous); wait > 0 {
 			secs := int(oauthRetryAfterSeconds(wait) / time.Second)
@@ -416,14 +443,17 @@ func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	write(w, 201, oauthPendingResponse(id, p))
 }
-func oauthPendingResponse(id string, p oauthPending) map[string]any {
-	stage := "pending"
+func oauthPendingStage(p oauthPending) string {
 	if p.ready {
-		stage = "ready"
-	} else if p.tokens != nil {
-		stage = "profile"
+		return "ready"
 	}
-	return map[string]any{"id": id, "authorization_url": p.flow.URL, "expires_at": p.expires.UTC().Format(time.RFC3339), "proxy_id": p.proxyID, "account_id": p.accountID, "stage": stage}
+	if p.tokens != nil {
+		return "profile"
+	}
+	return "pending"
+}
+func oauthPendingResponse(id string, p oauthPending) map[string]any {
+	return map[string]any{"id": id, "authorization_url": p.flow.URL, "expires_at": p.expires.UTC().Format(time.RFC3339), "proxy_id": p.proxyID, "account_id": p.accountID, "stage": oauthPendingStage(p)}
 }
 func (a *App) claudeOAuthCancel(w http.ResponseWriter, r *http.Request) {
 	a.oauth.mu.Lock()
