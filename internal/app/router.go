@@ -10,7 +10,7 @@ import (
 // still produce the JSON error envelope.
 func (a *App) Handler() http.Handler {
 	api := http.NewServeMux()
-	route := func(pattern string, h http.HandlerFunc) { api.HandleFunc(pattern, a.protect(h)) }
+	route := func(pattern string, h http.HandlerFunc) { api.HandleFunc(pattern, a.protect(a.guardOAuthWrites(h))) }
 	need := func(pattern string, p Permission, h http.HandlerFunc) { route(pattern, a.require(p, h)) }
 	needFn := func(pattern string, pick func(*http.Request) Permission, h http.HandlerFunc) {
 		route(pattern, a.requireFn(pick, h))
@@ -66,6 +66,7 @@ func (a *App) Handler() http.Handler {
 	needOnboard("POST /api/v1/accounts/{id}/submit", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.submitExistingAccount(w, r, r.PathValue("id")) })
 
 	needFn("/api/v1/proxy-settings", byMethod(PermProxiesView, map[string]Permission{"PUT": PermProxiesSettings}), a.proxyNetworkSettings)
+	needFn("/api/v1/oauth-settings", byMethod(PermOAuthSettingsView, map[string]Permission{"PUT": PermOAuthSettings}), a.oauthDispatchSettingsHandler)
 	needFn("/api/v1/proxies", byMethod(PermProxiesView, map[string]Permission{"POST": PermProxiesCreate}), a.proxies)
 	need("PATCH /api/v1/proxies/{id}", PermProxiesUpdate, a.proxyUpdate)
 	need("POST /api/v1/proxies/{id}/assign", PermProxiesUpdate, a.proxyAssign)

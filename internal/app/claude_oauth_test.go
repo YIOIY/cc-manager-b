@@ -153,11 +153,14 @@ func TestClaudeOAuthConsumedAfterProxyFailureAndRequiresCSRF(t *testing.T) {
 	}
 	path := "/api/v1/claude-oauth/sessions/" + env.Data.ID + "/exchange"
 	res = c.do("POST", path, `{"result":"code"}`)
-	if res.StatusCode != 422 || !strings.Contains(readBody(res), "OAUTH_PROXY_INVALID") {
+	// Disabling the proxy changes the captured exit fingerprint; the link and
+	// the pasted code survive, but submission must fail fast until the user
+	// explicitly retries through a valid proxy.
+	if res.StatusCode != 409 || !strings.Contains(readBody(res), "OAUTH_PROXY_CHANGED") {
 		t.Fatalf("disabled proxy %d", res.StatusCode)
 	}
-	// The link and the pasted code survive a broken exit; the user only has to
-	// supply a usable proxy instead of redoing the browser login.
+	// The pending survives so the user can paste a fresh code after fixing the
+	// exit; only terminal OAuth failures retire the link.
 	a.oauth.mu.Lock()
 	_, kept := a.oauth.items[env.Data.ID]
 	a.oauth.mu.Unlock()
@@ -167,9 +170,9 @@ func TestClaudeOAuthConsumedAfterProxyFailureAndRequiresCSRF(t *testing.T) {
 	if _, err = a.DB.Exec(`UPDATE proxies SET enabled=1 WHERE id='oauth-pool'`); err != nil {
 		t.Fatal(err)
 	}
-	// Nothing listens on the test proxy, so the retry now fails one step
-	// further along (transport) instead of at proxy resolution.
 	res = c.do("POST", path, `{"result":"code"}`)
+	// Nothing listens on the test proxy, so the retry now fails at the transport
+	// layer and is classified as proxy-unreachable (fix_input, swap the exit).
 	if body := readBody(res); res.StatusCode != 422 || !strings.Contains(body, "OAUTH_PROXY_UNREACHABLE") {
 		t.Fatalf("retry after re-enable %d %s", res.StatusCode, body)
 	}
@@ -241,6 +244,9 @@ func TestClaudeOAuthCanUseExistingAccountProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEnvelope(t, admin.do("POST", "/api/v1/claude-oauth/sessions/"+env.Data.ID+"/exchange", `{"result":"code"}`), http.StatusForbidden, "PERMISSION_DENIED")
+	// Deterministic reuse keeps the admin's own pending alive; rebinding a
+	// reassigned account requires explicitly retiring it first.
+	assertEnvelope(t, admin.do("DELETE", "/api/v1/claude-oauth/sessions/"+env.Data.ID, ``), http.StatusOK, "")
 	assertEnvelope(t, admin.do("POST", "/api/v1/claude-oauth/sessions", `{"account_id":"`+id+`"}`), http.StatusForbidden, "PERMISSION_DENIED")
 	assertEnvelope(t, admin.do("POST", "/api/v1/claude-oauth/sessions", `{"account_id":"missing"}`), http.StatusNotFound, "NOT_FOUND")
 }

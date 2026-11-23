@@ -1,14 +1,13 @@
 package app
 
 import (
-	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,52 +20,73 @@ const oauthSessionTTL = 30 * time.Minute
 // oauthReachTimeout bounds the connectivity check made before a link is issued.
 const oauthReachTimeout = 10 * time.Second
 
-// Local cooldown policy for Claude OAuth. Known accounts share an account key;
-// new accounts use the authenticated browser owner until an account ID exists.
-// The fallback survives link refresh/cancellation without depending on an email
-// that has not been returned by the provider yet.
-//
-// Upstream Retry-After is obeyed in full up to oauthCooldownCap; the lower
-// bound only fills in responses that carry no header. The cap is deliberate:
-// a bogus multi-hour header must not lock an account out for the rest of the
-// day. The policy is per process — multi-instance, restart, and requests
-// already in flight when the cooldown is set stay out of scope.
+// Cooldowns have a one-minute floor and no business-duration ceiling.
+// Retry-After parsing saturates only at Go's representable duration limit.
 const (
 	oauthCooldownDefault = time.Minute
 	oauthCooldownMin     = time.Minute
-	oauthCooldownCap     = time.Hour
 )
 
 // oauthGateWait is how long an exchange queues for a slot before OAUTH_BUSY.
 const oauthGateWait = 30 * time.Second
-const oauthExchangeTimeout = 40 * time.Second
+
+// oauthExchangeTimeout covers token + profile + roles including the deliberate
+// inter-stage pauses (worst case ~2.4s) plus per-call RTTs through the proxy.
+const oauthExchangeTimeout = 60 * time.Second
 
 type oauthPending struct {
-	owner     [32]byte
-	expires   time.Time
-	proxyID   string
-	accountID string
-	flow      claudeoauth.Pending
-	// Claim one exchange before queuing, so the same code cannot be submitted
-	// twice even when several global slots are available.
-	exchanging bool
-	// A profile 429 is resumable using the tokens already obtained. These stay
-	// in memory with the pending and are never included in an error response.
-	tokens   *claudeoauth.Result
-	codeHash [32]byte
+	owner                                    [32]byte
+	expires                                  time.Time
+	proxyID, accountID, email                string
+	flow                                     claudeoauth.Pending
+	exchanging, submitting, ready, cancelled bool
+	tokens                                   *claudeoauth.Result
+	codeHash                                 [32]byte
+	network                                  *oauthNetwork
+	fp                                       *claudeoauth.HeaderProfile
+	lease                                    *oauthLease
+	completed                                *oauthSubmission
 }
 type oauthPendingStore struct {
-	mu    sync.Mutex
-	items map[string]oauthPending
+	mu       sync.Mutex
+	configMu sync.Mutex
+	starts   accountLocks
+	items    map[string]oauthPending
+	stats    oauthStatistics
 }
 
 func (s *oauthPendingStore) sweep(stamp time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, p := range s.items {
-		if !stamp.Before(p.expires) {
-			delete(s.items, id)
+		if !stamp.Before(p.expires) && !p.exchanging && !p.submitting {
+			s.dropLocked(id)
 		}
+	}
+}
+func (s *oauthPendingStore) dropLocked(id string) {
+	p, ok := s.items[id]
+	if !ok {
+		return
+	}
+	if p.exchanging || p.submitting {
+		p.cancelled = true
+		s.items[id] = p
+		return
+	}
+	delete(s.items, id)
+	if p.network != nil {
+		p.network.close()
+	}
+	if p.lease != nil {
+		p.lease.release()
+	}
+}
+func (s *oauthPendingStore) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id := range s.items {
+		s.dropLocked(id)
 	}
 }
 
@@ -113,9 +133,7 @@ func (s *oauthAccountCooldown) extend(key string, now time.Time, wait time.Durat
 	if wait < oauthCooldownMin {
 		wait = oauthCooldownMin
 	}
-	if wait > oauthCooldownCap {
-		wait = oauthCooldownCap
-	}
+
 	if key == "" {
 		return oauthRetryAfterSeconds(wait)
 	}
@@ -146,11 +164,12 @@ func oauthRetryAfterSeconds(wait time.Duration) time.Duration {
 	if wait <= 0 {
 		return time.Second
 	}
-	secs := int(math.Ceil(wait.Seconds()))
-	if secs < 1 {
-		secs = 1
+	// Round up without overflowing duration at the numeric limit.
+	const maximum = time.Duration(1<<63 - 1)
+	if wait > maximum-time.Second {
+		return maximum / time.Second * time.Second
 	}
-	return time.Duration(secs) * time.Second
+	return ((wait + time.Second - 1) / time.Second) * time.Second
 }
 
 func oauthOwner(r *http.Request) [32]byte {
@@ -171,405 +190,17 @@ func (a *App) writeOAuthRateLimited(w http.ResponseWriter, r *http.Request, wait
 		WithMessage(fmt.Sprintf("Claude 授权暂时限流，请约 %d 秒后再试", secs)))
 }
 
-func (a *App) claudeOAuthStart(w http.ResponseWriter, r *http.Request) {
-	if a.keys == nil {
-		fail(w, 503, "ENCRYPTION_KEY_REQUIRED", "请先配置凭证加密密钥")
-		return
-	}
-	var in struct {
-		ProxyID   string `json:"proxy_id"`
-		AccountID string `json:"account_id"`
-		// Refresh asks for a link that is usable even when one is already
-		// waiting, e.g. after the user closed the tab or wants a new code.
-		Refresh bool `json:"refresh"`
-	}
-	if !decodeJSON(w, r, &in, 8192) {
-		return
-	}
-	if in.AccountID != "" {
-		if !a.requireMutable(w, r, "accounts", in.AccountID, "账号不存在") {
-			return
-		}
-		if in.ProxyID == "" {
-			if _, err := a.savedCredentialProxy(in.AccountID); err != nil {
-				fail(w, 422, "OAUTH_PROXY_INVALID", "已保存代理不可用，请选择代理后重新授权")
-				return
-			}
-		}
-	}
-	if in.ProxyID != "" {
-		if _, err := a.resolveProxyURL(in.ProxyID, ""); err != nil {
-			fail(w, 422, "PROXY_INVALID", err.Error())
-			return
-		}
-		if !a.requireProxyBindable(w, r, in.ProxyID) {
-			return
-		}
-	}
-	owner := oauthOwner(r)
-	stamp := time.Now()
-	// Reuse an existing link when nothing would change. Re-issuing costs a new
-	// PKCE pair and, more importantly on some exits, a fresh round trip that
-	// looks like another login attempt from the same IP.
-	var (
-		id          string
-		p           oauthPending
-		reusable    oauthPending
-		hasReusable bool
-	)
-	if !in.Refresh {
-		id, reusable, hasReusable = a.reusableOAuthPending(owner, in.ProxyID, in.AccountID, stamp)
-	}
-	key := cooldownKey(in.AccountID, owner)
-	if wait := a.oauthCooldown.remaining(key, stamp); wait > 0 {
-		// A link that is still usable is handed back with the wait attached: the
-		// browser login the user already did stays valid, only the exchange is
-		// throttled. Minting a new PKCE pair during a cooldown would add another
-		// login round trip from an IP Anthropic is already throttling.
-		if hasReusable {
-			secs := int(oauthRetryAfterSeconds(wait) / time.Second)
-			if secs < 1 {
-				secs = 1
-			}
-			w.Header().Set("Retry-After", fmt.Sprint(secs))
-			body := oauthPendingResponse(id, reusable)
-			body["retry_after_seconds"] = secs
-			write(w, 200, body)
-			return
-		}
-		a.writeOAuthRateLimited(w, r, wait)
-		return
-	}
-	// Hand back the live link rather than minting a second PKCE pair. The user
-	// keeps the tab they already opened and no new login round trip starts.
-	if hasReusable {
-		write(w, 200, oauthPendingResponse(id, reusable))
-		return
-	}
-	// A proxy that passed the pool check may still not reach Claude. Finding
-	// out now costs one request; finding out at exchange costs the user the
-	// browser login they just completed.
-	if in.ProxyID != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), oauthReachTimeout)
-		defer cancel()
-		if err := a.checkOAuthProxyReach(ctx, in.ProxyID); err != nil {
-			if busy, ok := claudeoauth.AsReachBusy(err); ok {
-				secs := a.oauthCooldown.extend(key, time.Now(), busy.RetryAfter)
-				a.writeOAuthRateLimited(w, r, secs)
-				return
-			}
-			writeError(w, r, errs.New(errs.CodeOauthProxyUnreachable).WithMessage(oauthReachMessage(err)))
-			return
-		}
-	}
-	flow, err := claudeoauth.NewPending()
-	if err != nil {
-		fail(w, 500, "OAUTH_START_FAILED", "无法生成授权链接")
-		return
-	}
-	a.oauth.sweep(stamp)
-	a.oauth.mu.Lock()
-	if a.oauth.items == nil {
-		a.oauth.items = make(map[string]oauthPending)
-	}
-	// Do not replace a link while its code is being exchanged or is queued.
-	for _, oldPending := range a.oauth.items {
-		if oldPending.owner == owner && oldPending.exchanging {
-			a.oauth.mu.Unlock()
-			a.writeOAuthBusy(w, r, time.Second)
-			return
-		}
-	}
-	// A replacement invalidates the previous link of this session.
-	for oldID, oldPending := range a.oauth.items {
-		if oldPending.owner == owner {
-			delete(a.oauth.items, oldID)
-		}
-	}
-	if len(a.oauth.items) >= 512 {
-		a.oauth.mu.Unlock()
-		fail(w, 429, "OAUTH_BUSY", "授权会话较多，请稍后重试")
-		return
-	}
-	id = randomString()
-	p = oauthPending{owner: owner, expires: stamp.Add(oauthSessionTTL), proxyID: in.ProxyID, accountID: in.AccountID, flow: flow}
-	a.oauth.items[id] = p
-	a.oauth.mu.Unlock()
-	write(w, 201, oauthPendingResponse(id, p))
-}
-
-func oauthPendingResponse(id string, p oauthPending) map[string]any {
-	return map[string]any{"id": id, "authorization_url": p.flow.URL, "expires_at": p.expires.UTC().Format(time.RFC3339)}
-}
-
-// reusableOAuthPending returns an unexpired pending bound to the same owner,
-// proxy and account. A transport failure or a 5xx does not make the link
-// worthless, so the pending stays reusable; only an explicit refresh retires
-// it.
-func (a *App) reusableOAuthPending(owner [32]byte, proxyID, accountID string, now time.Time) (string, oauthPending, bool) {
-	a.oauth.mu.Lock()
-	defer a.oauth.mu.Unlock()
-	for id, p := range a.oauth.items {
-		if p.owner == owner && p.proxyID == proxyID && p.accountID == accountID && now.Before(p.expires) {
-			return id, p, true
-		}
-	}
-	return "", oauthPending{}, false
-}
-
-func (a *App) claudeOAuthCancel(w http.ResponseWriter, r *http.Request) {
-	a.oauth.mu.Lock()
-	if p, ok := a.oauth.items[r.PathValue("id")]; ok && p.owner == oauthOwner(r) {
-		delete(a.oauth.items, r.PathValue("id"))
-	}
-	a.oauth.mu.Unlock()
-	write(w, 200, map[string]bool{"cancelled": true})
-}
-
-func (a *App) claudeOAuthExchange(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Result string `json:"result"`
-	}
-	if !decodeJSON(w, r, &in, 16384) {
-		return
-	}
-	id := r.PathValue("id")
-	now := time.Now()
-	a.oauth.mu.Lock()
-	p, ok := a.oauth.items[id]
-	if !ok || p.owner != oauthOwner(r) || !now.Before(p.expires) {
-		a.oauth.mu.Unlock()
-		fail(w, 404, "OAUTH_SESSION_EXPIRED", "授权链接已失效，请重新获取链接")
-		return
-	}
-	code, err := claudeoauth.ParseResult(in.Result, p.flow.State)
-	if err != nil {
-		a.oauth.mu.Unlock()
-		fail(w, 422, "OAUTH_RESULT_INVALID", err.Error())
-		return
-	}
-	if p.tokens != nil && p.codeHash != sha256.Sum256([]byte(code)) {
-		a.oauth.mu.Unlock()
-		fail(w, 422, "OAUTH_RESULT_INVALID", "请使用本次已兑换的授权结果继续读取资料")
-		return
-	}
-	if p.exchanging {
-		a.oauth.mu.Unlock()
-		a.writeOAuthBusy(w, r, time.Second)
-		return
-	}
-	key := cooldownKey(p.accountID, p.owner)
-	if wait := a.oauthCooldown.remaining(key, now); wait > 0 {
-		// Keep the pending and original pasted result. After cooldown, retry
-		// token exchange or resume the profile using the cached token stage.
-		a.oauth.mu.Unlock()
-		a.writeOAuthRateLimited(w, r, wait)
-		return
-	}
-	p.exchanging = true
-	a.oauth.items[id] = p
-	a.oauth.mu.Unlock()
-	defer a.releaseOAuthPending(id)
-	// One overall deadline includes both queuing and the exchange. The browser
-	// gives this 70-second server budget an additional five seconds to respond.
-	ctx, cancel := context.WithTimeout(r.Context(), oauthGateWait+oauthExchangeTimeout)
-	defer cancel()
-	release, err := a.oauthGate.acquire(ctx, oauthGateWait)
-	if err == errOAuthGateBusy {
-		secs := a.oauthCooldown.extend(key, time.Now(), oauthGateWait)
-		a.writeOAuthBusy(w, r, secs)
-		return
-	}
-	if err != nil {
-		a.writeOAuthBusy(w, r, time.Second)
-		return
-	}
-	defer release()
-	// A queued request must not use a canceled/expired session or bypass a
-	// cooldown that another request set while this one waited for a slot.
-	a.oauth.mu.Lock()
-	current, exists := a.oauth.items[id]
-	valid := exists && current.owner == p.owner && time.Now().Before(current.expires)
-	a.oauth.mu.Unlock()
-	if !valid {
-		fail(w, 404, "OAUTH_SESSION_EXPIRED", "授权链接已失效，请重新获取链接")
-		return
-	}
-	if wait := a.oauthCooldown.remaining(key, time.Now()); wait > 0 {
-		a.writeOAuthRateLimited(w, r, wait)
-		return
-	}
-	if ctx.Err() != nil {
-		a.writeOAuthBusy(w, r, time.Second)
-		return
-	}
-	proxyURL := ""
-	if p.accountID != "" {
-		if !a.requireMutable(w, r, "accounts", p.accountID, "账号不存在") {
-			return
-		}
-		if p.proxyID == "" {
-			proxyURL, err = a.savedCredentialProxy(p.accountID)
-			if err != nil {
-				fail(w, 422, "OAUTH_PROXY_INVALID", "已保存代理不可用，请选择代理后重新授权")
-				return
-			}
-		}
-	}
-	client, closeClient, err := a.claudeOAuthHTTPClient(p.proxyID, proxyURL)
-	if err != nil {
-		fail(w, 422, "OAUTH_PROXY_INVALID", err.Error())
-		return
-	}
-	defer closeClient()
-	exchangeCtx, cancelExchange := context.WithTimeout(ctx, oauthExchangeTimeout)
-	defer cancelExchange()
-	var result claudeoauth.Result
-	if p.tokens != nil {
-		result, err = claudeoauth.CompleteProfile(exchangeCtx, client, *p.tokens)
-	} else {
-		result, err = claudeoauth.Exchange(exchangeCtx, client, code, p.flow.State, p.flow.Verifier)
-	}
-	if err == nil {
-		a.dropOAuthPending(id)
-		a.auditFor(r, "account.oauth", "", "", "authorization completed")
-		// Fresh credentials only, never previously stored credentials. No database
-		// writes or supplier submissions occur until the user submits the form.
-		write(w, 200, result)
-		return
-	}
-	// Never replay a code after a successful token exchange. A profile rate
-	// limit keeps the obtained token stage so retry only reads the profile.
-	if se, ok := claudeoauth.AsStatusError(err); ok && se.Op == "profile" && se.Status == http.StatusTooManyRequests && result.Auth != nil {
-		a.oauth.mu.Lock()
-		if current, exists := a.oauth.items[id]; exists {
-			current.tokens = &result
-			current.codeHash = sha256.Sum256([]byte(code))
-			a.oauth.items[id] = current
-		}
-		a.oauth.mu.Unlock()
-	}
-	if oauthTerminalError(err) {
-		a.dropOAuthPending(id)
-	}
-	a.writeOAuthExchangeError(w, r, key, err)
-}
-
-// A malformed successful token response can already have consumed the code;
-// it cannot safely be presented as an unconsumed network failure.
-func oauthTerminalError(err error) bool {
-	if se, ok := claudeoauth.AsStatusError(err); ok {
-		return oauthTerminalStatus(se.Status)
-	}
-	_, malformed := claudeoauth.AsResponseError(err)
-	return malformed
-}
-
-// oauthTerminalStatus reports statuses where replaying the same code cannot
-// succeed: the code is spent, bound to another state, or the identity is
-// already rejected.
-func oauthTerminalStatus(status int) bool {
-	switch status {
-	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict:
-		return true
-	}
-	return false
-}
-
-func (a *App) releaseOAuthPending(id string) {
-	a.oauth.mu.Lock()
-	defer a.oauth.mu.Unlock()
-	if p, ok := a.oauth.items[id]; ok {
-		p.exchanging = false
-		a.oauth.items[id] = p
-	}
-}
-
-func (a *App) dropOAuthPending(id string) {
-	a.oauth.mu.Lock()
-	delete(a.oauth.items, id)
-	a.oauth.mu.Unlock()
-}
-
-func (a *App) writeOAuthBusy(w http.ResponseWriter, r *http.Request, wait time.Duration) {
-	secs := int(oauthRetryAfterSeconds(wait) / time.Second)
-	if secs < 1 {
-		secs = 1
-	}
-	writeError(w, r, errs.New(errs.CodeOauthBusy).
-		WithDetail("retry_after_seconds", secs).
-		WithMessage(fmt.Sprintf("同时进行的授权较多，请约 %d 秒后再试", secs)))
-}
-
-// writeOAuthExchangeError exposes retry guidance and the session lifecycle,
-// without inferring why the provider refused a request or disclosing tokens.
-func (a *App) writeOAuthExchangeError(w http.ResponseWriter, r *http.Request, key string, err error) {
-	if busy, ok := claudeoauth.AsReachBusy(err); ok {
-		secs := a.oauthCooldown.extend(key, time.Now(), busy.RetryAfter)
-		a.writeOAuthRateLimited(w, r, secs)
-		return
-	}
-	if _, malformed := claudeoauth.AsResponseError(err); malformed {
-		writeError(w, r, errs.New(errs.CodeOauthExchangeFailed).
-			WithDetail("oauth_session_expired", true).
-			WithMessage("授权响应无效或已取得的令牌已过期，请重新生成链接"))
-		return
-	}
-	se, ok := claudeoauth.AsStatusError(err)
-	if !ok {
-		writeError(w, r, errs.New(errs.CodeOauthProxyUnreachable).
-			WithMessage("通过所选代理连接 Claude 中断，兑换结果未确认；请检查代理后重试"))
-		return
-	}
-	switch {
-	case se.Status == http.StatusTooManyRequests:
-		secs := a.oauthCooldown.extend(key, time.Now(), se.RetryAfter)
-		a.writeOAuthRateLimited(w, r, secs)
-	case se.Status == http.StatusUnauthorized || se.Status == http.StatusForbidden:
-		writeError(w, r, errs.New(errs.CodeOauthIdentityRejected).
-			WithDetail("oauth_session_expired", true).
-			WithDetail("upstream_status", se.Status))
-	case se.Status >= 500:
-		writeError(w, r, errs.New(errs.CodeOauthSupplierRejected).
-			WithDetail("upstream_status", se.Status))
-	case oauthTerminalStatus(se.Status):
-		writeError(w, r, errs.New(errs.CodeOauthExchangeFailed).
-			WithDetail("oauth_session_expired", true).
-			WithDetail("upstream_status", se.Status).
-			WithMessage("授权码无效或已使用，请重新生成链接"))
-	default:
-		writeError(w, r, errs.New(errs.CodeOauthExchangeFailed).
-			WithDetail("upstream_status", se.Status))
-	}
-}
-
-func oauthReachMessage(err error) string {
-	if se, ok := claudeoauth.AsStatusError(err); ok {
-		return se.Error()
-	}
-	return ""
-}
-
-// checkOAuthProxyReach opens one connection to Claude through the pool proxy
-// using the same client the token exchange will use.
-func (a *App) checkOAuthProxyReach(ctx context.Context, proxyID string) error {
-	client, closeClient, err := a.claudeOAuthHTTPClient(proxyID, "")
-	if err != nil {
-		return err
-	}
-	defer closeClient()
-	if a.probeOAuthReach != nil {
-		return a.probeOAuthReach(ctx, client)
-	}
-	return claudeoauth.Reachable(ctx, client)
-}
-
 func (a *App) savedCredentialProxy(accountID string) (string, error) {
 	auth, err := a.loadCredential(accountID)
 	if err != nil {
 		return "", err
 	}
 	proxyURL, _ := auth["proxy_url"].(string)
+	if strings.TrimSpace(proxyURL) == "" {
+		// Credentials without a stored URL mean the account was bound direct;
+		// that is valid, not an error. Only a populated-but-invalid URL fails.
+		return "", nil
+	}
 	return normalizeProxyURL(proxyURL)
 }
 

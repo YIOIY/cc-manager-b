@@ -39,6 +39,8 @@ const (
 	PermProxiesDelete        Permission = "proxies.delete"
 	PermProxiesTest          Permission = "proxies.test"
 	PermProxiesSettings      Permission = "proxies.settings"
+	PermOAuthSettingsView    Permission = "oauth.settings.view"
+	PermOAuthSettings        Permission = "oauth.settings"
 	PermJobsView             Permission = "jobs.view"
 	PermBillsView            Permission = "bills.view"
 	PermBillsQuery           Permission = "bills.query"
@@ -81,6 +83,10 @@ var permissionCatalogue = []permissionModule{
 		{PermProxiesDelete, "删除代理", "仅限未被账号绑定的代理"},
 		{PermProxiesTest, "发起本机检测", ""},
 		{PermProxiesSettings, "修改本机检测路径", "前置代理地址与认证"},
+	}},
+	{"oauth", "上号调度", "", []permissionDef{
+		{PermOAuthSettingsView, "查看上号调度设置", "并发与预热参数"},
+		{PermOAuthSettings, "修改上号调度设置", "会影响全局上号节奏"},
 	}},
 	{"jobs", "任务中心", "任务中心", []permissionDef{{PermJobsView, "查看任务记录", ""}}},
 	{"bills", "平台账单", "平台离线账单", []permissionDef{

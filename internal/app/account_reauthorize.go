@@ -76,23 +76,20 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Account writes always lock account before connection. The HTTP guard can
+	// lend an OAuth session's existing account lease through the context.
+	unlock, err := a.lockAccountWrite(ctx, id)
+	if err != nil {
+		writeError(w, r, errs.New(errs.CodePlatformUnavailable).WithCause(err))
+		return
+	}
+	defer unlock()
 	lock := a.webSyncLock(first.ConnectionID)
 	if err = lockWithContext(ctx, lock); err != nil {
 		writeError(w, r, errs.New(errs.CodePlatformUnavailable).WithCause(err))
 		return
 	}
 	defer lock.Unlock()
-
-	// Hold the per-account lock for the whole push. The submit worker takes the
-	// same lock, so a reauthorization can no longer be overwritten by a queued
-	// job that carried a pre-OAuth credential snapshot. Lock order is always
-	// connection web sync first, then account, on both paths.
-	unlock, err := a.accountLocks.lock(ctx, id)
-	if err != nil {
-		writeError(w, r, errs.New(errs.CodePlatformUnavailable).WithCause(err))
-		return
-	}
-	defer unlock()
 
 	snapshot, err := a.linkedSnapshot(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && snapshot.ConnectionID != first.ConnectionID) {
@@ -167,9 +164,21 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
+		if existing, _ := auth["proxy_url"].(string); existing != "" && !sameProxyURL(existing, proxyURL) && (reused || !proxyProvided) {
+			writeError(w, r, errs.Adhoc("PROXY_BINDING_CHANGED", http.StatusConflict, "代理配置已变化，请明确更换代理并重新授权"))
+			return
+		}
 		auth["proxy_url"] = proxyURL
 	} else if proxyProvided {
 		// Cleared pool selection: keep whatever proxy_url the credential carries.
+	}
+	if e := a.loadDeviceAnchor(ctx, id, auth, saved); e != nil {
+		writeError(w, r, storageError(e, "设备标识读取失败"))
+		return
+	}
+	if e := applyCredentialInvariants(auth, saved); e != nil {
+		writeError(w, r, e)
+		return
 	}
 	if problems := validateAuthFields(auth); len(problems) > 0 {
 		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(problems...))
@@ -179,6 +188,11 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{
 			Field: "auth_json.proxy_url", Code: errs.FieldRequired, Message: "请选择代理或填写 proxy_url",
 		}))
+		return
+	}
+
+	if e := a.persistDeviceAnchor(ctx, id, auth, lockedVersion); e != nil {
+		writeError(w, r, storageError(e, "设备标识保存失败"))
 		return
 	}
 
@@ -227,6 +241,7 @@ func (a *App) accountReauthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	// Platform already has the new credential: audit and local persist must
 	// finish even if the client cancelled, matching completeProfileUpdate.
+	a.oauthStatCounters.reauthorization.Add(1)
 	if err = a.completeReauthorize(ctx, id, actor, detail, sealed, proxyID, writeExpected); err != nil {
 		if errors.Is(err, errReauthorizeLocalConflict) {
 			fail(w, http.StatusConflict, errs.CodeVersionConflict, "平台已更新凭证，但本地版本冲突，请刷新后重试")

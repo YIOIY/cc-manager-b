@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -118,6 +119,35 @@ func (a *App) runOne(ctx context.Context) {
 		a.finishJob(id, "failed", "JOB_PAYLOAD_INVALID")
 		return
 	}
+	// Preheat applies to both manual and batch imports using saved dispatch
+	// settings; a restart-safe delay is stored in the existing job payload.
+	var metaRaw string
+	_ = a.DB.QueryRowContext(ctx, `SELECT metadata_json FROM accounts WHERE id=?`, accountID).Scan(&metaRaw)
+	if remaining := oauthPreheatRemaining(payload, time.Now()); remaining > 0 {
+		a.waitOAuthPreheat(ctx, accountID, id, payload)
+		if ctx.Err() != nil {
+			a.requeueJob(id)
+			return
+		}
+	} else if delay := a.computeOAuthPreheat(metaRaw, preheatRNG); delay > 0 {
+		stored, err := persistOAuthPreheat(payload, time.Now().Add(delay))
+		if err != nil {
+			slog.Warn("oauth preheat payload save failed", "job", id, "error", err)
+			waitForPreheat(ctx, delay)
+		} else {
+			if _, err := a.DB.ExecContext(ctx, `UPDATE jobs SET payload_json=?,updated_at=? WHERE id=? AND state='running'`, stored, now(), id); err != nil {
+				slog.Warn("oauth preheat payload update failed", "job", id, "error", err)
+				waitForPreheat(ctx, delay)
+			} else {
+				payload = stored
+				a.waitOAuthPreheat(ctx, accountID, id, payload)
+			}
+		}
+		if ctx.Err() != nil {
+			a.requeueJob(id)
+			return
+		}
+	}
 	// Reauthorization holds this lock while pushing a fresh token. Inspect
 	// delivery state and credentials only after it finishes; a busy account
 	// requeues the job without overwriting the other operation's delivery.
@@ -186,6 +216,7 @@ func (a *App) runOne(ctx context.Context) {
 		failed("CREDENTIAL_UNREADABLE")
 		return
 	}
+	beforePreparation, _ := json.Marshal(auth)
 	var proxyID string
 	_ = a.DB.QueryRowContext(ctx, `SELECT proxy_id FROM accounts WHERE id=?`, accountID).Scan(&proxyID)
 	if proxyID != "" {
@@ -194,8 +225,11 @@ func (a *App) runOne(ctx context.Context) {
 			failed("PROXY_INVALID")
 			return
 		}
-		// Local reachability and the supplier's network are independent.
-		// Manual pool checks never gate a remote submission.
+		if existing, _ := auth["proxy_url"].(string); strings.TrimSpace(existing) != "" && !sameProxyURL(existing, proxyURL) {
+			failed("PROXY_BINDING_CHANGED")
+			return
+		}
+		// Only legacy credentials without a proxy may establish a binding here.
 		auth["proxy_url"] = proxyURL
 	} else if url, _ := auth["proxy_url"].(string); strings.TrimSpace(url) == "" {
 		// Pool binding was cleared (e.g. shared-proxy unbind on assign) and
@@ -203,11 +237,27 @@ func (a *App) runOne(ctx context.Context) {
 		failed("PROXY_REQUIRED")
 		return
 	}
+	if e := a.loadDeviceAnchor(ctx, accountID, auth, nil); e != nil {
+		failed("CREDENTIAL_UNREADABLE")
+		return
+	}
+	if e := applyCredentialInvariants(auth, nil); e != nil {
+		a.finishJobErr(id, "failed", e)
+		a.setDelivery(accountID, spec.ConnectionID, "failed", "")
+		return
+	}
 	// Re-check after queue wait: credentials may have expired since enqueue.
 	if problems := validateAuthFields(auth); len(problems) > 0 {
 		a.finishJobErr(id, "failed", credentialSubmitError(problems))
 		a.setDelivery(accountID, spec.ConnectionID, "failed", "")
 		return
+	}
+	afterPreparation, _ := json.Marshal(auth)
+	if string(beforePreparation) != string(afterPreparation) {
+		if e := a.persistCredentialPreparation(ctx, accountID, auth, version); e != nil {
+			failed("VERSION_CONFLICT")
+			return
+		}
 	}
 	tokenBytes, err := decode(tokenSecret, spec.ConnectionID)
 	if err != nil {
@@ -727,4 +777,40 @@ func (a *App) loadCredential(accountID string) (map[string]any, error) {
 	var m map[string]any
 	e = json.Unmarshal(plain, &m)
 	return m, e
+}
+
+// preheatDelay returns how long a batch-imported account's first delivery
+// should wait before hitting the platform. Randomised in [30s,5min] so a bulk
+// import does not produce a correlated supplier-push burst. Manual single-
+// account onboards (source!="batch_import") skip the wait entirely so
+// operators still see instant acknowledgement.
+const (
+	preheatDelayMin = 30 * time.Second
+	preheatDelayMax = 5 * time.Minute
+)
+
+var preheatRNG = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixMicro())))
+
+func accountPreheatDelay(metadataJSON string, rng *rand.Rand) time.Duration {
+	var meta struct {
+		Source string `json:"source"`
+	}
+	if json.Unmarshal([]byte(metadataJSON), &meta) != nil || meta.Source != "batch_import" {
+		return 0
+	}
+	span := preheatDelayMax - preheatDelayMin
+	return preheatDelayMin + time.Duration(rng.Int64N(int64(span)+1))
+}
+
+// waitForPreheat blocks for the batch preheat interval, respecting ctx.
+func waitForPreheat(ctx context.Context, d time.Duration) {
+	if d <= 0 || ctx == nil {
+		return
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
 }

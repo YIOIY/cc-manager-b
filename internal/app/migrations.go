@@ -37,6 +37,8 @@ var migrations = []migration{
 	{16, "announcement", migrateAnnouncementV16},
 	{17, "user-can-onboard", migrateUserCanOnboardV17},
 	{18, "proxy-host-port-unique", migrateProxyHostPortUniqueV18},
+	{19, "oauth-dispatch-settings", migrateOAuthDispatchV19},
+	{20, "oauth-ua-pool", migrateOAuthUAPoolV20},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -427,6 +429,26 @@ updated_at TEXT NOT NULL DEFAULT ''
 // without removing the accounts.onboard role permission.
 func migrateUserCanOnboardV17(tx *sql.Tx) error {
 	return addColumns(tx, "users", []string{"can_onboard INTEGER NOT NULL DEFAULT 1"})
+}
+
+// migrateOAuthDispatchV19 adds the editable OAuth dispatch settings. The
+// defaults preserve current throughput so an upgrade does not silently slow
+// onboarding.
+func migrateOAuthDispatchV19(tx *sql.Tx) error {
+	return execAll(tx,
+		`CREATE TABLE IF NOT EXISTS oauth_dispatch_settings(id INTEGER PRIMARY KEY CHECK(id=1),global_concurrency INTEGER NOT NULL,exit_concurrency INTEGER NOT NULL,exchange_interval_seconds INTEGER NOT NULL,probe_cache_seconds INTEGER NOT NULL,manual_preheat_seconds_min INTEGER NOT NULL,manual_preheat_seconds_max INTEGER NOT NULL,batch_preheat_seconds_min INTEGER NOT NULL,batch_preheat_seconds_max INTEGER NOT NULL,ua_pool_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL)`,
+		`INSERT OR IGNORE INTO oauth_dispatch_settings VALUES(1,3,2,3,120,0,0,300,900,'[]',1)`,
+	)
+}
+
+// migrateOAuthUAPoolV20 stores the deployment-level stable client presentation
+// pool. Existing accounts keep their persisted profile when the pool changes.
+func migrateOAuthUAPoolV20(tx *sql.Tx) error {
+	if err := addColumns(tx, "oauth_dispatch_settings", []string{"ua_pool_json TEXT NOT NULL DEFAULT '[]'"}); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`UPDATE oauth_dispatch_settings SET ua_pool_json='[]' WHERE id=1 AND ua_pool_json=''`)
+	return err
 }
 
 // migrateProxyHostPortUniqueV18 normalizes proxy hosts and enforces one pool

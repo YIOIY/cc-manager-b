@@ -45,6 +45,14 @@ func (a *App) onboardAccount(w http.ResponseWriter, r *http.Request, existingIDs
 	if len(existingIDs) > 0 {
 		req.existingID = existingIDs[0]
 	}
+	if req.existingID != "" {
+		unlock, err := a.lockAccountWrite(r.Context(), req.existingID)
+		if err != nil {
+			writeError(w, r, errs.New(errs.CodePlatformUnavailable).WithCause(err))
+			return
+		}
+		defer unlock()
+	}
 	for _, step := range []func(*onboardInput) *apiError{a.fillOnboardDefaults, a.prepareOnboardProxy, validateOnboardInput, a.checkOnboardConnection} {
 		if e := step(req); e != nil {
 			writeError(w, r, e)
@@ -57,6 +65,18 @@ func (a *App) onboardAccount(w http.ResponseWriter, r *http.Request, existingIDs
 		}
 	}
 	if !a.requireProxyBindable(w, r, req.proxyID) {
+		return
+	}
+	var saved map[string]any
+	if req.existingID != "" {
+		saved, _ = a.loadCredential(req.existingID)
+		if e := a.loadDeviceAnchor(r.Context(), req.existingID, req.auth, saved); e != nil {
+			writeError(w, r, storageError(e, "设备标识读取失败"))
+			return
+		}
+	}
+	if e := applyCredentialInvariants(req.auth, saved); e != nil {
+		writeError(w, r, e)
 		return
 	}
 	resp, replayed, err := a.persistOnboard(r, req)

@@ -16,8 +16,8 @@ import (
 // changes during its queue wait deterministic without timing the provider.
 func queuedOAuthExchange(t *testing.T, a *App) (<-chan *httptest.ResponseRecorder, func(), context.CancelFunc) {
 	t.Helper()
-	a.oauthGate = newOAuthGate(1)
-	release, err := a.oauthGate.acquire(context.Background(), time.Second)
+	a.oauthGate.Store(newOAuthGate(1))
+	release, err := a.oauthGate.Load().acquire(context.Background(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
