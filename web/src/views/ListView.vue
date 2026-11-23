@@ -12,6 +12,7 @@
   </PageHead>
   <el-alert v-if="page.error.value" :title="page.error.value" type="error" show-icon @close="page.error.value = ''" />
   <ProxyNetworkPanel v-if="listKey === 'proxies'" ref="proxyNetworkPanel" @changed="page.load" />
+  <OAuthSettingsPanel v-if="listKey === 'proxies' && can('oauth.settings.view')" @changed="page.load" />
   <div class="list-workspace panel" :class="{ 'platform-monitor': listKey === 'accounts' }">
     <div class="list-heading">
       <div>
@@ -294,6 +295,7 @@ import AssignUserDialog from '../components/AssignUserDialog.vue'
 import ConnectionFormDialog from '../components/ConnectionFormDialog.vue'
 import RemoteAccountsDrawer from '../components/RemoteAccountsDrawer.vue'
 import ProxyNetworkPanel from '../components/ProxyNetworkPanel.vue'
+import OAuthSettingsPanel from '../components/OAuthSettingsPanel.vue'
 import { api, errorMessage } from '../api'
 import { listConfigs, states, type Column } from '../list-model'
 import { deliveryState, outcomeText } from '../account-workflow'

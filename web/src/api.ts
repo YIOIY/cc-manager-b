@@ -114,6 +114,7 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
     const e = payload.error ?? {}
     if (response.status === 429) {
       const seconds = Number(e.details?.retry_after_seconds ?? response.headers.get('Retry-After'))
+      if (Number.isFinite(seconds) && seconds > 0) e.details = { ...e.details, retry_after_seconds: seconds }
       rateLimitListeners.forEach((listener) => listener(Number.isFinite(seconds) && seconds > 0 ? seconds : null))
     }
     throw new ApiError(response.status, code, e.message || '请求失败', {

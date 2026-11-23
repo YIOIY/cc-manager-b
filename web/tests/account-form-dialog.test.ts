@@ -790,19 +790,15 @@ test('linked reauth OAuth without device ids mints a UUID and skips the device s
   expect(JSON.parse(fetchMock.mock.calls[1]![1].body).auth_json.claude_device_ids).toEqual(first)
 })
 
-test('changing proxy while keeping saved reauth credentials does not clear the saved marker', async () => {
+test('changing a saved credential proxy requires reauthorization before submission', async () => {
   const w = setupReauth()
   await w.get('#field-proxy select').setValue('px2')
   await flushPromises()
-  expect(w.text()).toContain('将使用库内已保存凭证同步到平台')
-  await next(w)
-  fetchMock.mockResolvedValueOnce(
-    response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1', credential: { source: 'saved' } }),
-  )
-  await w.get('[data-submit]').trigger('click')
-  await flushPromises()
-  expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toMatchObject({ proxy_id: 'px2' })
-  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json).toBeUndefined()
+  expect(w.text()).toContain('代理已变更')
+  expect(w.find('.fake-oauth').exists()).toBe(true)
+  expect(w.get('[data-next]').attributes('disabled')).toBeDefined()
+  expect(w.find('[data-submit]').exists()).toBe(false)
+  expect(fetchMock).not.toHaveBeenCalled()
 })
 
 test('linked reauth credential gaps open step 2 and review can return there to edit', async () => {
@@ -871,4 +867,88 @@ test('saved-credential device errors return to step 1 for overlay without OAuth'
   const body = JSON.parse(fetchMock.mock.calls[1]![1].body)
   expect(body.auth_json).toBeUndefined()
   expect(body.claude_device_ids).toEqual(['device-overlay'])
+})
+
+test('retains the ready session across wizard steps, sends proof, and releases it on discard', async () => {
+  authorization.oauth_session_id = 'ready-session'
+  const w = setup()
+  await authorize(w)
+  await next(w)
+  await fill(w)
+  await next(w)
+  expect(fetchMock).not.toHaveBeenCalled()
+  fetchMock.mockResolvedValueOnce(response({ cancelled: true }))
+  await w.get('[data-cancel]').trigger('click')
+  await flushPromises()
+  expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/claude-oauth/sessions/ready-session')
+  expect(fetchMock.mock.calls[0]![1].method).toBe('DELETE')
+})
+
+test('onboard submits the retained OAuth session and does not cancel a committed session', async () => {
+  authorization.oauth_session_id = 'ready-session'
+  const w = setup()
+  await authorize(w)
+  await next(w)
+  await fill(w)
+  await next(w)
+  fetchMock.mockResolvedValueOnce(response({ account_id: 'new', job_id: 'job' }))
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).oauth_session_id).toBe('ready-session')
+  await w.get('[data-finish]').trigger('click')
+  await flushPromises()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+test('an unknown platform outcome is not offered as a blind retry', async () => {
+  const w = setupReauth()
+  await next(w)
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 'SUBMIT_OUTCOME_UNKNOWN',
+          message: '需要核实平台结果',
+          action: 'check_platform',
+          retryable: true,
+        },
+      }),
+      { status: 502 },
+    ),
+  )
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(w.get('[data-submit]').attributes('disabled')).toBeDefined()
+  expect(w.get('[data-submit]').text()).not.toContain('重试')
+})
+
+test('reauthorize sends the retained session proof with fresh credentials', async () => {
+  const w = setupReauth(linkedAccount({ credentials_configured: false }))
+  authorization = {
+    ...fixture,
+    oauth_session_id: 'ready-reauth',
+    auth_json: { ...fixture.auth_json, email: 'old@example.com' },
+  }
+  await authorize(w)
+  await next(w)
+  fetchMock.mockResolvedValueOnce(response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1' }))
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).oauth_session_id).toBe('ready-reauth')
+})
+
+test('fresh explicit device IDs take precedence over retained device IDs', async () => {
+  const w = setupReauth()
+  await w.get('[data-saved-devices] input').setValue('old-device')
+  await w.get('[data-reauthorize]').trigger('click')
+  authorization = {
+    ...fixture,
+    auth_json: { ...fixture.auth_json, email: 'old@example.com', claude_device_ids: ['real-device'] },
+  }
+  await authorize(w)
+  await next(w)
+  fetchMock.mockResolvedValueOnce(response({ account_id: 'acc-1', platform_pushed: true, upstream_id: '1' }))
+  await w.get('[data-submit]').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json.claude_device_ids).toEqual(['real-device'])
 })
