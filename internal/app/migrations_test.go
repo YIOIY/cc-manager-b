@@ -147,7 +147,6 @@ func TestOAuthDispatchDefaultsMigrationRepairsOutOfRangeRow(t *testing.T) {
 	}
 }
 
-
 func TestChannelUsagePermissionMigrationGrantsExistingBillViewers(t *testing.T) {
 	db, err := sql.Open("sqlite", t.TempDir()+"/cu-perm.db")
 	if err != nil {
