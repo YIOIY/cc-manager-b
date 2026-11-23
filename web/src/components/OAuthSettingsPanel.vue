@@ -65,21 +65,21 @@
         </el-form-item>
       </div>
       <fieldset class="oauth-settings-group">
-        <legend>手动导入预热（1–3 秒）</legend>
+        <legend>手动导入预热（0–3 秒，上限 0 关闭）</legend>
         <el-form-item label="下限秒数" required>
-          <el-input-number v-model="draft!.manual_preheat_seconds_min" :min="1" :max="3" />
+          <el-input-number v-model="draft!.manual_preheat_seconds_min" :min="0" :max="3" />
         </el-form-item>
         <el-form-item label="上限秒数" required>
-          <el-input-number v-model="draft!.manual_preheat_seconds_max" :min="1" :max="3" />
+          <el-input-number v-model="draft!.manual_preheat_seconds_max" :min="0" :max="3" />
         </el-form-item>
       </fieldset>
       <fieldset class="oauth-settings-group">
-        <legend>批量导入预热（5–15 秒）</legend>
+        <legend>批量导入预热（0–15 秒，上限 0 关闭）</legend>
         <el-form-item label="下限秒数" required>
-          <el-input-number v-model="draft!.batch_preheat_seconds_min" :min="5" :max="15" />
+          <el-input-number v-model="draft!.batch_preheat_seconds_min" :min="0" :max="15" />
         </el-form-item>
         <el-form-item label="上限秒数" required>
-          <el-input-number v-model="draft!.batch_preheat_seconds_max" :min="5" :max="15" />
+          <el-input-number v-model="draft!.batch_preheat_seconds_max" :min="0" :max="15" />
         </el-form-item>
       </fieldset>
       <el-form-item label="UA 池（JSON 数组，最多 8 条）" required>

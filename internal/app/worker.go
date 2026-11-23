@@ -102,6 +102,34 @@ func (a *App) runOne(ctx context.Context) {
 		}
 		return
 	}
+	// Preheat applies to both manual and batch imports using saved dispatch
+	// settings. The delay is decided once per job and stored in the existing
+	// payload, and the wait happens while the job is still queued: a restart
+	// simply finds it queued again (a running job would be marked unknown
+	// although nothing was ever sent), and a requeue after a busy account
+	// sees the stored stamp and never waits a second time.
+	if kind == "account.submit" {
+		if !oauthPreheatScheduled(payload) {
+			var metaRaw string
+			_ = a.DB.QueryRowContext(ctx, `SELECT metadata_json FROM accounts WHERE id=?`, accountID).Scan(&metaRaw)
+			if delay := a.computeOAuthPreheat(metaRaw, preheatRNG); delay > 0 {
+				stored, err := persistOAuthPreheat(payload, time.Now().Add(delay))
+				if err != nil {
+					slog.Warn("oauth preheat payload save failed", "job", id, "error", err)
+				} else if _, err := a.DB.ExecContext(ctx, `UPDATE jobs SET payload_json=?,updated_at=? WHERE id=? AND state='queued'`, stored, now(), id); err != nil {
+					slog.Warn("oauth preheat payload update failed", "job", id, "error", err)
+				} else {
+					payload = stored
+				}
+			}
+		}
+		if oauthPreheatRemaining(payload, time.Now()) > 0 {
+			a.waitOAuthPreheat(ctx, accountID, id, payload)
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	}
 	res, err := a.DB.ExecContext(ctx, `UPDATE jobs SET state='running',updated_at=? WHERE id=? AND state='queued'`, now(), id)
 	if err != nil {
 		slog.Error("job claim failed", "job", id, "error", err)
@@ -118,35 +146,6 @@ func (a *App) runOne(ctx context.Context) {
 	if json.Unmarshal([]byte(payload), &spec) != nil {
 		a.finishJob(id, "failed", "JOB_PAYLOAD_INVALID")
 		return
-	}
-	// Preheat applies to both manual and batch imports using saved dispatch
-	// settings; a restart-safe delay is stored in the existing job payload.
-	var metaRaw string
-	_ = a.DB.QueryRowContext(ctx, `SELECT metadata_json FROM accounts WHERE id=?`, accountID).Scan(&metaRaw)
-	if remaining := oauthPreheatRemaining(payload, time.Now()); remaining > 0 {
-		a.waitOAuthPreheat(ctx, accountID, id, payload)
-		if ctx.Err() != nil {
-			a.requeueJob(id)
-			return
-		}
-	} else if delay := a.computeOAuthPreheat(metaRaw, preheatRNG); delay > 0 {
-		stored, err := persistOAuthPreheat(payload, time.Now().Add(delay))
-		if err != nil {
-			slog.Warn("oauth preheat payload save failed", "job", id, "error", err)
-			waitForPreheat(ctx, delay)
-		} else {
-			if _, err := a.DB.ExecContext(ctx, `UPDATE jobs SET payload_json=?,updated_at=? WHERE id=? AND state='running'`, stored, now(), id); err != nil {
-				slog.Warn("oauth preheat payload update failed", "job", id, "error", err)
-				waitForPreheat(ctx, delay)
-			} else {
-				payload = stored
-				a.waitOAuthPreheat(ctx, accountID, id, payload)
-			}
-		}
-		if ctx.Err() != nil {
-			a.requeueJob(id)
-			return
-		}
 	}
 	// Reauthorization holds this lock while pushing a fresh token. Inspect
 	// delivery state and credentials only after it finishes; a busy account
@@ -779,38 +778,6 @@ func (a *App) loadCredential(accountID string) (map[string]any, error) {
 	return m, e
 }
 
-// preheatDelay returns how long a batch-imported account's first delivery
-// should wait before hitting the platform. Randomised in [30s,5min] so a bulk
-// import does not produce a correlated supplier-push burst. Manual single-
-// account onboards (source!="batch_import") skip the wait entirely so
-// operators still see instant acknowledgement.
-const (
-	preheatDelayMin = 30 * time.Second
-	preheatDelayMax = 5 * time.Minute
-)
-
+// preheatRNG draws the per-job preheat delay. Only the single worker goroutine
+// uses it, so no locking is needed.
 var preheatRNG = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixMicro())))
-
-func accountPreheatDelay(metadataJSON string, rng *rand.Rand) time.Duration {
-	var meta struct {
-		Source string `json:"source"`
-	}
-	if json.Unmarshal([]byte(metadataJSON), &meta) != nil || meta.Source != "batch_import" {
-		return 0
-	}
-	span := preheatDelayMax - preheatDelayMin
-	return preheatDelayMin + time.Duration(rng.Int64N(int64(span)+1))
-}
-
-// waitForPreheat blocks for the batch preheat interval, respecting ctx.
-func waitForPreheat(ctx context.Context, d time.Duration) {
-	if d <= 0 || ctx == nil {
-		return
-	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-	case <-ctx.Done():
-	}
-}

@@ -68,10 +68,11 @@ func (a *App) oauthDispatchSettingsHandler(w http.ResponseWriter, r *http.Reques
 	checkRange("exit_concurrency", in.ExitConcurrency, 1, 5)
 	checkRange("exchange_interval_seconds", in.ExchangeIntervalSeconds, 0, 60)
 	checkRange("probe_cache_seconds", in.ProbeCacheSeconds, 0, 30)
-	checkRange("manual_preheat_seconds_min", in.ManualPreheatSecondsMin, 1, 3)
-	checkRange("manual_preheat_seconds_max", in.ManualPreheatSecondsMax, 1, 3)
-	checkRange("batch_preheat_seconds_min", in.BatchPreheatSecondsMin, 5, 15)
-	checkRange("batch_preheat_seconds_max", in.BatchPreheatSecondsMax, 5, 15)
+	// 0 as the upper bound switches a preheat window off (computeOAuthPreheat).
+	checkRange("manual_preheat_seconds_min", in.ManualPreheatSecondsMin, 0, 3)
+	checkRange("manual_preheat_seconds_max", in.ManualPreheatSecondsMax, 0, 3)
+	checkRange("batch_preheat_seconds_min", in.BatchPreheatSecondsMin, 0, 15)
+	checkRange("batch_preheat_seconds_max", in.BatchPreheatSecondsMax, 0, 15)
 	if in.ManualPreheatSecondsMax < in.ManualPreheatSecondsMin {
 		problems.Add("manual_preheat_seconds_max", errs.FieldMismatch, "上限不能小于下限")
 	}
