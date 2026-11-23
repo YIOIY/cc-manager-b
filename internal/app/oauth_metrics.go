@@ -74,21 +74,35 @@ func (a *App) observeOAuthContext(ctx context.Context, r *http.Request, p oauthP
 		slog.Info("oauth request", "session", id, "stage", o.Stage, "status", o.Status, "duration_ms", o.Duration.Milliseconds(), "result", o.Kind)
 	})
 }
+
+// writeOAuthMetrics renders the OAuth families in Prometheus text format.
+// The exposition format requires every sample of one metric family to form a
+// single group right after its HELP/TYPE lines, so the three families are
+// written one after another rather than interleaved per stage/class key.
 func (a *App) writeOAuthMetrics(b *strings.Builder) {
 	s := &a.oauth.stats
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b.WriteString("# HELP cc_manager_oauth_requests_total OAuth requests by stage and status class.\n# TYPE cc_manager_oauth_requests_total counter\n# TYPE cc_manager_oauth_success_total counter\n# TYPE cc_manager_oauth_duration_seconds histogram\n")
 	keys := make([]string, 0, len(s.values))
 	for k := range s.values {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	for _, k := range keys {
+	labelsOf := func(k string) string {
 		parts := strings.Split(k, "|")
-		labels := fmt.Sprintf(`stage="%s",class="%s"`, parts[0], parts[1])
-		v := s.values[k]
-		fmt.Fprintf(b, "cc_manager_oauth_requests_total{%s} %d\ncc_manager_oauth_success_total{%s} %d\n", labels, v.count, labels, v.success)
+		return fmt.Sprintf(`stage="%s",class="%s"`, parts[0], parts[1])
+	}
+	b.WriteString("# HELP cc_manager_oauth_requests_total OAuth requests by stage and status class.\n# TYPE cc_manager_oauth_requests_total counter\n")
+	for _, k := range keys {
+		fmt.Fprintf(b, "cc_manager_oauth_requests_total{%s} %d\n", labelsOf(k), s.values[k].count)
+	}
+	b.WriteString("# HELP cc_manager_oauth_success_total Successful OAuth requests by stage and status class.\n# TYPE cc_manager_oauth_success_total counter\n")
+	for _, k := range keys {
+		fmt.Fprintf(b, "cc_manager_oauth_success_total{%s} %d\n", labelsOf(k), s.values[k].success)
+	}
+	b.WriteString("# HELP cc_manager_oauth_duration_seconds OAuth request duration by stage and status class.\n# TYPE cc_manager_oauth_duration_seconds histogram\n")
+	for _, k := range keys {
+		labels, v := labelsOf(k), s.values[k]
 		for i, upper := range oauthDurationBuckets {
 			fmt.Fprintf(b, "cc_manager_oauth_duration_seconds_bucket{%s,le=\"%g\"} %d\n", labels, upper, v.buckets[i])
 		}
@@ -98,7 +112,7 @@ func (a *App) writeOAuthMetrics(b *strings.Builder) {
 	if g := a.oauthGate.Load(); g != nil {
 		inflight = len(g.slots)
 	}
-	fmt.Fprintf(b, "# TYPE cc_manager_oauth_inflight gauge\ncc_manager_oauth_inflight %d\n", inflight)
+	fmt.Fprintf(b, "# HELP cc_manager_oauth_inflight Token exchanges currently holding a global slot.\n# TYPE cc_manager_oauth_inflight gauge\ncc_manager_oauth_inflight %d\n", inflight)
 	a.writeOAuthReliabilityMetrics(b)
 }
 
