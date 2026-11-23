@@ -359,8 +359,12 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     addedProxies.value.push(proxy)
     emit('proxy-created')
   }
+  /** A PATCH rebind is in flight; a second selection must wait for it. Kept
+   * apart from proxyBusy, which the picker also raises while it saves a new
+   * pool entry — right before it reports that entry as the selection. */
+  let rebinding = false
   async function changeProxy(id: string) {
-    if (id === (edit.value.proxy_id || '') || proxyBusy.value) return
+    if (id === (edit.value.proxy_id || '') || rebinding) return
     if (edit.value.id) {
       // An existing account is bound to its exit on the server: the OAuth
       // start refuses any other proxy (PROXY_BINDING_CHANGED) and the worker
@@ -369,6 +373,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       // the account to be free of a pending authorization, so release the
       // session first. The picker is controlled by edit.proxy_id, so a failed
       // rebind simply leaves the previous selection in place.
+      rebinding = true
       proxyBusy.value = true
       try {
         await releaseOAuthSession()
@@ -384,6 +389,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         fieldErrors.value.proxy_id = errorMessage(e, '代理重绑失败')
         return
       } finally {
+        rebinding = false
         proxyBusy.value = false
       }
     }

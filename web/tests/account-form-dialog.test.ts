@@ -956,6 +956,25 @@ test('fresh explicit device IDs take precedence over retained device IDs', async
   expect(JSON.parse(fetchMock.mock.calls[0]![1].body).auth_json.claude_device_ids).toEqual(['real-device'])
 })
 
+test('a proxy saved inside the wizard becomes the selection and enables login for a new account', async () => {
+  const w = setup()
+  await flushPromises()
+  expect(w.get('.fake-oauth').attributes('disabled')).toBeDefined()
+  fetchMock.mockResolvedValueOnce(response({ id: 'px3' }))
+  await w.get('input[value="new"]').setValue()
+  await w.get('[data-proxy-address]').setValue('http://proxy.example.com:8080')
+  // The picker reports busy while it saves, then hands over the new id as the
+  // selection; the busy signal must not swallow that selection.
+  await w.get('[data-save-proxy]').trigger('click')
+  await flushPromises()
+  expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/proxies')
+  expect(w.text()).toContain('新代理已保存并选中')
+  expect((w.get('#field-proxy select').element as HTMLSelectElement).value).toBe('px3')
+  expect(w.get('.fake-oauth').attributes('disabled')).toBeUndefined()
+  // No PATCH: a new account has nothing to rebind on the server.
+  expect(fetchMock.mock.calls.some((c) => c[1]?.method === 'PATCH')).toBe(false)
+})
+
 test('changing the proxy of an existing account rebinds it explicitly before any new authorization', async () => {
   const w = setupReauth(linkedAccount({ proxy_id: 'px', version: 2 }))
   await flushPromises()
