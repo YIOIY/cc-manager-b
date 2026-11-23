@@ -48,6 +48,7 @@
 | `CREDENTIALS_INCOMPLETE` | validation | — | 否 | fix_input | Claude 凭证字段不完整 | 预检：每个有问题的凭证字段一条，field 为路径，message 为字段文案 |
 | `CREDENTIALS_REQUIRED` | validation | 422 | 否 | fix_input | 缺少 Claude 凭证 | 上号前必须有凭证 |
 | `CREDENTIAL_EXPIRED` | validation | — | 否 | reauthorize | 访问令牌已过期 | 异步提交：排队或执行时发现凭证已过期；勿用未注册的 AUTH_EXPIRED_INVALID |
+| `CREDENTIAL_STALE` | conflict | 409 | 否 | reauthorize | 凭证早于已保存版本或新旧关系不明确 | 防止旧快照回滚：以 last_refresh 为主序（本次更晚即接受），相同或缺失时比较 expired；两者都相同而令牌不同视为无法排序。details.field/saved/incoming 给出被比较的字段与两侧时间；允许调用方自定义文案 |
 | `CREDENTIAL_UNREADABLE` | config | — | 否 | fix_input | 已保存的凭证无法读取 | 阶段 2 并入 SECRET_UNREADABLE |
 | `CSRF_FAILED` | auth | 403 | 否 | retry | 页面会话已过期 | 缺少或不匹配的 X-CSRF-Token |
 | `DELIVERY_STATE_UNAVAILABLE` | validation | — | 否 | fix_input | 无法读取交付状态 | 预检 |
@@ -64,14 +65,18 @@
 | `NOT_FOUND` | not_found | 404 | 否 | none | 资源不存在或已被删除 | details.resource 指明资源类型；允许调用方自定义文案 |
 | `NO_LINKED_ACCOUNTS` | validation | 422 | 否 | none | 所选范围没有可同步的关联账号 | 账单同步范围 |
 | `NO_RETRY_ITEMS` | validation | 422 | 否 | none | 没有仍在可查窗口内的失败项 | 账单重试 |
-| `OAUTH_BUSY` | rate_limit | 429 | 是 | wait | 授权会话较多 | 待授权链接数达到上限或并发兑换排队 30 秒未获额度；details.retry_after_seconds 与 Retry-After 头一致；允许调用方自定义文案 |
-| `OAUTH_EXCHANGE_FAILED` | validation | 422 | 否 | fix_input | 授权码兑换失败 | 授权码无效、过期或已使用（400/404 等）；details.upstream_status 为上游状态；不含上游响应；允许调用方自定义文案 |
-| `OAUTH_IDENTITY_REJECTED` | upstream | 403 | 否 | reauthorize | Claude 拒绝了当前身份 | 兑换时 401/403，多为 IP 或身份风控；重放同一授权码无效，需重新生成链接；details.upstream_status |
+| `OAUTH_BUSY` | rate_limit | 429 | 是 | wait | 授权会话较多 | details.oauth_busy_reason 说明原因并决定 retry_after_seconds（与 Retry-After 头一致）：session_in_flight 同一会话正在兑换或提交（2 秒）、owner_lock 同一浏览器会话并发生成链接（5 秒）、queue_timeout / exit_timeout / pacing_timeout 排队 30 秒预算（全局闸门、单出口闸门、出口间隔共用）用尽（约 10 秒并带抖动）、store_full 待授权链接达 512 上限（15 秒）、cancelled 排队期间请求被取消（1 秒）；允许调用方自定义文案 |
+| `OAUTH_EXCHANGE_FAILED` | validation | 422 | 否 | fix_input | 授权码兑换失败 | 授权码无效、过期、已使用（400/404/409），或成功响应数据无效；终止会话时 details.oauth_session_expired=true，前端须清除失效链接；details.upstream_status 为上游状态（如有），不含上游响应；允许调用方自定义文案 |
+| `OAUTH_IDENTITY_REJECTED` | upstream | 403 | 否 | reauthorize | Claude 拒绝了当前身份 | 兑换（token 阶段）返回 JSON 错误体的 401/403：同一授权码重放不会成功，会话终止并带 details.oauth_session_expired=true，需重新生成链接（非 JSON 拦截页归 OAUTH_PROXY_UNREACHABLE）；资料读取（profile/roles 阶段）返回 401/403：令牌与会话保留，可按阶段重试或手动补填。details.upstream_status 为上游状态；不据此推断封号原因 |
+| `OAUTH_PROXY_CHANGED` | conflict | 409 | 否 | reauthorize | 授权出口已变化，请显式重新授权 | 授权期间代理指纹改变；pending 保留但提交需用原出口或重新开始；允许调用方自定义文案 |
 | `OAUTH_PROXY_INVALID` | validation | 422 | 否 | fix_input | 授权使用的代理不可用 | ；允许调用方自定义文案 |
-| `OAUTH_PROXY_UNREACHABLE` | validation | 422 | 否 | fix_input | 所选代理连不上 Claude | 经所选代理对令牌端点 GET 探测失败：连接失败、超时、5xx 或非 JSON 响应（疑似拦截）；文案带阶段；允许调用方自定义文案 |
-| `OAUTH_RATE_LIMITED` | rate_limit | 429 | 是 | wait | Claude 授权暂时限流 | 上游 429 或本地冷却命中；details.retry_after_seconds 与 Retry-After 头一致，按账号冷却（无账号时按邮箱），遵从上游秒数、上限 1 小时；命中时保留待兑换链接，若链接仍有效则开始接口直接 200 返回原链接加 retry_after_seconds；允许调用方自定义文案 |
+| `OAUTH_PROXY_UNREACHABLE` | validation | 422 | 否 | fix_input | 所选代理连不上 Claude | 出口问题：探测阶段除 429 外的任何失败（连接失败、超时、非 JSON 的 401/403、5xx、200 非 JSON 等，此时尚未提交任何身份）；兑换阶段连接失败，或 token 请求收到非 JSON 体的 401/403（代理/WAF 拦截页，授权码未到达上游，会话保留可重试）。details.oauth_stage 为阶段，upstream_status 为上游状态；允许调用方自定义文案 |
+| `OAUTH_RATE_LIMITED` | rate_limit | 429 | 是 | wait | Claude 授权暂时限流 | 上游 429（探测、兑换或资料读取）或本地冷却命中；details.retry_after_seconds 与 Retry-After 头一致。冷却键：已有账号按账号 ID，兑换返回邮箱后另按邮箱，新账号在拿到邮箱前按已登录浏览器会话；兑换成功后只对账号 ID/邮箱播种 60 秒冷却，不影响同一操作者的下一个新账号。等待不少于 60 秒且不设业务时长上限；命中时保留链接，profile 限流保留已取得令牌，重试只读取资料；开始接口可 200 返回原链接加 retry_after_seconds，刷新或取消不能清除冷却；允许调用方自定义文案 |
+| `OAUTH_RESPONSE_INVALID` | upstream | 502 | 是 | retry | 授权响应格式异常，请按当前阶段重试 | 上游响应不是 JSON 或字段缺失。token 阶段：授权码可能已被消费，会话终止并带 details.oauth_session_expired=true，需重新授权；profile/roles 阶段：令牌与会话保留，可按阶段重试或手动补填；允许调用方自定义文案 |
 | `OAUTH_RESULT_INVALID` | validation | 422 | 否 | fix_input | 授权结果无法识别 | 本地解析错误，文案由解析器给出；允许调用方自定义文案 |
-| `OAUTH_SESSION_EXPIRED` | not_found | 404 | 否 | reauthorize | 授权链接已失效 | 链接过期、被替换、已使用或不属于当前会话 |
+| `OAUTH_RETRYABLE` | upstream | 502 | 是 | retry | 授权请求暂时失败，请重试当前阶段 | 未分类的瞬时上游失败；网络/协议阶段都能触发；不改变 pending；允许调用方自定义文案 |
+| `OAUTH_SESSION_CONFLICT` | conflict | 409 | 否 | fix_input | 授权会话与当前操作不一致 | 同一浏览器会话已有另一账号或出口的待授权链接（details.oauth_session_id/proxy_id/account_id/stage 指出该链接），需显式 refresh 或 cancel；提交阶段表示 oauth_session_id 与提交的账号、凭证或邮箱不一致；允许调用方自定义文案 |
+| `OAUTH_SESSION_EXPIRED` | not_found | 404 | 否 | reauthorize | 授权链接已失效 | 链接过期、被替换、已取消、已完成提交或不属于当前会话；缓存令牌在会话等待期间过期时同样返回此码并带 details.oauth_session_expired=true |
 | `OAUTH_START_FAILED` | internal | 500 | 是 | retry | 无法生成授权链接 | 随机数生成失败 |
 | `OAUTH_SUPPLIER_REJECTED` | upstream | 502 | 是 | retry | Claude 授权服务暂时故障 | 兑换时上游 5xx；已有链接与授权码保留，可直接重试；允许调用方自定义文案 |
 | `ONBOARD_DISABLED` | permission | 403 | 否 | contact_admin | 当前账号已被禁止上号 | users.can_onboard=0 时拦截新建/上号/导入/Claude OAuth |
@@ -94,6 +99,7 @@
 | `PLATFORM_RESPONSE_INVALID` | upstream | 502 | 是 | retry | 平台返回的内容无法识别 | 上游响应解析失败；允许调用方自定义文案 |
 | `PLATFORM_UNAVAILABLE` | upstream | 502 | 是 | retry | 平台暂时无法访问 | 上游 5xx/429/网络失败；允许调用方自定义文案 |
 | `PREFLIGHT_BLOCKED` | validation | 422 | 否 | fix_input | 资料或凭证未完善 | 预检有 error 项时拒绝提交 |
+| `PROXY_BINDING_CHANGED` | conflict | 409 | 否 | reauthorize | 凭证出口与代理绑定不一致，请重新授权 | 已保存凭证 proxy_url 与当前选中代理不一致；需显式重签；允许调用方自定义文案 |
 | `PROXY_CHECK_FAILED` | internal | 500 | 是 | retry | 代理检测记录保存失败 |  |
 | `PROXY_EXISTS` | conflict | 409 | 否 | fix_input | 相同主机和端口的代理已存在 | proxies.host+port 唯一约束 |
 | `PROXY_INVALID` | validation | 422 | 否 | fix_input | 代理配置不可用 | 代理不存在、已停用或字段无效；HTTP 与任务共用；允许调用方自定义文案 |

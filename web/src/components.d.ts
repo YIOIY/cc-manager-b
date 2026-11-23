@@ -60,6 +60,7 @@ declare module 'vue' {
     IdleAccounts: typeof import('./components/IdleAccounts.vue')['default']
     ImportDialog: typeof import('./components/ImportDialog.vue')['default']
     ListFilters: typeof import('./components/ListFilters.vue')['default']
+    OAuthSettingsPanel: typeof import('./components/OAuthSettingsPanel.vue')['default']
     OnboardingProxyPicker: typeof import('./components/OnboardingProxyPicker.vue')['default']
     PageHead: typeof import('./components/PageHead.vue')['default']
     PlatformBills: typeof import('./components/PlatformBills.vue')['default']

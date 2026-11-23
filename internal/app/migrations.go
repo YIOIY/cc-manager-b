@@ -37,6 +37,9 @@ var migrations = []migration{
 	{16, "announcement", migrateAnnouncementV16},
 	{17, "user-can-onboard", migrateUserCanOnboardV17},
 	{18, "proxy-host-port-unique", migrateProxyHostPortUniqueV18},
+	{19, "oauth-dispatch-settings", migrateOAuthDispatchV19},
+	{20, "oauth-ua-pool", migrateOAuthUAPoolV20},
+	{21, "oauth-dispatch-defaults", migrateOAuthDispatchDefaultsV21},
 }
 
 func migrate(db *sql.DB) error { return runMigrations(db, len(migrations)) }
@@ -427,6 +430,45 @@ updated_at TEXT NOT NULL DEFAULT ''
 // without removing the accounts.onboard role permission.
 func migrateUserCanOnboardV17(tx *sql.Tx) error {
 	return addColumns(tx, "users", []string{"can_onboard INTEGER NOT NULL DEFAULT 1"})
+}
+
+// migrateOAuthDispatchV19 adds the editable OAuth dispatch settings. The
+// defaults preserve current throughput so an upgrade does not silently slow
+// onboarding: 3 global / 2 per-exit exchanges, 3 s between exchanges on one
+// exit, a 30 s probe cache, and the documented preheat windows (manual 1–3 s,
+// batch 5–15 s). Every value sits inside the range the settings endpoint
+// accepts, so the panel can be saved as loaded.
+func migrateOAuthDispatchV19(tx *sql.Tx) error {
+	return execAll(tx,
+		`CREATE TABLE IF NOT EXISTS oauth_dispatch_settings(id INTEGER PRIMARY KEY CHECK(id=1),global_concurrency INTEGER NOT NULL,exit_concurrency INTEGER NOT NULL,exchange_interval_seconds INTEGER NOT NULL,probe_cache_seconds INTEGER NOT NULL,manual_preheat_seconds_min INTEGER NOT NULL,manual_preheat_seconds_max INTEGER NOT NULL,batch_preheat_seconds_min INTEGER NOT NULL,batch_preheat_seconds_max INTEGER NOT NULL,ua_pool_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL)`,
+		`INSERT OR IGNORE INTO oauth_dispatch_settings VALUES(1,3,2,3,30,1,3,5,15,'[]',1)`,
+	)
+}
+
+// migrateOAuthDispatchDefaultsV21 repairs databases that ran the first cut of
+// v19, whose row (probe cache 120 s, manual preheat 0/0, batch preheat
+// 300–900 s) lay outside the ranges the settings endpoint validates: the
+// panel could not be saved and a batch import waited up to 15 minutes per
+// account. Only the out-of-range fields move, each to the documented default;
+// values an operator already saved inside the range are kept. A preheat upper
+// bound of 0 can only be the first-cut row — the endpoint never accepted 0
+// before this version — so it is treated as unset rather than as "off".
+func migrateOAuthDispatchDefaultsV21(tx *sql.Tx) error {
+	return execAll(tx,
+		`UPDATE oauth_dispatch_settings SET probe_cache_seconds=30 WHERE id=1 AND (probe_cache_seconds<0 OR probe_cache_seconds>30)`,
+		`UPDATE oauth_dispatch_settings SET manual_preheat_seconds_min=1,manual_preheat_seconds_max=3 WHERE id=1 AND (manual_preheat_seconds_min<0 OR manual_preheat_seconds_min>3 OR manual_preheat_seconds_max<=0 OR manual_preheat_seconds_max>3 OR manual_preheat_seconds_max<manual_preheat_seconds_min)`,
+		`UPDATE oauth_dispatch_settings SET batch_preheat_seconds_min=5,batch_preheat_seconds_max=15 WHERE id=1 AND (batch_preheat_seconds_min<0 OR batch_preheat_seconds_min>15 OR batch_preheat_seconds_max<=0 OR batch_preheat_seconds_max>15 OR batch_preheat_seconds_max<batch_preheat_seconds_min)`,
+	)
+}
+
+// migrateOAuthUAPoolV20 stores the deployment-level stable client presentation
+// pool. Existing accounts keep their persisted profile when the pool changes.
+func migrateOAuthUAPoolV20(tx *sql.Tx) error {
+	if err := addColumns(tx, "oauth_dispatch_settings", []string{"ua_pool_json TEXT NOT NULL DEFAULT '[]'"}); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`UPDATE oauth_dispatch_settings SET ua_pool_json='[]' WHERE id=1 AND ua_pool_json=''`)
+	return err
 }
 
 // migrateProxyHostPortUniqueV18 normalizes proxy hosts and enforces one pool

@@ -126,6 +126,10 @@ func (a *App) importPreview(w http.ResponseWriter, r *http.Request) {
 				row["password_secret"] = sealed
 			}
 			if auth != nil {
+				if e := applyCredentialInvariants(auth, nil); e != nil {
+					writeError(w, r, e)
+					return
+				}
 				encoded, _ := json.Marshal(auth)
 				sealed, _ := a.keys.Seal(encoded, []byte(id+":credentials"))
 				row["credentials_secret"] = sealed
@@ -218,7 +222,9 @@ func (a *App) importCommit(w http.ResponseWriter, r *http.Request, id string) {
 	created, skipped := 0, 0
 	for _, m := range items {
 		account, _ := m["account"].(string)
-		metadataJSON, _ := json.Marshal(pickMetadata(m))
+		meta := pickMetadata(m)
+		meta["source"] = "batch_import"
+		metadataJSON, _ := json.Marshal(meta)
 		accountID := newID()
 		credentials := "{}"
 		if encoded, ok := m["credentials_secret"].(string); ok && a.keys != nil {

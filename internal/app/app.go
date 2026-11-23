@@ -24,19 +24,22 @@ import (
 )
 
 type App struct {
-	DB            *sql.DB
-	cfg           Config
-	keys          *secretbox.Keyring
-	sessions      *sessionStore
-	logins        *loginLimiter
-	writes        *writeLimiter
-	oauth         oauthPendingStore
-	oauthCooldown oauthAccountCooldown
-	oauthGate     *oauthGate
-	accountLocks  accountLocks
-	billMutex     sync.Mutex
-	billFactory   func(string, string) (billSupplier, error)
-	billInterval  time.Duration
+	DB                *sql.DB
+	cfg               Config
+	keys              *secretbox.Keyring
+	sessions          *sessionStore
+	logins            *loginLimiter
+	writes            *writeLimiter
+	oauth             oauthPendingStore
+	oauthCooldown     oauthAccountCooldown
+	oauthGate         oauthGatePointer
+	oauthStatCounters oauthStatCounters
+	oauthProbeCache   oauthProbeCache
+	oauthExitGate     exitGatePointer
+	accountLocks      accountLocks
+	billMutex         sync.Mutex
+	billFactory       func(string, string) (billSupplier, error)
+	billInterval      time.Duration
 
 	webMu      sync.Mutex
 	webClients map[string]*supplier.WebClient
@@ -83,6 +86,7 @@ CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, account TEXT UNIQUE NOT
 CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',scheme TEXT NOT NULL DEFAULT '',host TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,username TEXT NOT NULL DEFAULT '',password_secret TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',created_by_user_id TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',web_username TEXT NOT NULL DEFAULT '',web_password_secret TEXT NOT NULL DEFAULT '',web_suspended_at TEXT NOT NULL DEFAULT '',web_suspended_reason TEXT NOT NULL DEFAULT '',usd_cny_rate REAL NOT NULL DEFAULT 7.2);
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',connection_id TEXT NOT NULL DEFAULT '',payload_json TEXT NOT NULL DEFAULT '{}',result_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS oauth_dispatch_settings(id INTEGER PRIMARY KEY CHECK(id=1),global_concurrency INTEGER NOT NULL,exit_concurrency INTEGER NOT NULL,exchange_interval_seconds INTEGER NOT NULL,probe_cache_seconds INTEGER NOT NULL,manual_preheat_seconds_min INTEGER NOT NULL,manual_preheat_seconds_max INTEGER NOT NULL,batch_preheat_seconds_min INTEGER NOT NULL,batch_preheat_seconds_max INTEGER NOT NULL,ua_pool_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL DEFAULT '',password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,can_onboard INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
 CREATE TABLE IF NOT EXISTS roles(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,description TEXT NOT NULL DEFAULT '',builtin INTEGER NOT NULL DEFAULT 0,permissions_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS user_roles(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id),PRIMARY KEY(user_id,role_id));
@@ -136,7 +140,7 @@ func NewWithConfig(cfg Config, workers bool) (*App, error) {
 			return nil, err
 		}
 	}
-	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now(), oauthGate: newOAuthGate(oauthGateSize)}
+	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now(), oauthGate: newOAuthGateAtomic(oauthGateSize), oauthExitGate: newExitGateAtomic(2, oauthGateWait)}
 	if cfg.StubNetworkProbes {
 		slog.Warn("network probes are stubbed (CC_MANAGER_STUB_NETWORK_PROBES=1); use this for end-to-end tests only")
 	}
@@ -149,6 +153,13 @@ func NewWithConfig(cfg Config, workers bool) (*App, error) {
 	if err = a.ensureBootstrapAdmin(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap admin: %w", err)
+	}
+	// The gates above start from the built-in sizes; the saved dispatch
+	// settings must win from the first request, not from the next PUT.
+	if s, e := a.loadOAuthDispatchSettings(); e == nil {
+		a.applyOAuthDispatchSettings(s)
+	} else {
+		slog.Warn("oauth dispatch settings unavailable, using built-in gate sizes", "error", e)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
@@ -168,6 +179,7 @@ func (a *App) Close() error {
 			a.cancel()
 		}
 		a.wg.Wait()
+		a.oauth.close()
 		if _, e := a.DB.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); e != nil {
 			slog.Warn("wal checkpoint failed", "error", e)
 		}
@@ -857,6 +869,21 @@ func (a *App) accountCredentials(w http.ResponseWriter, r *http.Request) {
 	auth, err := decodeAuthInput(in["auth_json"])
 	if err != nil {
 		writeError(w, r, errs.New(errs.CodeValidationFailed).WithFields(errs.FieldError{Field: "auth_json", Code: errs.FieldInvalidFormat, Message: err.Error()}))
+		return
+	}
+	unlock, err := a.lockAccountWrite(r.Context(), id)
+	if err != nil {
+		writeError(w, r, errs.New(errs.CodePlatformUnavailable).WithCause(err))
+		return
+	}
+	defer unlock()
+	saved, _ := a.loadCredential(id)
+	if e := a.loadDeviceAnchor(r.Context(), id, auth, saved); e != nil {
+		writeError(w, r, storageError(e, "设备标识读取失败"))
+		return
+	}
+	if e := applyCredentialInvariants(auth, saved); e != nil {
+		writeError(w, r, e)
 		return
 	}
 	if problems := validateAuthFields(auth); len(problems) > 0 {

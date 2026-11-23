@@ -11,11 +11,15 @@ import (
 func (a *App) Handler() http.Handler {
 	api := http.NewServeMux()
 	route := func(pattern string, h http.HandlerFunc) { api.HandleFunc(pattern, a.protect(h)) }
-	need := func(pattern string, p Permission, h http.HandlerFunc) { route(pattern, a.require(p, h)) }
+	// The OAuth write guard sits inside the permission check: a caller without
+	// the permission must not be able to probe account locks or learn that an
+	// account is mid-authorization from a 409.
+	guard := a.guardOAuthWrites
+	need := func(pattern string, p Permission, h http.HandlerFunc) { route(pattern, a.require(p, guard(h))) }
 	needFn := func(pattern string, pick func(*http.Request) Permission, h http.HandlerFunc) {
-		route(pattern, a.requireFn(pick, h))
+		route(pattern, a.requireFn(pick, guard(h)))
 	}
-	needAny := func(pattern string, h http.HandlerFunc, ps ...Permission) { route(pattern, a.requireAny(ps, h)) }
+	needAny := func(pattern string, h http.HandlerFunc, ps ...Permission) { route(pattern, a.requireAny(ps, guard(h))) }
 
 	api.HandleFunc("GET /api/v1/auth/session", a.authSession)
 	api.HandleFunc("POST /api/v1/auth/login", a.authLogin)
@@ -35,7 +39,7 @@ func (a *App) Handler() http.Handler {
 	need("GET /api/v1/dashboard/attention", PermDashboardView, a.dashboardAttention)
 	need("GET /api/v1/dashboard/insights", PermDashboardView, a.dashboardInsights)
 	needOnboard := func(pattern string, p Permission, h http.HandlerFunc) {
-		need(pattern, p, a.requireCanOnboard(h))
+		route(pattern, a.require(p, a.requireCanOnboard(guard(h))))
 	}
 	needOnboard("POST /api/v1/claude-oauth/sessions", PermAccountsOnboard, a.claudeOAuthStart)
 	needOnboard("POST /api/v1/claude-oauth/sessions/{id}/exchange", PermAccountsOnboard, a.claudeOAuthExchange)
@@ -66,6 +70,7 @@ func (a *App) Handler() http.Handler {
 	needOnboard("POST /api/v1/accounts/{id}/submit", PermAccountsOnboard, func(w http.ResponseWriter, r *http.Request) { a.submitExistingAccount(w, r, r.PathValue("id")) })
 
 	needFn("/api/v1/proxy-settings", byMethod(PermProxiesView, map[string]Permission{"PUT": PermProxiesSettings}), a.proxyNetworkSettings)
+	needFn("/api/v1/oauth-settings", byMethod(PermOAuthSettingsView, map[string]Permission{"PUT": PermOAuthSettings}), a.oauthDispatchSettingsHandler)
 	needFn("/api/v1/proxies", byMethod(PermProxiesView, map[string]Permission{"POST": PermProxiesCreate}), a.proxies)
 	need("PATCH /api/v1/proxies/{id}", PermProxiesUpdate, a.proxyUpdate)
 	need("POST /api/v1/proxies/{id}/assign", PermProxiesUpdate, a.proxyAssign)

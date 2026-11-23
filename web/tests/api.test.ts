@@ -140,3 +140,14 @@ test('a 429 notifies rate-limit listeners with the wait seconds', async () => {
   expect(listener).toHaveBeenCalledWith(7)
   off()
 })
+
+test('Retry-After header reaches the form cooldown when the envelope omits details', async () => {
+  fetchMock.mockResolvedValueOnce(
+    new Response(JSON.stringify({ error: { code: 'RATE_LIMITED', message: 'wait' } }), {
+      status: 429,
+      headers: { 'Retry-After': '90' },
+    }),
+  )
+  const error = (await api('/claude-oauth/sessions', { method: 'POST', body: '{}' }).catch((e) => e)) as ApiError
+  expect(error.details.retry_after_seconds).toBe(90)
+})

@@ -65,9 +65,45 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   const busy = computed(() => saving.value || oauthBusy.value || proxyBusy.value)
   const authorizationStarted = ref(false)
   const oauthGeneration = ref(0)
+  // The wizard owns the server lease; moving between panels never releases it.
+  const oauthSessionId = ref('')
+  function setOAuthSession(id: string) {
+    oauthSessionId.value = id
+  }
+  async function releaseOAuthSession() {
+    const id = oauthSessionId.value || edit.value.oauth_session_id
+    oauthSessionId.value = ''
+    delete edit.value.oauth_session_id
+    if (id) await api('/claude-oauth/sessions/' + id, { method: 'DELETE' }).catch(() => {})
+  }
+  function committedOAuthSession() {
+    oauthSessionId.value = ''
+    delete edit.value.oauth_session_id
+  }
   const proxyChanged = ref(false)
   /** Set after a retryable platform push failure while credentials stay in the form. */
   const pushFailed = ref(false)
+  const pushBlocked = ref(false)
+  const submitRetryAfter = ref(0)
+  let submitRetryDeadline = 0
+  let submitRetryTimer: ReturnType<typeof setInterval> | undefined
+  function clearSubmitWait() {
+    if (submitRetryTimer) clearInterval(submitRetryTimer)
+    submitRetryTimer = undefined
+    submitRetryDeadline = 0
+    submitRetryAfter.value = 0
+  }
+  function updateSubmitWait() {
+    submitRetryAfter.value = Math.max(0, Math.ceil((submitRetryDeadline - Date.now()) / 1000))
+    if (!submitRetryAfter.value) clearSubmitWait()
+  }
+  function waitToSubmit(seconds: unknown) {
+    const value = Math.ceil(Number(seconds))
+    clearSubmitWait()
+    submitRetryDeadline = Date.now() + (Number.isFinite(value) && value > 0 ? value : 30) * 1000
+    updateSubmitWait()
+    submitRetryTimer = setInterval(updateSubmitWait, 1000)
+  }
   /** The accepted first-time submission while the success page is shown. */
   const submitted = ref<OnboardResult | null>(null)
   const addedProxies = ref<ProxyOption[]>([])
@@ -188,10 +224,18 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   const enabledConnections = computed(() => props.connections.filter((c) => c.enabled))
   let initialForm = ''
   let idempotencyKey = ''
-  let lastAttempt = ''
+
   let clock: ReturnType<typeof setInterval> | undefined
   let flashTimer: ReturnType<typeof setTimeout> | undefined
   let retainedDevices: { email: string; ids: string } | null = null
+
+  /** Rotate the idempotency key when the submission lifecycle definitively
+   * changes (new auth round, proxy swap, paste import). Retries within the
+   * same epoch reuse the key; payload comparison is intentionally not used
+   * because identical edits across epochs must stay distinct attempts. */
+  function rotateIdempotencyKey() {
+    idempotencyKey = randomId()
+  }
   function defaultConnection() {
     if (enabledConnections.value.length === 1) return enabledConnections.value[0]!.id
     let last = ''
@@ -239,6 +283,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     for (const [key] of credentialFields) target[key] = ''
     target.id_token = ''
     target.claude_device_ids_text = ''
+    delete target.oauth_session_id
   }
   function showProfile(key: string) {
     return editKnownFields.value || !knownKeys.value.has(key) || !!fieldErrors.value[key]
@@ -261,7 +306,13 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   function fillFromOAuth(result: OAuthResult) {
     try {
       applyOAuthResult(edit.value, result)
-      if (retainedDevices && result.auth_json.email?.trim().toLowerCase() === retainedDevices.email)
+      if (result.oauth_session_id) oauthSessionId.value = result.oauth_session_id
+      pushBlocked.value = false
+      if (
+        retainedDevices &&
+        !parseDeviceIds(edit.value.claude_device_ids_text).length &&
+        result.auth_json.email?.trim().toLowerCase() === retainedDevices.email
+      )
         edit.value.claude_device_ids_text = retainedDevices.ids
       retainedDevices = null
       oauthIdentity.value = {
@@ -282,11 +333,15 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       ])
       resetNotices()
     } catch (e) {
+      // Failed fills keep the pending OAuth session so the user can retry
+      // submission or inspect the result without re-authorizing (P0: fail-open).
       notice.value = e
+      if (result.oauth_session_id) oauthSessionId.value = result.oauth_session_id
     }
   }
   function onAuthorizationStarted() {
     authorizationStarted.value = true
+    rotateIdempotencyKey()
     if (source.value === 'oauth') {
       if (edit.value.claude_device_ids_text)
         retainedDevices = {
@@ -304,8 +359,40 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     addedProxies.value.push(proxy)
     emit('proxy-created')
   }
-  function changeProxy(id: string) {
-    if (id === (edit.value.proxy_id || '')) return
+  /** A PATCH rebind is in flight; a second selection must wait for it. Kept
+   * apart from proxyBusy, which the picker also raises while it saves a new
+   * pool entry — right before it reports that entry as the selection. */
+  let rebinding = false
+  async function changeProxy(id: string) {
+    if (id === (edit.value.proxy_id || '') || rebinding) return
+    if (edit.value.id) {
+      // An existing account is bound to its exit on the server: the OAuth
+      // start refuses any other proxy (PROXY_BINDING_CHANGED) and the worker
+      // refuses a credential whose proxy differs from the binding. The bound
+      // exit changes only through the explicit PATCH, which in turn requires
+      // the account to be free of a pending authorization, so release the
+      // session first. The picker is controlled by edit.proxy_id, so a failed
+      // rebind simply leaves the previous selection in place.
+      rebinding = true
+      proxyBusy.value = true
+      try {
+        await releaseOAuthSession()
+        const { data } = await api<{ version: number }>('/accounts/' + edit.value.id, {
+          method: 'PATCH',
+          body: JSON.stringify({ proxy_id: id, expected_version: edit.value.version }),
+        })
+        edit.value.version = data.version
+        fieldErrors.value = { ...fieldErrors.value }
+        delete fieldErrors.value.proxy_id
+      } catch (e) {
+        notice.value = e
+        fieldErrors.value.proxy_id = errorMessage(e, '代理重绑失败')
+        return
+      } finally {
+        rebinding = false
+        proxyBusy.value = false
+      }
+    }
     const keepSaved = linkedReauth.value && keepsSavedCredential(edit.value)
     const wasConnected = connected.value
     if (edit.value.claude_device_ids_text)
@@ -315,10 +402,12 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
           .toLowerCase(),
         ids: edit.value.claude_device_ids_text,
       }
+    rotateIdempotencyKey()
     edit.value.proxy_id = id
     if (keepSaved) {
-      // Reauth with sealed credentials: only the pool binding changes.
-      proxyChanged.value = false
+      // Changing the exit requires a fresh authorization, including saved-token sync.
+      replaceSavedCredential()
+      proxyChanged.value = true
       resetNotices()
       return
     }
@@ -329,7 +418,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       oauthIdentity.value = null
       proxyChanged.value = true
     } else if (authorizationStarted.value) proxyChanged.value = true
-    oauthGeneration.value++
+    // Keep the mounted panel and pending link until explicit replacement.
     oauthBusy.value = false
     resetNotices()
   }
@@ -340,7 +429,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     clearCredential(edit.value)
   }
   /** User-initiated reauth: clear saved/form credentials and return to step 1. */
-  function startReauthorize() {
+  async function startReauthorize() {
+    await releaseOAuthSession()
+    rotateIdempotencyKey()
+    pushBlocked.value = false
     if (linkedReauth.value && edit.value.claude_device_ids_text) {
       retainedDevices = {
         email: String(edit.value.account || '')
@@ -371,6 +463,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     } catch {
       return
     }
+    await releaseOAuthSession()
     const { proxy_id, platform_connection_id } = edit.value
     edit.value = { ...blank(), proxy_id, platform_connection_id }
     source.value = ''
@@ -383,7 +476,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     authorizationStarted.value = false
     resetNotices()
   }
-  function fillFromPaste() {
+  async function fillFromPaste() {
     try {
       let value: unknown = JSON.parse(credentialPaste.value)
       if (Array.isArray(value)) value = value[0]
@@ -412,6 +505,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       for (const key of ['plan', 'register_time', 'plan_start_time', 'plan_end_time', 'password'] as const)
         if (typeof record[key] === 'string') next[key] = record[key]
       if (next.id) next.replace_credentials = true
+      await releaseOAuthSession()
+      rotateIdempotencyKey()
       edit.value = next
       source.value = 'import'
       oauthIdentity.value = null
@@ -445,6 +540,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     }
   }
   async function startManual() {
+    await releaseOAuthSession()
     source.value = 'manual'
     await advance()
   }
@@ -615,7 +711,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     return map[key] || fieldAnchors.credentials
   }
   async function save() {
-    if (busy.value || step.value !== 3) return
+    updateSubmitWait()
+    if (busy.value || step.value !== 3 || pushBlocked.value || submitRetryAfter.value > 0) return
     saving.value = true
     try {
       resetNotices()
@@ -624,15 +721,19 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         const payload = buildReauthorizePayload(edit.value)
         const body: Record<string, unknown> = {
           proxy_id: payload.proxy_id,
-          expected_version: props.account?.version,
+          // A proxy rebind in this dialog already bumped the version; use the
+          // one the form tracks rather than the snapshot the dialog opened with.
+          expected_version: edit.value.version ?? props.account?.version,
         }
         if (payload.auth_json) body.auth_json = payload.auth_json
+        if (payload.oauth_session_id) body.oauth_session_id = payload.oauth_session_id
         if (payload.claude_device_ids?.length) body.claude_device_ids = payload.claude_device_ids
         const result = await api<ReauthorizeResult>('/accounts/' + edit.value.id + '/reauthorize', {
           method: 'POST',
           body: JSON.stringify(body),
         })
         pushFailed.value = false
+        committedOAuthSession()
         edit.value = {}
         credentialPaste.value = ''
         emit('update:modelValue', false)
@@ -650,15 +751,13 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       }
       const payload = buildOnboardPayload(edit.value)
       const serialized = JSON.stringify(payload)
-      if (lastAttempt && lastAttempt !== serialized) idempotencyKey = randomId()
-      lastAttempt = serialized
       const result = await api<OnboardResult>(
         edit.value.id ? '/accounts/' + edit.value.id + '/onboard' : '/accounts/onboard',
         { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: serialized },
       )
+      committedOAuthSession()
       remember(LAST_CONNECTION_KEY, String(edit.value.platform_connection_id || ''))
       remember(LAST_PROXY_KEY, String(edit.value.proxy_id || ''))
-      lastAttempt = ''
       credentialPaste.value = ''
       if (edit.value.id) {
         edit.value = {}
@@ -675,6 +774,16 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       emit('submitted', result.data)
     } catch (e) {
       notice.value = e
+      if (e instanceof ApiError && e.action === 'wait') {
+        waitToSubmit(e.details.retry_after_seconds)
+        pushFailed.value = false
+        return
+      }
+      if (e instanceof ApiError && (e.action === 'check_platform' || e.code === 'SUBMIT_OUTCOME_UNKNOWN')) {
+        pushBlocked.value = true
+        pushFailed.value = false
+        return
+      }
       if (e instanceof ApiError && e.fields.length) {
         fieldErrors.value = applyFieldErrors(e.fields, accountFieldMap)
         const keys = Object.keys(fieldErrors.value)
@@ -723,31 +832,41 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         await jumpTo(anchorForKey(keys[0]!))
         return
       }
+      if (
+        e instanceof ApiError &&
+        (e.details?.platform_updated === true ||
+          e.message.includes('平台已更新凭证') ||
+          e.code === 'STORAGE_UNAVAILABLE') &&
+        linkedReauth.value
+      ) {
+        // Platform accepted the push but local persist failed — require
+        // reconciliation. Checked before the generic 409 branch because a
+        // local version conflict after the push also arrives as 409.
+        pushBlocked.value = true
+        pushFailed.value = false
+        return
+      }
       if (e instanceof ApiError && e.status === 409) {
         pushFailed.value = false
         return
       }
       if (
         e instanceof ApiError &&
-        (e.message.includes('平台已更新凭证') || e.code === 'STORAGE_UNAVAILABLE') &&
-        linkedReauth.value
-      ) {
-        // Platform accepted the push but local persist failed — not a plain retry.
-        pushFailed.value = false
-        return
-      }
-      if (
-        e instanceof ApiError &&
-        (e.retryable || e.status >= 500 || e.status === 0 || e.action === 'retry' || e.action === 'check_platform')
+        (e.action === 'retry' ||
+          ((e.code === 'NETWORK' || e.code === 'TIMEOUT') && (!!edit.value.oauth_session_id || !linkedReauth.value)))
       ) {
         pushFailed.value = true
         step.value = 3
         return
       }
-      if (!(e instanceof ApiError)) {
-        pushFailed.value = true
-        step.value = 3
-      }
+      // Tiered triage: transport/outcome-unknown needs reconciliation;
+      // known HTTP errors (including unclassified 4xx) retry the same payload.
+      // Unknown 4xx is intentionally optimistic here: the next attempt re-runs
+      // server-side validation and gives a concrete code instead of dead-ending.
+      pushFailed.value = false
+      const tierBlocked =
+        !(e instanceof ApiError) || e.status === 0 || e.code === 'SUBMIT_OUTCOME_UNKNOWN' || e.status >= 500
+      if (tierBlocked) pushBlocked.value = true
     } finally {
       saving.value = false
     }
@@ -769,6 +888,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         linkedReauth.value ? '退出重新授权？' : '退出上号？',
         { confirmButtonText: '退出', cancelButtonText: '继续填写', type: 'warning' },
       )
+      await releaseOAuthSession()
       return true
     } catch {
       return false
@@ -824,6 +944,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     return null
   })
   function stopTimers() {
+    clearSubmitWait()
     if (clock) clearInterval(clock)
     if (flashTimer) clearTimeout(flashTimer)
     clock = undefined
@@ -832,6 +953,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   watch(
     () => props.modelValue,
     (open) => {
+      if (!open) void releaseOAuthSession()
       stopTimers()
       step.value = 1
       oauthIdentity.value = null
@@ -850,10 +972,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
       authorizationStarted.value = false
       proxyChanged.value = false
       pushFailed.value = false
+      pushBlocked.value = false
       submitted.value = null
       addedProxies.value = []
       retainedDevices = null
-      lastAttempt = ''
       resetNotices()
       oauthGeneration.value++
       if (!open) {
@@ -906,9 +1028,9 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     },
   )
   onBeforeUnmount(() => {
+    void releaseOAuthSession()
     stopTimers()
     edit.value = {}
-    lastAttempt = ''
     retainedDevices = null
   })
   const stepLabels = computed(() => {
@@ -924,6 +1046,8 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
   })
   const submitLabel = computed(() => {
     if (saving.value) return linkedReauth.value ? '正在同步…' : '正在保存并提交…'
+    if (pushBlocked.value) return '请先核实平台状态'
+    if (submitRetryAfter.value > 0) return `等待 ${submitRetryAfter.value}s 后重试`
     if (linkedReauth.value) {
       if (pushFailed.value) return '重试同步'
       if (savedCredentials.value) return '同步到平台'
@@ -954,6 +1078,10 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
     busy,
     authorizationStarted,
     oauthGeneration,
+    oauthSessionId,
+    setOAuthSession,
+    pushBlocked,
+    submitRetryAfter,
     proxyChanged,
     pushFailed,
     submitLabel,

@@ -1,5 +1,27 @@
 # 变更记录
 
+## Unreleased（2026-11-24 OAuth 可靠性修正）
+
+- 探测：代理池出口探测改为把带 JSON 体的 401/403（Claude 令牌端点对 GET 的真实返回）视为可达，只有连接失败、5xx 或非 JSON 响应才报 `OAUTH_PROXY_UNREACHABLE`；探测返回的 429 仍带 `retry_after_seconds`。修复探测缓存并发写入崩溃、阶段停顿随机源与出口闸门切换的数据竞争。
+- 冷却：兑换成功后只按账号 ID / 邮箱播种 60 秒冷却，不再把操作者的浏览器会话一起冷却，同一管理员「继续添加下一个」不再被上一个账号的成功限流。
+- 兑换：排队（≤30 秒）与访问上游（≤60 秒）分开计时且共用一套取消规则——排队期间浏览器断开即放弃，进入上游后不再随连接取消，结果缓存在会话内；会话已持有令牌（`stage` 为 `profile` / `ready`）时可以空 `result` 取回或续读资料，前端「继续获取资料」按钮即走此路径；缓存令牌在等待中过期时返回 `404 OAUTH_SESSION_EXPIRED` 并终止会话，不再报成 profile 失败。提交前重新读取会话状态，已取消/已过期的会话不再被标记为提交中。
+- 预热：改在任务仍为 queued 时等待，重启不会把预热中的任务记为结果未知；账号忙碌重新排队后沿用同一 `not_before_at`，不再二次等待；默认范围手动 1–3 秒、批量 5–15 秒，上限填 0 关闭，迁移 v21 修正早期库中的越界默认值（120/0/0/300/900）。
+- 账号写回：重新授权与重复上号的 UPDATE 只覆盖可选资料字段，保留 `_oauth_fp`、`_credential_devices`、`source` 等内部元数据；对话框内为已有账号切换代理时先释放 OAuth 会话再显式 `PATCH` 改绑（带 `expected_version`），被拒绝时选择器回退。
+- 路由与观测：OAuth 写保护中间件移到权限校验之后，无权限请求不再占用账号锁；`/metrics` 中 OAuth 指标按族输出各自的 HELP/TYPE 头。
+- 文档：`claude-oauth-onboarding.md`、`api-contract.md`、错误码说明与设置面板文案按实际实现对齐（时间预算、冷却键、探测规则、预热范围、`oauth_session_id` 与 409 语义）。
+- 凭证新鲜度：以 `last_refresh` 为主序，本次刷新更晚即接受，相同或缺失时才比较 `expired`，导入时写得过远的有效期不再永久阻塞该账号重授权；`CREDENTIAL_STALE` 的文案与 `details.saved/incoming` 给出两侧时间。
+- 兑换阶段 401/403 分型：只有 JSON 错误体才视为身份被拒并终止会话；代理/WAF 的非 JSON 拦截页判定为授权码未到达上游，返回 `OAUTH_PROXY_UNREACHABLE`（`oauth_stage=token`）并保留会话。
+- 生成链接：同一浏览器会话的活动链接绑定了别的出口或账号时返回 409 `OAUTH_SESSION_CONFLICT`（details 给出该链接），不再静默返回旧链接；前端据此切换为「作废并重新获取」并以 `refresh` 重发。
+- `OAUTH_BUSY` 带 `details.oauth_busy_reason`，`retry_after_seconds` 随原因变化（同会话在途 2 秒、同浏览器并发 5 秒、排队预算用尽约 10 秒带抖动、链接满 15 秒、请求已取消 1 秒），`/metrics` 新增 `cc_manager_oauth_busy_total{reason}`。
+- 移除无调用方的 `OAuthStorageBackend` 接口草案及其测试。
+- 修复：上号调度设置面板按后端契约发送 `version` 与 JSON 字符串形式的 `ua_pool_json`（此前发送 `expected_version` 与数组，保存必然 400/409，UA 池数量显示为字符串长度）。
+- 修复：全局/单出口并发在进程启动时从已保存设置加载，不再重启后回退为内置的 3/2。
+- 修复：探测阶段除 429 外的任何失败一律归 `OAUTH_PROXY_UNREACHABLE`，不再把非 JSON 401/403、5xx、200 非 JSON 误报为身份被拒、供应商拒绝或响应异常。
+- 修复：重新授权在平台已接收、本地版本冲突时返回带 `details.platform_updated=true` 的 409，OAuth 写保护据此结束会话并缓存结果，同一授权不会被第二次推送；前端据此进入核对模式。
+- 修复：出口间隔排队者取消时恢复到上一槽位而不是自己的到达时间，后续兑换不再早于配置间隔。
+- 修复：显式刷新链接时只在旧会话仍持有租约的情况下接管，否则重新加锁，避免并发取消后新会话失去账号写锁。
+- 待授权会话记录的邮箱统一小写去空格；`OAUTH_RESPONSE_INVALID` / `OAUTH_PROXY_UNREACHABLE` 错误码说明按实际行为改写。
+
 ## Unreleased（2026-11-09 账号页解耦、代理编辑删除）
 
 - 新建上号表单简化：凭证区块新增「粘贴凭证 JSON 自动填充」，接受 auth_json 对象或导入格式的单条记录（含 account / password），一次填入 13 个凭证字段，并对 `type`、`verification_status`、`last_refresh` 在缺省时自动补齐；填充后即时提示已填项数与仍缺字段。新账号默认注册日期与套餐开始为今天、套餐结束为一个月后（按月末截断）；平台连接在只有一个启用连接时自动选中，否则沿用上次提交使用的连接；凭证邮箱跟随账号邮箱直到手动修改。新增 `applyCredentialJson` / `defaultAccountDates` 纯函数与单测。
@@ -58,6 +80,7 @@
 ## 2026-11-08 工程优化（第一轮）
 
 ### 安全与稳定性
+
 - HTTP 服务增加读写/空闲超时与请求头上限；收到 SIGTERM/SIGINT 后优雅关闭，等待后台 worker 与进行中的供应商请求，退出前执行 WAL checkpoint。
 - 登录按「IP + 用户名」指数退避限速（429 + Retry-After），成功与失败都写审计日志。
 - 会话存储挂到应用实例，匿名会话缩短到 30 分钟，总量上限 10000，后台定期清理。
@@ -68,6 +91,7 @@
 - 二进制内嵌 `time/tzdata`，容器镜像补 `tzdata` 与 `ca-certificates`。
 
 ### 正确性
+
 - 数据库错误不再伪装成业务冲突：UNIQUE 冲突返回 409，其余 500 并记录带 request_id 的结构化日志。
 - 所有 `rows.Scan` 错误不再静默跳过；新库所有列 `NOT NULL DEFAULT`，旧库通过迁移回填 NULL。
 - 创建账号、JSON 导入提交改为单事务；worker 失败路径统一回写 deliveries 状态；进程重启时 `running` 交付记录标为 `unknown`。
@@ -76,12 +100,14 @@
 - 平台连接时区在保存时校验为有效 IANA 时区。
 
 ### 性能
+
 - SQLite 通过 DSN 固定 `busy_timeout/WAL/foreign_keys/synchronous=NORMAL/_txlock=immediate`，对每个连接生效。
 - 补充 jobs、sync_runs、platform_metric_snapshots、platform_bill_daily、deliveries、platform_links 等索引；账号列表改用单次关联查询。
 - 定期清理过期导入草稿、幂等键、7 天前的指标同步记录、每代理超过 100 条的检测记录。
 - 前端 Element Plus 按需引入（JS 1.09MB → 0.53MB，CSS 430KB → 154KB），vendor 分块；移除 Google Fonts 远程引用。
 
 ### 可维护性
+
 - 迁移改为有序版本列表（v1 账单、v2 代理网络、v3 索引/默认值/审计字段），每步独立事务并有测试保证新库与升级库一致。
 - 路由改为 Go 1.22 方法模式（`router.go`），handler 拆分；配置统一为 `Config` 启动时解析。
 - 套餐白名单、元数据字段、代理协议、账号身份校验、日期校验收敛到 `validation.go`。
@@ -92,6 +118,7 @@
 - 新增 Makefile、GitHub Actions CI、`.gitignore`/`.dockerignore`/`.editorconfig`。
 
 ### 部署
+
 - Dockerfile 仅复制构建所需目录，增加 `HEALTHCHECK`；compose 使用 `env_file`、`restart`、`read_only`、`cap_drop`、健康检查。
 - systemd 单元补齐 `PrivateDevices/RestrictAddressFamilies/SystemCallFilter/MemoryDenyWriteExecute/CapabilityBoundingSet` 等。
 - nginx 增加 HSTS/Permissions-Policy，按路径区分缓存头，限速 key 回退到 `$binary_remote_addr`。

@@ -31,6 +31,7 @@ func (s *httpStats) observe(status int, d time.Duration) {
 // only counts. Database gauges are read on each scrape.
 func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
 	var b strings.Builder
+	a.writeOAuthMetrics(&b)
 	emit := func(name, help, kind string, rows ...string) {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s %s\n", name, help, name, kind)
 		for _, row := range rows {

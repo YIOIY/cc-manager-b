@@ -404,3 +404,15 @@ test('a hand-written proxy_url is acknowledged in the proxy row', () => {
   assert.equal(proxy.done, true)
   assert.equal(proxy.hint, '已填写 proxy_url')
 })
+
+test('OAuth session proof survives form fill and both submission payloads', () => {
+  const edit = { ...complete }
+  applyOAuthResult(edit, {
+    auth_json: buildCredential(complete),
+    warnings: [],
+    oauth_session_id: 'retained-session',
+  })
+  assert.equal(edit.oauth_session_id, 'retained-session')
+  assert.equal(buildOnboardPayload(edit).oauth_session_id, 'retained-session')
+  assert.equal(buildReauthorizePayload(edit).oauth_session_id, 'retained-session')
+})

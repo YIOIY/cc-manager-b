@@ -6,7 +6,7 @@
         <strong>连接你的 Claude 账号</strong>
         <p>
           {{
-            reauthorizing || savedAccountId
+            reauthorizing || accountId || savedAccountId
               ? '重新授权后更新凭证；设备与代理资料默认沿用，需要更换时可修改。'
               : '授权后填入账号与凭证；交付密码、订阅日期与设备资料将在下一步补充。'
           }}
@@ -19,6 +19,7 @@
       <li>粘贴结果</li>
     </ol>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+    <p v-if="retryAfter > 0" role="status">请等待 {{ retryAfter }} 秒后重试，当前授权现场已保留。</p>
     <div v-if="error && proxyProblem" class="oauth-proxy-problem">
       <span>换一条代理后重新生成链接即可，已填写的资料会保留。</span>
       <el-button text type="primary" data-change-proxy :disabled="busy" @click="emit('change-proxy')"
@@ -43,7 +44,7 @@
       </div>
       <div class="oauth-link-caption">
         <span>{{ copied ? '链接已复制' : '本次链接 30 分钟内有效，重新获取后旧链接失效。' }}</span
-        ><el-button text :disabled="busy" @click="start(true)">重新获取链接</el-button>
+        ><el-button text :disabled="busy || disabled || retryAfter > 0" @click="start(true)">作废并重新获取</el-button>
       </div>
       <label class="oauth-label" for="claude-authorization-result">授权结果</label>
       <el-input
@@ -57,14 +58,26 @@
         @keyup.enter.prevent="exchange"
         @paste="onPaste"
       />
-      <p class="oauth-paste-hint">粘贴完整的回调地址或 code#state 会自动确认。</p>
+      <p class="oauth-paste-hint">
+        {{
+          resumable
+            ? '令牌已获取，正在补读账号资料；可直接点「继续获取资料」，无需再次粘贴。'
+            : '粘贴完整的回调地址或 code#state 会自动确认。'
+        }}
+      </p>
       <el-button
         type="primary"
         :loading="busy"
-        :disabled="!authorizationResult.trim() || disabled || retryAfter > 0"
+        :disabled="(!authorizationResult.trim() && !resumable) || disabled || retryAfter > 0 || bindingChanged"
         class="oauth-exchange"
         @click="exchange"
-        >{{ retryAfter > 0 ? `确认授权结果（${retryAfter}s）` : '确认授权结果' }}</el-button
+        >{{
+          retryAfter > 0
+            ? `${resumable ? '继续获取资料' : '确认授权结果'}（${retryAfter}s）`
+            : resumable
+              ? '继续获取资料'
+              : '确认授权结果'
+        }}</el-button
       >
     </template>
     <div v-else-if="summary" class="oauth-done">
@@ -77,19 +90,29 @@
           <span v-for="part in summaryMetaParts" :key="part">{{ part }}</span>
         </p>
       </div>
-      <el-button text :loading="busy" :disabled="disabled" class="oauth-done-action" @click="start()"
-        >重新授权</el-button
+      <el-button
+        text
+        :loading="busy"
+        :disabled="disabled || retryAfter > 0"
+        class="oauth-done-action"
+        @click="start(replaceable)"
+        >{{ replaceable ? '作废并重新获取' : '重新授权' }}</el-button
       >
     </div>
-    <el-button v-else type="primary" :loading="busy" :disabled="disabled" @click="start()">{{
-      completed ? '重新授权' : '登录 Claude'
-    }}</el-button>
+    <el-button
+      v-else
+      type="primary"
+      :loading="busy"
+      :disabled="disabled || retryAfter > 0"
+      @click="start(replaceable)"
+      >{{ replaceable ? '作废并重新获取' : completed ? '重新授权' : '登录 Claude' }}</el-button
+    >
   </div>
 </template>
 
 <script setup lang="ts">
 import { copyText } from '../utils/clipboard'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { CheckCircle2, Copy, ExternalLink, KeyRound } from 'lucide-vue-next'
 import { api, ApiError, errorMessage } from '../api'
 import { useSession } from '../composables/useSession'
@@ -99,6 +122,10 @@ import { authorizationResultComplete } from '../model/oauth-result'
 const props = defineProps<{
   proxyId?: string
   savedAccountId?: string
+  accountId?: string
+  email?: string
+  /** Parent owns a session until explicit discard or final submission. */
+  sessionId?: string
   reauthorizing?: boolean
   disabled?: boolean
   summary?: OAuthSummary | null
@@ -107,6 +134,7 @@ const emit = defineEmits<{
   authorized: [result: OAuthResult]
   busy: [value: boolean]
   started: []
+  session: [id: string]
   /** The selected proxy cannot reach Claude; the parent should bring the proxy field into view. */
   'change-proxy': []
 }>()
@@ -115,6 +143,11 @@ interface Pending {
   id: string
   authorization_url: string
   expires_at: string
+  proxy_id?: string
+  account_id?: string
+  /** Server marks recovered, already-authorized sessions so the client can
+   * finish the exchange without another browser round trip. */
+  stage?: string
   /** Set when the server handed back a live link during a 429 cooldown. */
   retry_after_seconds?: number
 }
@@ -130,11 +163,33 @@ const proxyProblem = ref(false)
 const retryAfter = ref(0)
 let retryTimer: ReturnType<typeof setInterval> | undefined
 let generation = 0
+let retryDeadline = 0
+const boundProxy = ref('')
+const boundAccount = ref('')
+/** The server refused to hand back the browser's live link because it was
+ * started for another exit or account (409 OAUTH_SESSION_CONFLICT). Only an
+ * explicit refresh replaces it, so the panel offers that instead of looping. */
+const conflict = ref<{ oauth_session_id?: string; proxy_id?: string; account_id?: string } | null>(null)
+const bindingChanged = computed(
+  () =>
+    !!conflict.value ||
+    (!!pending.value &&
+      (boundProxy.value !== (props.proxyId || '') ||
+        boundAccount.value !== (props.accountId || props.savedAccountId || ''))),
+)
+/** A live or conflicting link exists server-side: the primary action retires it. */
+const replaceable = computed(() => !!props.sessionId || !!conflict.value)
 
 /** Codes where the link itself is dead and only a new authorization helps. */
-const deadLinkCodes = new Set(['OAUTH_SESSION_EXPIRED', 'OAUTH_IDENTITY_REJECTED'])
+const deadLinkCodes = new Set(['OAUTH_SESSION_EXPIRED'])
 /** Every other proxy-shaped failure keeps the link; only these offer a swap. */
-const proxyErrorCodes = new Set(['OAUTH_PROXY_UNREACHABLE', 'OAUTH_PROXY_INVALID', 'PROXY_INVALID'])
+const proxyErrorCodes = new Set([
+  'OAUTH_PROXY_UNREACHABLE',
+  'OAUTH_PROXY_INVALID',
+  'OAUTH_PROXY_CHANGED',
+  'PROXY_BINDING_CHANGED',
+  'PROXY_INVALID',
+])
 function isProxyProblem(e: unknown) {
   if (!(e instanceof ApiError)) return false
   return proxyErrorCodes.has(e.code)
@@ -144,27 +199,35 @@ function clearRetryCountdown() {
   if (retryTimer) clearInterval(retryTimer)
   retryTimer = undefined
   retryAfter.value = 0
+  retryDeadline = 0
 }
 function startRetryCountdown(seconds: unknown) {
   const parsed = Math.ceil(Number(seconds))
   const total = Number.isFinite(parsed) && parsed > 0 ? parsed : 30
   clearRetryCountdown()
+  retryDeadline = Date.now() + total * 1000
   retryAfter.value = total
-  retryTimer = setInterval(() => {
-    retryAfter.value -= 1
-    if (retryAfter.value <= 0) clearRetryCountdown()
-  }, 1000)
+  retryTimer = setInterval(updateRetryCountdown, 1000)
+}
+function updateRetryCountdown() {
+  if (!retryDeadline) return
+  retryAfter.value = Math.max(0, Math.ceil((retryDeadline - Date.now()) / 1000))
+  if (!retryAfter.value) clearRetryCountdown()
 }
 /** 429 / busy gate carries retry_after_seconds; the link stays usable. */
 function retryWait(e: unknown) {
   if (!(e instanceof ApiError)) return 0
-  if (e.code !== 'OAUTH_RATE_LIMITED' && e.code !== 'OAUTH_BUSY') return 0
+  if (!['OAUTH_RATE_LIMITED', 'OAUTH_BUSY', 'RATE_LIMITED'].includes(e.code)) return 0
   startRetryCountdown(e.details?.retry_after_seconds)
   return retryAfter.value
 }
 
 /** Authorized and idle: show the compact card instead of the walkthrough. */
 const compact = computed(() => !!props.summary && !pending.value)
+/** The server already holds tokens for this session (profile stage or a
+ * finished exchange whose response was lost), so it can be resumed without
+ * pasting the one-time code again. */
+const resumable = computed(() => pending.value?.stage === 'ready' || pending.value?.stage === 'profile')
 const summaryMetaParts = computed(() =>
   [props.summary?.organization, props.summary?.plan, props.summary?.expiry].filter((v): v is string => !!v),
 )
@@ -178,8 +241,9 @@ async function cancel(id?: string) {
 }
 function reset() {
   generation++
-  void cancel(pending.value?.id)
+  if (!props.sessionId) void cancel(pending.value?.id)
   pending.value = null
+  conflict.value = null
   authorizationResult.value = ''
   copied.value = false
   proxyProblem.value = false
@@ -189,13 +253,12 @@ function reset() {
 // refresh=false reuses the server-side link when one is still waiting, so
 // reopening the panel does not mint a fresh PKCE round trip every time.
 async function start(refresh = false) {
-  if (busy.value || props.disabled) return
+  updateRetryCountdown()
+  if (busy.value || props.disabled || retryAfter.value > 0) return
   generation++
   const current = generation
-  // A refresh retires the old link server-side; tell the server too so the
-  // session does not linger if this browser never comes back.
-  const previous = refresh ? pending.value?.id : undefined
-  emit('started')
+  // A refresh retires the old link atomically on the server.
+  const previous = pending.value?.id
   clearRetryCountdown()
   error.value = ''
   proxyProblem.value = false
@@ -214,32 +277,63 @@ async function start(refresh = false) {
       method: 'POST',
       body: JSON.stringify({
         proxy_id: props.proxyId || '',
-        ...(props.savedAccountId ? { account_id: props.savedAccountId } : {}),
+        ...(props.accountId || props.savedAccountId ? { account_id: props.accountId || props.savedAccountId } : {}),
+        ...(props.email?.trim() ? { email: props.email.trim() } : {}),
         ...(refresh ? { refresh: true } : {}),
       }),
+      timeoutMs: 45_000,
     })
     if (current !== generation) {
       void cancel(data.id)
       return
     }
-    if (previous) void cancel(previous)
+    // The start endpoint atomically replaces the old session on explicit refresh.
+    // Never issue a trailing DELETE that could race a reused session.
+    if (data.id !== previous) authorizationResult.value = ''
+    conflict.value = null
     pending.value = data
+    boundProxy.value = data.proxy_id ?? props.proxyId ?? ''
+    boundAccount.value = data.account_id ?? props.accountId ?? props.savedAccountId ?? ''
+    emit('session', data.id)
+    emit('started')
     copied.value = false
     // A cooldown start returns the existing link with the remaining wait: the
     // browser login is already done, only the exchange has to hold back.
     if (data.retry_after_seconds) startRetryCountdown(data.retry_after_seconds)
+    // A ready session from reuse finished its authorization under an earlier
+    // click. Finish it silently when the bindings match; otherwise the old
+    // flow stays visible behind an explicit replacement prompt.
+    if (data.stage === 'ready') {
+      if (bindingChanged.value) error.value = '代理或账号已变更，请点击「作废并重新获取」。'
+      else void nextTick(() => exchange())
+    }
   } catch (e) {
     if (current === generation) {
-      error.value = errorMessage(e)
-      proxyProblem.value = isProxyProblem(e)
-      retryWait(e)
+      if (!refresh && e instanceof ApiError && e.code === 'OAUTH_SESSION_CONFLICT') {
+        conflict.value = e.details
+        emit('session', String(e.details.oauth_session_id ?? ''))
+        error.value = '代理或账号已变更，请点击「作废并重新获取」。'
+      } else {
+        error.value = errorMessage(e)
+        proxyProblem.value = isProxyProblem(e)
+        retryWait(e)
+      }
     }
   } finally {
     if (current === generation) setBusy(false)
   }
 }
 async function exchange() {
-  if (!pending.value || busy.value || props.disabled || !authorizationResult.value.trim()) return
+  updateRetryCountdown()
+  if (
+    !pending.value ||
+    busy.value ||
+    props.disabled ||
+    retryAfter.value > 0 ||
+    bindingChanged.value ||
+    (!authorizationResult.value.trim() && !resumable.value)
+  )
+    return
   const current = generation
   const id = pending.value.id
   setBusy(true)
@@ -249,25 +343,31 @@ async function exchange() {
     const { data } = await api<OAuthResult>('/claude-oauth/sessions/' + id + '/exchange', {
       method: 'POST',
       body: JSON.stringify({ result: authorizationResult.value.trim() }),
-      timeoutMs: 45000,
+      // The server queues for at most 30 s and then spends up to 60 s on the
+      // exchange itself, so a legitimate request can take ~90 s. Giving up
+      // earlier is harmless to the code — the server finishes and caches the
+      // result — but it would make the user wait for nothing.
+      timeoutMs: 95_000,
     })
     if (current !== generation) return
     pending.value = null
     authorizationResult.value = ''
     completed.value = true
     clearRetryCountdown()
+    if (data.oauth_session_id) emit('session', data.oauth_session_id)
     emit('authorized', data)
   } catch (e) {
     if (current !== generation) return
     error.value = errorMessage(e)
     proxyProblem.value = isProxyProblem(e)
     retryWait(e)
-    // Only a dead link needs a new authorization. A typo, a rate limit, a
-    // supplier 5xx or a broken exit all keep the pasted code and the link, so
-    // the user retries the same attempt instead of redoing the browser login.
-    if (e instanceof ApiError && deadLinkCodes.has(e.code)) {
+    if (e instanceof ApiError && e.code === 'OAUTH_RESULT_INVALID') authorizationResult.value = ''
+    // The explicit flag covers terminal upstream failures that share an error
+    // code with retryable failures. Local input errors keep the link only.
+    if (e instanceof ApiError && (deadLinkCodes.has(e.code) || e.details?.oauth_session_expired === true)) {
       pending.value = null
       authorizationResult.value = ''
+      emit('session', '')
     }
   } finally {
     if (current === generation) setBusy(false)
@@ -288,13 +388,11 @@ async function copyLink() {
   }
 }
 watch(
-  () => [props.proxyId, props.savedAccountId],
+  () => [props.proxyId, props.accountId, props.savedAccountId],
   () => {
-    // Only a link that is still waiting to be used is invalidated by a proxy
-    // change; after authorization the credentials are already in the form.
-    const hadPending = !!pending.value
-    reset()
-    if (hadPending) error.value = '代理已变更，请重新生成授权链接。'
+    // Preserve the old flow until the user explicitly replaces it.
+    if (bindingChanged.value) error.value = '代理或账号已变更，请点击「作废并重新获取」。'
+    else if (pending.value) error.value = ''
   },
 )
 onBeforeUnmount(reset)

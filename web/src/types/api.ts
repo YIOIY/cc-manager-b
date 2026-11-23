@@ -20,6 +20,8 @@ export type Permission =
   | 'proxies.delete'
   | 'proxies.test'
   | 'proxies.settings'
+  | 'oauth.settings.view'
+  | 'oauth.settings'
   | 'jobs.view'
   | 'bills.view'
   | 'bills.query'

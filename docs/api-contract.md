@@ -437,9 +437,16 @@ Token受控轮换、允许套餐和启停修改仍增加版本，已排队上传
 
 `POST /accounts/{id}/reauthorize` 要求现有账号凭证权限和资源写权限，支持可选 `expected_version`。省略或显式 `null` 的 `auth_json` 沿用密封凭证，可通过顶层 `claude_device_ids`（非空字符串数组，或逗号/换行分隔文本）补填设备标识；未提供且密封副本也没有时，服务端自动生成一个 UUID。非法元素类型返回 422。`proxy_id` 省略时沿用锁内读取的最新绑定，传 `""` 则解除池绑定并使用凭证中的代理地址。
 
-提供新 `auth_json` 时，access/refresh token、刷新时间和有效期必须由本次授权提供，旧 token 不参与补齐。新旧邮箱均属于当前账号、且本次账号 UUID 没有与原值冲突时，允许从已保存凭证补齐缺失的账号 UUID、设备标识和代理地址。组织 UUID 必须由本次授权提供；只有组织 UUID 一致，才补齐缺失的组织名称。显式提供的非空字段优先，身份无法核对或原资料不可用时返回具体字段错误供补填。平台接收成功后才密封写回合并后的凭证；响应始终不包含凭证明文。
+提供新 `auth_json` 时，access/refresh token、刷新时间和有效期必须由本次授权提供，旧 token 不参与补齐。新旧邮箱均属于当前账号、且本次账号 UUID 没有与原值冲突时，允许从已保存凭证补齐缺失的账号 UUID、设备标识和代理地址。组织 UUID 必须由本次授权提供；只有组织 UUID 一致，才补齐缺失的组织名称。显式提供的非空字段优先，身份无法核对或原资料不可用时返回具体字段错误供补填。平台接收成功后才密封写回合并后的凭证；响应始终不包含凭证明文。平台已接收但本地写回失败时返回 `409 VERSION_CONFLICT`（hint 说明平台已更新）或存储错误，二者都带 `details.platform_updated=true`；携带 `oauth_session_id` 的提交随即被服务端记为已完成，重复提交只回放该响应，不会再次推送。
 
 `POST /claude-oauth/sessions` 可额外传 `account_id`，在未选择代理池时使用该账号密封凭证中的代理进行 OAuth。生成链接和兑换时均校验账号写权限，旧凭证和代理认证信息不会回传前端。
+
+OAuth 会话与账号写入的配合（详见 [授权录入说明](claude-oauth-onboarding.md)）：
+
+- 兑换成功响应带 `oauth_session_id`；`POST /accounts/onboard`、`POST /accounts/{id}/reauthorize` 提交时应原样带上，服务端据此核对凭证来自该会话、出口代理未改变（否则 `409 OAUTH_PROXY_CHANGED`），并在提交完成后把结果缓存在会话内供重放。不带该字段时视为手动凭证，不做核对。
+- 已绑定代理池记录的账号只能在原代理上发起 OAuth，换代理返回 `409 PROXY_BINDING_CHANGED`；改绑只能通过 `PATCH /accounts/{id}` 的 `proxy_id` 完成。账号存在活动 OAuth 会话期间，针对该账号的 `PATCH` / `reauthorize` / 归档等写操作返回 `409 ACCOUNT_IN_PROGRESS`，需先 `DELETE /claude-oauth/sessions/{id}` 释放。
+- 管理会话内同时只允许一条活动的待授权链接；为另一账号或出口再次生成时返回 `409 OAUTH_SESSION_CONFLICT`，前端应先取消旧链接。
+- `GET /oauth-settings`（需 `oauth.settings.view`）与 `PUT /oauth-settings`（需 `oauth.settings`）管理 OAuth 调度参数：全局并发 1–10、单出口并发 1–5、出口间隔 0–60 秒、探测缓存 0–30 秒、手动/批量预热范围（手动 0–3、批量 0–15 秒，上限 0 关闭）、UA 池（≤8 条、每条 ≤120 字符）；`PUT` 需带当前 `version`（`ua_pool_json` 以 JSON 字符串传递，与 GET 返回一致），冲突返回 `409 VERSION_CONFLICT`；全局/单出口并发在进程启动时从已保存值加载。
 
 ## 附录：2026-11-08 实现变更
 

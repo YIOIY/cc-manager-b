@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -135,14 +136,14 @@ func TestExchangeDoesNotLeakUpstreamSecretsOrInventIdentity(t *testing.T) {
 		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	result, err := Exchange(context.Background(), c, "code", "state", "verifier")
-	if err != nil || len(result.Warnings) == 0 || result.Auth["email"] != nil || result.Auth["organization_name"] != nil {
+	if err == nil || result.Auth["access_token"] != "a" || result.Auth["email"] != nil || result.Auth["organization_name"] != nil {
 		t.Fatalf("partial result: %+v %v", result, err)
 	}
 	if rolesCalls != 0 {
 		t.Fatalf("roles called after profile failure: %d", rolesCalls)
 	}
-	if se, ok := AsStatusError(err); ok {
-		t.Fatalf("unexpected status error: %v", se)
+	if se, ok := AsStatusError(err); !ok || se.Op != "profile" || se.Status != 503 {
+		t.Fatalf("profile stage not exposed: %v", err)
 	}
 }
 
@@ -165,13 +166,16 @@ func TestExchangeRejectsRestrictiveProfileStatuses(t *testing.T) {
 			}
 			return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(body)), Header: hdr}, nil
 		})}
-		_, err := Exchange(context.Background(), c, "code", "state", "verifier")
+		result, err := Exchange(context.Background(), c, "code", "state", "verifier")
 		se, ok := AsStatusError(err)
 		if !ok || se.Status != status || se.Op != "profile" || rolesCalls != 0 {
 			t.Fatalf("status %d: err=%v roles=%d", status, err, rolesCalls)
 		}
 		if status == http.StatusTooManyRequests && se.RetryAfter != 12*time.Second {
 			t.Fatalf("retry-after: %v", se.RetryAfter)
+		}
+		if result.Auth["access_token"] != "a" {
+			t.Fatalf("profile status %d discarded completed token stage", status)
 		}
 		if strings.Contains(err.Error(), "denied") {
 			t.Fatalf("leaked body: %v", err)
@@ -217,5 +221,269 @@ func TestStatusErrorAs(t *testing.T) {
 	}
 	if !errors.As(err, &se) {
 		t.Fatal("errors.As failed")
+	}
+}
+
+func TestExchangeResumesRateLimitedProfileWithoutRedeemingCodeAgain(t *testing.T) {
+	var tokenCalls, profileCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/oauth/token":
+			if tokenCalls.Add(1) != 1 {
+				http.Error(w, "authorization code already used", http.StatusBadRequest)
+				return
+			}
+			io.WriteString(w, `{"access_token":"resume-access","refresh_token":"resume-refresh","expires_in":3600,"account":{"uuid":"account-id","email_address":"token@example.com"},"organization":{"uuid":"org-id"}}`)
+		case "/api/oauth/profile":
+			if r.Header.Get("Authorization") != "Bearer resume-access" {
+				t.Error("profile request did not use the exchanged token")
+			}
+			if profileCalls.Add(1) == 1 {
+				w.Header().Set("Retry-After", "12")
+				http.Error(w, "secret-upstream-body", http.StatusTooManyRequests)
+				return
+			}
+			io.WriteString(w, `{"account":{"uuid":"account-id","email":"profile@example.com","created_at":"2025-01-02T03:00:00Z"},"organization":{"uuid":"org-id","name":"Resumed org","rate_limit_tier":"default_claude_max_5x"}}`)
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	target, _ := url.Parse(server.URL)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+		return http.DefaultTransport.RoundTrip(r)
+	})}
+
+	pending, err := Exchange(context.Background(), client, "single-use-code", "state", "verifier")
+	se, ok := AsStatusError(err)
+	if !ok || se.Op != "profile" || se.Status != http.StatusTooManyRequests || se.RetryAfter != 12*time.Second {
+		t.Fatalf("expected profile cooldown: %v", err)
+	}
+	if pending.Auth["access_token"] != "resume-access" || pending.Auth["refresh_token"] != "resume-refresh" {
+		t.Fatal("profile cooldown discarded the successfully exchanged tokens")
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("upstream body leaked: %v", err)
+	}
+
+	result, err := CompleteProfile(context.Background(), client, pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Auth["email"] != "profile@example.com" || result.Auth["organization_name"] != "Resumed org" || result.Plan != "claude/cc-max-5x" || result.RegisterTime != "2025-01-02" {
+		t.Fatalf("profile was not completed: plan=%q registered=%q", result.Plan, result.RegisterTime)
+	}
+	if tokenCalls.Load() != 1 || profileCalls.Load() != 2 {
+		t.Fatalf("token requests=%d profile requests=%d; want 1 and 2", tokenCalls.Load(), profileCalls.Load())
+	}
+	if pending.Auth["email"] != "token@example.com" || pending.Auth["organization_name"] != nil || pending.Plan != "" || pending.RegisterTime != "" {
+		t.Fatal("completing the profile mutated the cached token result")
+	}
+}
+
+func TestExchangeMarksInvalidTokenResponsesTerminal(t *testing.T) {
+	for name, body := range map[string]string{
+		"invalid JSON":    `{"access_token":"secret-token"`,
+		"missing tokens":  `{}`,
+		"missing refresh": `{"access_token":"secret-token","expires_in":3600}`,
+		"invalid expiry":  `{"access_token":"secret-token","refresh_token":"secret-refresh","expires_in":0}`,
+		"oversized body":  strings.Repeat("x", (1<<20)+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			result, err := Exchange(context.Background(), client, "secret-code", "state", "verifier")
+			re, ok := AsResponseError(err)
+			if !ok || re.Op != "token" || result.Auth != nil || calls != 1 {
+				t.Fatalf("expected terminal token response failure after one request; err=%v requests=%d", err, calls)
+			}
+			if strings.Contains(err.Error(), "secret") {
+				t.Fatalf("response error leaked credentials: %v", err)
+			}
+		})
+	}
+}
+
+func TestCompleteProfileRejectsUnusableCachedTokensBeforeRequest(t *testing.T) {
+	for name, field := range map[string]struct{ key, value string }{
+		"expired":         {"expired", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)},
+		"invalid expiry":  {"expired", "not-a-time"},
+		"missing expiry":  {"expired", ""},
+		"missing access":  {"access_token", ""},
+		"missing refresh": {"refresh_token", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cached := Result{Auth: map[string]any{
+				"access_token": "cached-access", "refresh_token": "cached-refresh",
+				"expired": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			}}
+			cached.Auth[field.key] = field.value
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"account":{"uuid":"account-id"},"organization":{"uuid":"org-id","name":"Org"}}`))}, nil
+			})}
+			result, err := CompleteProfile(context.Background(), client, cached)
+			// Unusable cached tokens are a terminal condition for the session,
+			// distinct from a malformed profile response (which is retryable).
+			if !errors.Is(err, ErrTokenExpired) || result.Auth != nil || calls != 0 {
+				t.Fatalf("expected terminal profile failure without a request; err=%v requests=%d", err, calls)
+			}
+			if _, isResponse := AsResponseError(err); isResponse {
+				t.Fatalf("expired cache must not look like a retryable response error: %v", err)
+			}
+			if strings.Contains(err.Error(), "cached-") {
+				t.Fatalf("cached credentials leaked: %v", err)
+			}
+		})
+	}
+}
+
+func TestCompleteProfileChecksCachedAccountAndOrganization(t *testing.T) {
+	for name, body := range map[string]string{
+		"different account":      `{"account":{"uuid":"other","email":"other@example.com"},"organization":{"uuid":"cached-org","name":"Other org"}}`,
+		"different organization": `{"account":{"uuid":"cached-account","email":"other@example.com"},"organization":{"uuid":"other","name":"Other org"}}`,
+		"missing identity":       `{"account":{"email":"other@example.com"},"organization":{"uuid":"cached-org","name":"Other org"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cached := Result{Auth: map[string]any{
+				"access_token": "cached-access", "refresh_token": "cached-refresh",
+				"expired":      time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+				"account_uuid": "cached-account", "organization_uuid": "cached-org", "email": "cached@example.com",
+			}}
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if r.URL.Path != "/api/oauth/profile" || r.Header.Get("Authorization") != "Bearer cached-access" {
+					t.Error("unexpected request while checking cached identity")
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			result, err := CompleteProfile(context.Background(), client, cached)
+			if err != nil || result.Auth["account_uuid"] != "cached-account" || result.Auth["organization_uuid"] != "cached-org" || result.Auth["email"] != "cached@example.com" || result.Auth["organization_name"] != nil || result.Plan != "" || result.RegisterTime != "" || len(result.Warnings) != 1 || calls != 1 {
+				t.Fatalf("mismatched profile changed the cached identity or requested roles: err=%v requests=%d", err, calls)
+			}
+		})
+	}
+}
+
+func TestCompleteProfileTransientFailuresKeepIsolatedPartialResults(t *testing.T) {
+	for _, failure := range []string{"network", "server", "malformed response"} {
+		t.Run(failure, func(t *testing.T) {
+			backingWarnings := []string{"existing warning", "unused cached slot"}
+			cached := Result{Auth: map[string]any{
+				"access_token": "cached-access", "refresh_token": "cached-refresh",
+				"expired": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			}, Warnings: backingWarnings[:1]}
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if failure == "network" {
+					return nil, errors.New("secret-token in proxy error")
+				}
+				status := http.StatusOK
+				if failure == "server" {
+					status = http.StatusServiceUnavailable
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("secret-token in upstream body"))}, nil
+			})}
+			result, err := CompleteProfile(context.Background(), client, cached)
+			if err == nil || result.Auth["access_token"] != "cached-access" || len(result.Warnings) != 1 || calls != 1 {
+				t.Fatalf("transient profile failure lost the partial result: err=%v requests=%d", err, calls)
+			}
+			if strings.Contains(strings.Join(result.Warnings, " "), "secret-token") {
+				t.Fatal("warning leaked credentials")
+			}
+			if backingWarnings[1] != "unused cached slot" {
+				t.Fatal("warning append overwrote cached backing storage")
+			}
+			result.Auth["access_token"] = "changed"
+			result.Warnings[0] = "changed"
+			if cached.Auth["access_token"] != "cached-access" || cached.Warnings[0] != "existing warning" {
+				t.Fatal("partial result shares mutable storage with cached result")
+			}
+		})
+	}
+}
+
+func TestCompleteProfileDoesNotFollowRedirects(t *testing.T) {
+	cached := Result{Auth: map[string]any{
+		"access_token": "cached-access", "refresh_token": "cached-refresh",
+		"expired": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	}}
+	requests, callerRedirects := 0, 0
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { callerRedirects++; return nil },
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"https://other.example/profile"}}, Body: io.NopCloser(strings.NewReader("secret-upstream-body")), Request: r}, nil
+		}),
+	}
+	result, err := CompleteProfile(context.Background(), client, cached)
+	if err == nil || requests != 1 || callerRedirects != 0 || result.Auth["access_token"] != "cached-access" {
+		t.Fatalf("profile redirect was followed or lost the partial result: err=%v requests=%d redirects=%d", err, requests, callerRedirects)
+	}
+	if err := client.CheckRedirect(nil, nil); err != nil || callerRedirects != 1 {
+		t.Fatal("profile completion changed the caller's redirect policy")
+	}
+}
+
+func TestExchangeTokenTransportFailureDoesNotClaimAResponse(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, errors.New("secret-token and secret-code in transport error")
+	})}
+	result, err := Exchange(context.Background(), client, "secret-code", "state", "verifier")
+	if err == nil || result.Auth != nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("unsafe token transport failure: %v", err)
+	}
+	if _, ok := AsResponseError(err); ok {
+		t.Fatalf("transport failure was classified as an invalid response: %v", err)
+	}
+}
+
+// A token-stage 401/403 is a rejected identity only when the OAuth server said
+// so in JSON. An HTML block page from a proxy or WAF never consumed the code.
+func TestTokenClassifiesInterceptedAccessRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      int
+		body        string
+		intercepted bool
+	}{
+		{"json forbidden", http.StatusForbidden, `{"error":{"type":"forbidden","message":"Request not allowed"}}`, false},
+		{"json unauthorized", http.StatusUnauthorized, `{"error":"invalid_client"}`, false},
+		{"empty body", http.StatusForbidden, ``, false},
+		{"html block page", http.StatusForbidden, `<html><body>Access denied</body></html>`, true},
+		{"text block page", http.StatusUnauthorized, `Proxy Authentication Required`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
+			})}
+			_, err := Token(context.Background(), c, "code", "state", "verifier")
+			se, ok := AsStatusError(err)
+			if !ok || se.Op != "token" || se.Status != tc.status {
+				t.Fatalf("err=%v", err)
+			}
+			if se.Intercepted != tc.intercepted {
+				t.Fatalf("intercepted=%v want %v", se.Intercepted, tc.intercepted)
+			}
+			if strings.Contains(err.Error(), "Access denied") || strings.Contains(err.Error(), "Proxy Authentication") {
+				t.Fatalf("body leaked into error: %q", err.Error())
+			}
+		})
+	}
+	// Profile-stage refusals keep their classification: tokens survive anyway.
+	c := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader(`<html>blocked</html>`)), Header: make(http.Header)}, nil
+	})}
+	_, err := CompleteProfile(context.Background(), c, Result{Auth: map[string]any{"access_token": "a", "refresh_token": "r", "expired": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}})
+	if se, ok := AsStatusError(err); !ok || se.Op != "profile" || se.Intercepted {
+		t.Fatalf("profile stage changed: %v", err)
 	}
 }

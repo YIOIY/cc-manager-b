@@ -191,7 +191,7 @@ func TestReauthorizeOmitsAuthJSONUsesSavedCredential(t *testing.T) {
 	}
 	saved := reauthAuth("one@example.test")
 	saved["access_token"] = "saved-access"
-	saved["proxy_url"] = "http://old.example:1"
+	saved["proxy_url"] = "http://127.0.0.1:9090"
 	sealAccountAuth(t, a, id, saved)
 
 	res := postReauth(t, admin, id, map[string]any{"proxy_id": "pool"})
@@ -415,6 +415,7 @@ func TestReauthorizeFreshTokensInheritSavedFields(t *testing.T) {
 	saved := reauthAuth("one@example.test")
 	saved["access_token"] = "old-access"
 	saved["refresh_token"] = "old-refresh"
+	saved["last_refresh"] = time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
 	saved["proxy_url"] = "http://saved.example:8080"
 	sealAccountAuth(t, a, id, saved)
 	fresh := reauthAuth("one@example.test")
@@ -550,17 +551,11 @@ func TestReauthorizeReloadsOmittedProxyUnderLock(t *testing.T) {
 	}
 	lock.Unlock()
 	res := <-done
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", res.StatusCode, readBody(res))
-	}
+	assertEnvelope(t, res, http.StatusConflict, "PROXY_BINDING_CHANGED")
 	if queryString(t, a, `SELECT proxy_id FROM accounts WHERE id=?`, id) != "new-pool" {
 		t.Fatal("concurrently changed pool binding was lost")
 	}
-	var pushed map[string]any
-	if err := json.Unmarshal([]byte(stub.updates[0]["cpa_auth_json"].(string)), &pushed); err != nil {
-		t.Fatal(err)
-	}
-	if pushed["proxy_url"] != "http://127.0.0.1:9090" {
-		t.Fatal("latest pool proxy was not pushed")
+	if len(stub.updates) != 0 {
+		t.Fatal("changed exit was pushed without a new authorization")
 	}
 }

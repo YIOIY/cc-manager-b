@@ -79,11 +79,11 @@
             更换代理后需要重新授权，已填写的交付资料会保留。
           </div>
           <div v-if="linkedReauth && savedCredentials" class="field-hint">
-            沿用已保存凭证时可更换代理后直接同步；清空代理表示解除池绑定并沿用凭证内的代理地址。
+            沿用已保存凭证时请保持原代理；更换或清空代理选择后需要重新授权。
           </div>
         </el-form-item>
         <p v-if="proxyChanged" class="wizard-inline-notice" role="status">
-          代理已变更，请重新授权；其他已填写资料已保留。
+          代理已变更，请明确作废旧授权并重新获取链接；其他已填写资料已保留。
         </p>
         <template v-if="savedCredentials">
           <div class="wizard-connected">
@@ -136,6 +136,10 @@
             :proxy-id="edit.proxy_id"
             :reauthorizing="canReuseCredentialFields"
             :saved-account-id="savedProxyAccountId"
+            :account-id="edit.id"
+            :email="edit.account"
+            :session-id="oauthSessionId"
+            @session="setOAuthSession"
             :disabled="
               saving || proxyBusy || proxyPending || !connectionReady || (!poolProxyReady && !savedProxyAccountId)
             "
@@ -549,7 +553,7 @@
           data-submit
           type="primary"
           :loading="saving"
-          :disabled="oauthBusy || proxyBusy"
+          :disabled="oauthBusy || proxyBusy || pushBlocked || submitRetryAfter > 0"
           @click="save"
           >{{ submitLabel }}</el-button
         >
@@ -598,6 +602,10 @@ const {
   saving,
   busy,
   oauthGeneration,
+  oauthSessionId,
+  setOAuthSession,
+  pushBlocked,
+  submitRetryAfter,
   proxyChanged,
   pushFailed,
   submitLabel,

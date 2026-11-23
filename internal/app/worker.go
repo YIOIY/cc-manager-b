@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -101,6 +102,34 @@ func (a *App) runOne(ctx context.Context) {
 		}
 		return
 	}
+	// Preheat applies to both manual and batch imports using saved dispatch
+	// settings. The delay is decided once per job and stored in the existing
+	// payload, and the wait happens while the job is still queued: a restart
+	// simply finds it queued again (a running job would be marked unknown
+	// although nothing was ever sent), and a requeue after a busy account
+	// sees the stored stamp and never waits a second time.
+	if kind == "account.submit" {
+		if !oauthPreheatScheduled(payload) {
+			var metaRaw string
+			_ = a.DB.QueryRowContext(ctx, `SELECT metadata_json FROM accounts WHERE id=?`, accountID).Scan(&metaRaw)
+			if delay := a.computeOAuthPreheat(metaRaw, preheatRNG); delay > 0 {
+				stored, err := persistOAuthPreheat(payload, time.Now().Add(delay))
+				if err != nil {
+					slog.Warn("oauth preheat payload save failed", "job", id, "error", err)
+				} else if _, err := a.DB.ExecContext(ctx, `UPDATE jobs SET payload_json=?,updated_at=? WHERE id=? AND state='queued'`, stored, now(), id); err != nil {
+					slog.Warn("oauth preheat payload update failed", "job", id, "error", err)
+				} else {
+					payload = stored
+				}
+			}
+		}
+		if oauthPreheatRemaining(payload, time.Now()) > 0 {
+			a.waitOAuthPreheat(ctx, accountID, id, payload)
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	}
 	res, err := a.DB.ExecContext(ctx, `UPDATE jobs SET state='running',updated_at=? WHERE id=? AND state='queued'`, now(), id)
 	if err != nil {
 		slog.Error("job claim failed", "job", id, "error", err)
@@ -118,6 +147,16 @@ func (a *App) runOne(ctx context.Context) {
 		a.finishJob(id, "failed", "JOB_PAYLOAD_INVALID")
 		return
 	}
+	// Reauthorization holds this lock while pushing a fresh token. Inspect
+	// delivery state and credentials only after it finishes; a busy account
+	// requeues the job without overwriting the other operation's delivery.
+	unlock, ok := a.accountLocks.tryLock(accountID)
+	if !ok {
+		a.requeueJob(id)
+		return
+	}
+	defer unlock()
+
 	// Any failure after the delivery is marked running must leave it in a
 	// terminal state, otherwise the account card shows "submitting" forever.
 	failed := func(code string) {
@@ -125,7 +164,7 @@ func (a *App) runOne(ctx context.Context) {
 		a.setDelivery(accountID, spec.ConnectionID, "failed", "")
 	}
 	var accepted int
-	_ = a.DB.QueryRowContext(ctx, `SELECT 1 FROM platform_links WHERE account_id=? AND connection_id=? AND ingestion_state='accepted'`, accountID, spec.ConnectionID).Scan(&accepted)
+	_ = a.DB.QueryRowContext(ctx, `SELECT 1 WHERE EXISTS(SELECT 1 FROM platform_links WHERE account_id=? AND connection_id=? AND ingestion_state='accepted') OR EXISTS(SELECT 1 FROM deliveries WHERE account_id=? AND connection_id=? AND ingestion_state='accepted')`, accountID, spec.ConnectionID, accountID, spec.ConnectionID).Scan(&accepted)
 	if accepted == 1 {
 		a.finishJob(id, "succeeded", "ALREADY_LINKED")
 		return
@@ -137,24 +176,16 @@ func (a *App) runOne(ctx context.Context) {
 		return
 	}
 	a.setDelivery(accountID, spec.ConnectionID, "running", "")
-	// The OAuth reauthorization holds this lock while it pushes a fresh token.
-	// A job that already read the pre-OAuth credential would otherwise
-	// overwrite the platform copy with a stale snapshot, so wait for the push
-	// to finish and re-read below. Lock order matches reauthorize: connection
-	// web sync, then account. A busy account requeues instead of blocking the
-	// single worker.
-	unlock, ok := a.accountLocks.tryLock(accountID)
-	if !ok {
-		a.requeueJob(id, accountID, spec.ConnectionID)
-		return
-	}
-	defer unlock()
 
 	var account, plan, location, registered, start, end, credential, metadataJSON string
-	var version int
-	err = a.DB.QueryRowContext(ctx, `SELECT account,plan,register_location,register_time,plan_start_time,plan_end_time,credentials_json,metadata_json,version FROM accounts WHERE id=?`, accountID).Scan(&account, &plan, &location, &registered, &start, &end, &credential, &metadataJSON, &version)
+	var archived, version int
+	err = a.DB.QueryRowContext(ctx, `SELECT account,plan,register_location,register_time,plan_start_time,plan_end_time,credentials_json,metadata_json,archived,version FROM accounts WHERE id=?`, accountID).Scan(&account, &plan, &location, &registered, &start, &end, &credential, &metadataJSON, &archived, &version)
 	if err != nil {
 		failed("VERSION_CONFLICT")
+		return
+	}
+	if archived != 0 {
+		failed("ARCHIVED")
 		return
 	}
 	if version != spec.Version {
@@ -184,6 +215,7 @@ func (a *App) runOne(ctx context.Context) {
 		failed("CREDENTIAL_UNREADABLE")
 		return
 	}
+	beforePreparation, _ := json.Marshal(auth)
 	var proxyID string
 	_ = a.DB.QueryRowContext(ctx, `SELECT proxy_id FROM accounts WHERE id=?`, accountID).Scan(&proxyID)
 	if proxyID != "" {
@@ -192,8 +224,11 @@ func (a *App) runOne(ctx context.Context) {
 			failed("PROXY_INVALID")
 			return
 		}
-		// Local reachability and the supplier's network are independent.
-		// Manual pool checks never gate a remote submission.
+		if existing, _ := auth["proxy_url"].(string); strings.TrimSpace(existing) != "" && !sameProxyURL(existing, proxyURL) {
+			failed("PROXY_BINDING_CHANGED")
+			return
+		}
+		// Only legacy credentials without a proxy may establish a binding here.
 		auth["proxy_url"] = proxyURL
 	} else if url, _ := auth["proxy_url"].(string); strings.TrimSpace(url) == "" {
 		// Pool binding was cleared (e.g. shared-proxy unbind on assign) and
@@ -201,11 +236,27 @@ func (a *App) runOne(ctx context.Context) {
 		failed("PROXY_REQUIRED")
 		return
 	}
+	if e := a.loadDeviceAnchor(ctx, accountID, auth, nil); e != nil {
+		failed("CREDENTIAL_UNREADABLE")
+		return
+	}
+	if e := applyCredentialInvariants(auth, nil); e != nil {
+		a.finishJobErr(id, "failed", e)
+		a.setDelivery(accountID, spec.ConnectionID, "failed", "")
+		return
+	}
 	// Re-check after queue wait: credentials may have expired since enqueue.
 	if problems := validateAuthFields(auth); len(problems) > 0 {
 		a.finishJobErr(id, "failed", credentialSubmitError(problems))
 		a.setDelivery(accountID, spec.ConnectionID, "failed", "")
 		return
+	}
+	afterPreparation, _ := json.Marshal(auth)
+	if string(beforePreparation) != string(afterPreparation) {
+		if e := a.persistCredentialPreparation(ctx, accountID, auth, version); e != nil {
+			failed("VERSION_CONFLICT")
+			return
+		}
 	}
 	tokenBytes, err := decode(tokenSecret, spec.ConnectionID)
 	if err != nil {
@@ -547,17 +598,15 @@ func nullableRate(m supplier.Metric) any {
 
 func (a *App) finishJob(id, state, code string) { a.finishJobErr(id, state, errs.Adhoc(code, 0, "")) }
 
-// requeueJob puts a claimed job back in the queue without burning it. The next
-// poll must be able to re-read the credential, so the version pin is dropped
-// and the delivery falls back to queued instead of staying "running".
-func (a *App) requeueJob(id, accountID, connectionID string) {
+// requeueJob releases a claimed job while another operation owns the account.
+// That operation's delivery state must remain untouched until the next poll
+// acquires the lock and reads the current delivery and account snapshots.
+func (a *App) requeueJob(id string) {
 	if _, err := a.DB.Exec(`UPDATE jobs SET state='queued',result_json='{}',updated_at=? WHERE id=? AND state='running'`, now(), id); err != nil {
 		slog.Error("job requeue failed", "job", id, "error", err)
 		a.finishJob(id, "failed", "INTERNAL_ERROR")
-		a.setDelivery(accountID, connectionID, "failed", "")
 		return
 	}
-	a.setDelivery(accountID, connectionID, "queued", "")
 	// Keep the ordering stable so a busy account does not starve behind the
 	// row it just released; the poll order is created_at, so bump it.
 	if _, err := a.DB.Exec(`UPDATE jobs SET created_at=? WHERE id=?`, now(), id); err != nil {
@@ -728,3 +777,7 @@ func (a *App) loadCredential(accountID string) (map[string]any, error) {
 	e = json.Unmarshal(plain, &m)
 	return m, e
 }
+
+// preheatRNG draws the per-job preheat delay. Only the single worker goroutine
+// uses it, so no locking is needed.
+var preheatRNG = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixMicro())))

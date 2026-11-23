@@ -33,6 +33,8 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
 })
 afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   fetchMock.mockReset()
 })
@@ -59,7 +61,7 @@ test('generates a link with the selected proxy, emits credentials, and clears th
   wrapper.unmount()
 })
 
-test('an invalid result keeps the paste; a supplier failure keeps the link and retries the same session', async () => {
+test('invalid input clears only the paste; a supplier failure retains the corrected paste and session', async () => {
   fetchMock
     .mockResolvedValueOnce(json({ data: pending }))
     .mockResolvedValueOnce(json({ error: { code: 'OAUTH_RESULT_INVALID', message: '结果不匹配' } }, 422))
@@ -73,10 +75,12 @@ test('an invalid result keeps the paste; a supplier failure keeps the link and r
   await wrapper.get('.oauth-exchange').trigger('click')
   await flushPromises()
   expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  expect((wrapper.get('#claude-authorization-result').element as HTMLInputElement).value).toBe('')
+  await wrapper.get('#claude-authorization-result').setValue('corrected')
   await wrapper.get('.oauth-exchange').trigger('click')
   await flushPromises()
   expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
-  expect((wrapper.get('#claude-authorization-result').element as HTMLInputElement).value).toBe('wrong')
+  expect((wrapper.get('#claude-authorization-result').element as HTMLInputElement).value).toBe('corrected')
   expect(wrapper.text()).toContain('Claude 暂时失败，请稍后重试')
   expect(fetchMock.mock.calls[2]![0]).toBe('/api/v1/claude-oauth/sessions/flow/exchange')
   wrapper.unmount()
@@ -122,7 +126,7 @@ test('a cooldown start reuses the live link and counts the wait down', async () 
   wrapper.unmount()
 })
 
-test('an identity rejection clears the dead link and the paste', async () => {
+test('identity rejection retains the link and paste without an expiry flag', async () => {
   fetchMock
     .mockResolvedValueOnce(json({ data: pending }))
     .mockResolvedValueOnce(json({ error: { code: 'OAUTH_IDENTITY_REJECTED', message: '授权身份与预期不符' } }, 403))
@@ -133,8 +137,8 @@ test('an identity rejection clears the dead link and the paste', async () => {
   await wrapper.get('.oauth-exchange').trigger('click')
   await flushPromises()
   expect(wrapper.text()).toContain('授权身份与预期不符')
-  expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
-  expect(wrapper.text()).toContain('登录 Claude')
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  expect((wrapper.get('#claude-authorization-result').element as HTMLInputElement).value).toBe('code#test')
   wrapper.unmount()
 })
 
@@ -146,11 +150,11 @@ test('refreshing the link asks the server for a new session; the initial login d
   await wrapper.get('button').trigger('click')
   await flushPromises()
   expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ proxy_id: 'proxy' })
-  const refresh = wrapper.findAll('button').find((b) => b.text() === '重新获取链接')
+  const refresh = wrapper.findAll('button').find((b) => b.text() === '作废并重新获取')
   await refresh!.trigger('click')
   await flushPromises()
   expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ proxy_id: 'proxy', refresh: true })
-  expect(fetchMock.mock.calls[2]![0]).toBe('/api/v1/claude-oauth/sessions/flow')
+  expect(fetchMock).toHaveBeenCalledTimes(2)
   wrapper.unmount()
 })
 
@@ -267,5 +271,297 @@ test('a proxy that cannot reach Claude offers to change the proxy instead of a b
   // The button stub re-emits the native click, so count at least one.
   expect(wrapper.emitted('change-proxy')?.length).toBeGreaterThan(0)
   expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
+  wrapper.unmount()
+})
+
+test.each([
+  ['OAUTH_RATE_LIMITED', 2, 'Enter'],
+  ['OAUTH_RATE_LIMITED', 2, 'paste'],
+  ['OAUTH_BUSY', 1, 'Enter'],
+  ['OAUTH_BUSY', 1, 'paste'],
+] as const)(
+  '%s blocks %s-second cooldown bypass through %s, then retries the same session',
+  async (code, seconds, input) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    fetchMock
+      .mockResolvedValueOnce(json({ data: pending }))
+      .mockResolvedValueOnce(
+        json({ error: { code, message: '请稍后重试', details: { retry_after_seconds: seconds } } }, 429),
+      )
+      .mockResolvedValueOnce(json({ data: { auth_json: { access_token: 'fixture-token' }, warnings: [] } }))
+    const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+    try {
+      await wrapper.get('button').trigger('click')
+      await flushPromises()
+      await wrapper.get('#claude-authorization-result').setValue('code#test')
+      await wrapper.get('.oauth-exchange').trigger('click')
+      await flushPromises()
+      const result = wrapper.get('#claude-authorization-result')
+      if (input === 'Enter') await result.trigger('keyup', { key: 'Enter' })
+      else await result.trigger('paste', { clipboardData: { getData: () => 'code#test' } })
+      await flushPromises()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect((result.element as HTMLInputElement).value).toBe('code#test')
+      expect(wrapper.get('.oauth-exchange').text()).toContain(`${seconds}s`)
+      await vi.advanceTimersByTimeAsync(seconds * 1000 - 1)
+      expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeDefined()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeUndefined()
+      await result.trigger('keyup', { key: 'Enter' })
+      await flushPromises()
+      expect(fetchMock.mock.calls[2]![0]).toBe('/api/v1/claude-oauth/sessions/flow/exchange')
+      expect(wrapper.emitted('authorized')).toHaveLength(1)
+    } finally {
+      wrapper.unmount()
+    }
+  },
+)
+
+test('a cooldown prevents refreshing the link without clearing the remaining wait', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  fetchMock
+    .mockResolvedValueOnce(json({ data: { ...pending, retry_after_seconds: 2 } }))
+    .mockResolvedValueOnce(json({ data: { ...pending, id: 'flow-2' } }))
+    .mockResolvedValue(json({ data: { cancelled: true } }))
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  try {
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    const refresh = wrapper.findAllComponents(stubs['el-button']).find((button) => button.text() === '作废并重新获取')!
+    // Exercise the handler as well as the button state, so its guard cannot be bypassed.
+    refresh.vm.$emit('click')
+    await flushPromises()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(refresh.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.oauth-exchange').text()).toContain('2s')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(wrapper.get('.oauth-exchange').text()).toContain('1s')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(refresh.attributes('disabled')).toBeUndefined()
+    await refresh.trigger('click')
+    await flushPromises()
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ proxy_id: '', refresh: true })
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+test('a failed start cooldown prevents generating another link until it expires', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  fetchMock
+    .mockResolvedValueOnce(
+      json({ error: { code: 'OAUTH_BUSY', message: '请稍后重试', details: { retry_after_seconds: 1 } } }, 429),
+    )
+    .mockResolvedValueOnce(json({ data: pending }))
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  try {
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    const login = wrapper.getComponent(stubs['el-button'])
+    login.vm.$emit('click')
+    await flushPromises()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(login.attributes('disabled')).toBeDefined()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(login.attributes('disabled')).toBeUndefined()
+    await login.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+test.each([400, 404, 409])(
+  'an explicitly expired session after upstream %s clears the dead link and pasted result',
+  async (status) => {
+    fetchMock
+      .mockResolvedValueOnce(json({ data: pending }))
+      .mockResolvedValueOnce(
+        json(
+          {
+            error: {
+              code: 'OAUTH_EXCHANGE_FAILED',
+              message: '授权码已失效，请重新生成链接',
+              details: { upstream_status: status, oauth_session_expired: true },
+            },
+          },
+          422,
+        ),
+      )
+      .mockResolvedValueOnce(json({ data: { ...pending, id: 'flow-2' } }))
+    const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+    try {
+      await wrapper.get('button').trigger('click')
+      await flushPromises()
+      await wrapper.get('#claude-authorization-result').setValue('spent-code')
+      await wrapper.get('.oauth-exchange').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
+      expect(wrapper.text()).toContain('授权码已失效')
+      await wrapper.get('button').trigger('click')
+      await flushPromises()
+      expect((wrapper.get('#claude-authorization-result').element as HTMLInputElement).value).toBe('')
+    } finally {
+      wrapper.unmount()
+    }
+  },
+)
+
+test('an exchange can finish after the 30-second queue and 40-second supplier budget', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  // Native AbortSignal.timeout owns a clock outside Vitest's fake timers.
+  // Keep its abort behavior while routing its deadline through the test clock.
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(new DOMException('signal timed out', 'TimeoutError')), milliseconds)
+    return controller.signal
+  })
+  fetchMock.mockResolvedValueOnce(json({ data: pending })).mockImplementationOnce(
+    (_url, options: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        options.signal!.addEventListener('abort', () => reject(options.signal!.reason), { once: true })
+        setTimeout(
+          () => resolve(json({ data: { auth_json: { access_token: 'fixture-token' }, warnings: [] } })),
+          70_000,
+        )
+      }),
+  )
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  try {
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    await wrapper.get('#claude-authorization-result').setValue('code#test')
+    await wrapper.get('.oauth-exchange').trigger('click')
+    await vi.advanceTimersByTimeAsync(45_001)
+    expect(wrapper.text()).not.toContain('请求超时')
+    expect(wrapper.emitted('busy')?.at(-1)).toEqual([true])
+    await vi.advanceTimersByTimeAsync(24_999)
+    await flushPromises()
+    expect(wrapper.emitted('authorized')?.[0]?.[0]).toEqual({
+      auth_json: { access_token: 'fixture-token' },
+      warnings: [],
+    })
+    expect(wrapper.find('#claude-authorization-result').exists()).toBe(false)
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+test('pool-backed reauthorization includes the account identity and known email', async () => {
+  fetchMock.mockResolvedValueOnce(json({ data: pending }))
+  const wrapper = mount(ClaudeOAuthPanel, {
+    props: { proxyId: 'pool', accountId: 'account-1', email: 'known@example.com' },
+    global: { stubs },
+  })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+    proxy_id: 'pool',
+    account_id: 'account-1',
+    email: 'known@example.com',
+  })
+  wrapper.unmount()
+})
+
+test('changing a pending proxy preserves the original link until explicit replacement', async () => {
+  fetchMock
+    .mockResolvedValueOnce(json({ data: { ...pending, proxy_id: 'old' } }))
+    .mockResolvedValueOnce(json({ data: { ...pending, id: 'replacement', proxy_id: 'new' } }))
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'old' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  await wrapper.get('#claude-authorization-result').setValue('original-code')
+  await wrapper.setProps({ proxyId: 'new' })
+  await flushPromises()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeDefined()
+  const refresh = wrapper.findAll('button').find((button) => button.text() === '作废并重新获取')!
+  await refresh.trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ proxy_id: 'new', refresh: true })
+  expect((wrapper.get('#claude-authorization-result').element as HTMLInputElement).value).toBe('')
+  wrapper.unmount()
+})
+
+test('generic write rate limits use a deadline rather than elapsed timer callbacks', async () => {
+  vi.useFakeTimers()
+  fetchMock
+    .mockResolvedValueOnce(
+      json({ error: { code: 'RATE_LIMITED', message: 'wait', details: { retry_after_seconds: 30 } } }, 429),
+    )
+    .mockResolvedValueOnce(json({ data: pending }))
+  const wrapper = mount(ClaudeOAuthPanel, { global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('button').attributes('disabled')).toBeDefined()
+  vi.setSystemTime(Date.now() + 31_000)
+  await vi.advanceTimersByTimeAsync(1_000)
+  expect(wrapper.get('button').attributes('disabled')).toBeUndefined()
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  wrapper.unmount()
+})
+
+test('start recovers an already authorized session without a code or another login', async () => {
+  fetchMock
+    .mockResolvedValueOnce(json({ data: { ...pending, proxy_id: 'pool', stage: 'ready' } }))
+    .mockResolvedValueOnce(
+      json({ data: { oauth_session_id: 'flow', auth_json: { access_token: 'cached' }, warnings: [] } }),
+    )
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'pool' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(fetchMock.mock.calls[1]![0]).toBe('/api/v1/claude-oauth/sessions/flow/exchange')
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ result: '' })
+  expect(wrapper.emitted('authorized')?.[0]?.[0]).toMatchObject({ oauth_session_id: 'flow' })
+  wrapper.unmount()
+})
+
+test('a reused ready session on another proxy requires explicit replacement before recovery', async () => {
+  fetchMock.mockResolvedValueOnce(json({ data: { ...pending, proxy_id: 'old', stage: 'ready' } }))
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'new' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(wrapper.get('.oauth-exchange').attributes('disabled')).toBeDefined()
+  expect(wrapper.text()).toContain('代理或账号已变更')
+  expect(wrapper.emitted('authorized')).toBeUndefined()
+  wrapper.unmount()
+})
+
+test('a 409 conflict for another exit offers "作废并重新获取" which resends with refresh', async () => {
+  fetchMock
+    .mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: 'OAUTH_SESSION_CONFLICT',
+            message: '当前浏览器已有另一账号或出口的授权链接，请先作废或显式刷新',
+            details: { oauth_session_id: 'stale', proxy_id: 'old-proxy', account_id: '', stage: 'pending' },
+          },
+        },
+        409,
+      ),
+    )
+    .mockResolvedValueOnce(json({ data: { ...pending, proxy_id: 'new-proxy' } }, 201))
+  const wrapper = mount(ClaudeOAuthPanel, { props: { proxyId: 'new-proxy' }, global: { stubs } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ proxy_id: 'new-proxy' })
+  expect(wrapper.text()).toContain('代理或账号已变更，请点击「作废并重新获取」')
+  // The stale link is reported upward so the wizard can release it, and the
+  // only action offered retires it instead of looping on the same 409.
+  expect(wrapper.emitted('session')?.[0]?.[0]).toBe('stale')
+  const button = wrapper.get('button')
+  expect(button.text()).toBe('作废并重新获取')
+  await button.trigger('click')
+  await flushPromises()
+  expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ proxy_id: 'new-proxy', refresh: true })
+  expect(wrapper.text()).not.toContain('代理或账号已变更')
+  expect(wrapper.find('#claude-authorization-result').exists()).toBe(true)
+  expect(wrapper.emitted('session')?.[1]?.[0]).toBe('flow')
   wrapper.unmount()
 })

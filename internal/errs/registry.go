@@ -45,7 +45,7 @@ func init() {
 		Def{Code: "OPTIONAL_METADATA_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "补充信息格式不正确", Doc: "余额、标签、支付方式等选填项"},
 		Def{Code: "OAUTH_RESULT_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "授权结果无法识别", Hint: "请粘贴 Claude 授权页给出的授权码或完整回调地址", Doc: "本地解析错误，文案由解析器给出", AllowCustomMessage: true},
 		Def{Code: "OAUTH_PROXY_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "授权使用的代理不可用", Hint: "请更换代理后重新生成授权链接", Doc: "—", AllowCustomMessage: true},
-		Def{Code: "OAUTH_PROXY_UNREACHABLE", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "所选代理连不上 Claude", Hint: "请更换代理后重试；代理本身可能已失效", Doc: "经所选代理对令牌端点 GET 探测失败：连接失败、超时、5xx 或非 JSON 响应（疑似拦截）；文案带阶段", AllowCustomMessage: true},
+		Def{Code: "OAUTH_PROXY_UNREACHABLE", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "所选代理连不上 Claude", Hint: "请更换代理后重试；代理本身可能已失效", Doc: "出口问题：探测阶段除 429 外的任何失败（连接失败、超时、非 JSON 的 401/403、5xx、200 非 JSON 等，此时尚未提交任何身份）；兑换阶段连接失败，或 token 请求收到非 JSON 体的 401/403（代理/WAF 拦截页，授权码未到达上游，会话保留可重试）。details.oauth_stage 为阶段，upstream_status 为上游状态", AllowCustomMessage: true},
 		Def{Code: "CONNECTION_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "平台连接配置无效", Hint: "请检查平台地址和令牌", Doc: "—"},
 		Def{Code: "CONNECTION_DISABLED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "平台连接已停用或未配置令牌", Hint: "请在平台设置中启用并填写令牌", Doc: "—"},
 		Def{Code: "ACCOUNT_LINK_MISSING", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "部分账号未关联该平台或已归档", Hint: "请检查选择范围", Doc: "账单同步范围"},
@@ -61,7 +61,7 @@ func init() {
 		Def{Code: "BILL_RANGE_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "账单日期范围不正确", Doc: "HTTP 与同步项共用"},
 		Def{Code: "BILL_WINDOW_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "账单日期不在可查询窗口内", Doc: "HTTP 与同步项共用"},
 		Def{Code: "NOT_FOUND", Category: CategoryNotFound, Status: 404, Action: ActionNone, Message: "资源不存在或已被删除", Doc: "details.resource 指明资源类型", AllowCustomMessage: true},
-		Def{Code: "OAUTH_SESSION_EXPIRED", Category: CategoryNotFound, Status: 404, Action: ActionReauthorize, Message: "授权链接已失效", Hint: "请重新获取授权链接", Doc: "链接过期、被替换、已使用或不属于当前会话"},
+		Def{Code: "OAUTH_SESSION_EXPIRED", Category: CategoryNotFound, Status: 404, Action: ActionReauthorize, Message: "授权链接已失效", Hint: "请重新获取授权链接", Doc: "链接过期、被替换、已取消、已完成提交或不属于当前会话；缓存令牌在会话等待期间过期时同样返回此码并带 details.oauth_session_expired=true"},
 		Def{Code: "IMPORT_EXPIRED", Category: CategoryConflict, Status: 409, Action: ActionRetry, Message: "导入预览已过期", Hint: "请重新上传文件生成预览", Doc: "—"},
 		Def{Code: "VERSION_CONFLICT", Category: CategoryConflict, Status: 409, Action: ActionRetry, Message: "资料已被其他操作更新", Hint: "请刷新后重新提交", Doc: "乐观锁冲突；HTTP 与任务共用"},
 		Def{Code: "ACCOUNT_EXISTS", Category: CategoryConflict, Status: 409, Action: ActionNone, Message: "账号已存在", Hint: "同一账号不能重复创建", Doc: "—"},
@@ -78,12 +78,18 @@ func init() {
 		Def{Code: "SELF_DEMOTION", Category: CategoryConflict, Status: 422, Action: ActionNone, Message: "不能移除自己的管理员角色", Doc: "—"},
 		Def{Code: "SELF_DISABLE", Category: CategoryConflict, Status: 422, Action: ActionNone, Message: "不能停用自己", Doc: "—"},
 		Def{Code: "RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Action: ActionWait, Message: "操作过于频繁", Hint: "请稍后再试", Doc: "details.retry_after_seconds 与 Retry-After 头一致"},
-		Def{Code: "OAUTH_BUSY", Category: CategoryRateLimit, Status: 429, Retryable: true, Action: ActionWait, Message: "授权会话较多", Hint: "请稍后重试", Doc: "待授权链接数达到上限或并发兑换排队 30 秒未获额度；details.retry_after_seconds 与 Retry-After 头一致", AllowCustomMessage: true},
-		Def{Code: "OAUTH_RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Retryable: true, Action: ActionWait, Message: "Claude 授权暂时限流", Hint: "请稍后再试，勿连续重新授权", Doc: "上游 429 或本地冷却命中；details.retry_after_seconds 与 Retry-After 头一致，按账号冷却（无账号时按邮箱），遵从上游秒数、上限 1 小时；命中时保留待兑换链接，若链接仍有效则开始接口直接 200 返回原链接加 retry_after_seconds", AllowCustomMessage: true},
-		Def{Code: "OAUTH_EXCHANGE_FAILED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "授权码兑换失败", Hint: "请确认粘贴的是本次链接返回的授权码", Doc: "授权码无效、过期或已使用（400/404 等）；details.upstream_status 为上游状态；不含上游响应", AllowCustomMessage: true},
+		Def{Code: "OAUTH_BUSY", Category: CategoryRateLimit, Status: 429, Retryable: true, Action: ActionWait, Message: "授权会话较多", Hint: "请稍后重试", Doc: "details.oauth_busy_reason 说明原因并决定 retry_after_seconds（与 Retry-After 头一致）：session_in_flight 同一会话正在兑换或提交（2 秒）、owner_lock 同一浏览器会话并发生成链接（5 秒）、queue_timeout / exit_timeout / pacing_timeout 排队 30 秒预算（全局闸门、单出口闸门、出口间隔共用）用尽（约 10 秒并带抖动）、store_full 待授权链接达 512 上限（15 秒）、cancelled 排队期间请求被取消（1 秒）", AllowCustomMessage: true},
+		Def{Code: "OAUTH_RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Retryable: true, Action: ActionWait, Message: "Claude 授权暂时限流", Hint: "请稍后再试，勿连续重新授权", Doc: "上游 429（探测、兑换或资料读取）或本地冷却命中；details.retry_after_seconds 与 Retry-After 头一致。冷却键：已有账号按账号 ID，兑换返回邮箱后另按邮箱，新账号在拿到邮箱前按已登录浏览器会话；兑换成功后只对账号 ID/邮箱播种 60 秒冷却，不影响同一操作者的下一个新账号。等待不少于 60 秒且不设业务时长上限；命中时保留链接，profile 限流保留已取得令牌，重试只读取资料；开始接口可 200 返回原链接加 retry_after_seconds，刷新或取消不能清除冷却", AllowCustomMessage: true},
+		Def{Code: "OAUTH_EXCHANGE_FAILED", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "授权码兑换失败", Hint: "请确认粘贴的是本次链接返回的授权码", Doc: "授权码无效、过期、已使用（400/404/409），或成功响应数据无效；终止会话时 details.oauth_session_expired=true，前端须清除失效链接；details.upstream_status 为上游状态（如有），不含上游响应", AllowCustomMessage: true},
 		Def{Code: "OAUTH_SUPPLIER_REJECTED", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "Claude 授权服务暂时故障", Hint: "稍后按原链接重试即可", Doc: "兑换时上游 5xx；已有链接与授权码保留，可直接重试", AllowCustomMessage: true},
-		Def{Code: "OAUTH_IDENTITY_REJECTED", Category: CategoryUpstream, Status: 403, Action: ActionReauthorize, Message: "Claude 拒绝了当前身份", Hint: "请换代理或稍后再重新授权", Doc: "兑换时 401/403，多为 IP 或身份风控；重放同一授权码无效，需重新生成链接；details.upstream_status"},
+		Def{Code: "OAUTH_IDENTITY_REJECTED", Category: CategoryUpstream, Status: 403, Action: ActionReauthorize, Message: "Claude 拒绝了当前身份", Hint: "请检查账号授权状态，稍后重新授权", Doc: "兑换（token 阶段）返回 JSON 错误体的 401/403：同一授权码重放不会成功，会话终止并带 details.oauth_session_expired=true，需重新生成链接（非 JSON 拦截页归 OAUTH_PROXY_UNREACHABLE）；资料读取（profile/roles 阶段）返回 401/403：令牌与会话保留，可按阶段重试或手动补填。details.upstream_status 为上游状态；不据此推断封号原因"},
 		Def{Code: "ENCRYPTION_KEY_REQUIRED", Category: CategoryConfig, Status: 503, Action: ActionContactAdmin, Message: "服务尚未配置凭证加密密钥", Hint: "请联系管理员完成配置", Doc: "HTTP 与任务共用", AllowCustomMessage: true},
+		Def{Code: "OAUTH_SESSION_CONFLICT", Category: CategoryConflict, Status: 409, Action: ActionFixInput, Message: "授权会话与当前操作不一致", Doc: "同一浏览器会话已有另一账号或出口的待授权链接（details.oauth_session_id/proxy_id/account_id/stage 指出该链接），需显式 refresh 或 cancel；提交阶段表示 oauth_session_id 与提交的账号、凭证或邮箱不一致", AllowCustomMessage: true},
+		Def{Code: "OAUTH_PROXY_CHANGED", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "授权出口已变化，请显式重新授权", Doc: "授权期间代理指纹改变；pending 保留但提交需用原出口或重新开始", AllowCustomMessage: true},
+		Def{Code: "PROXY_BINDING_CHANGED", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "凭证出口与代理绑定不一致，请重新授权", Doc: "已保存凭证 proxy_url 与当前选中代理不一致；需显式重签", AllowCustomMessage: true},
+		Def{Code: "CREDENTIAL_STALE", Category: CategoryConflict, Status: 409, Action: ActionReauthorize, Message: "凭证早于已保存版本或新旧关系不明确", Doc: "防止旧快照回滚：以 last_refresh 为主序（本次更晚即接受），相同或缺失时比较 expired；两者都相同而令牌不同视为无法排序。details.field/saved/incoming 给出被比较的字段与两侧时间", AllowCustomMessage: true},
+		Def{Code: "OAUTH_RETRYABLE", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "授权请求暂时失败，请重试当前阶段", Doc: "未分类的瞬时上游失败；网络/协议阶段都能触发；不改变 pending", AllowCustomMessage: true},
+		Def{Code: "OAUTH_RESPONSE_INVALID", Category: CategoryUpstream, Status: 502, Retryable: true, Action: ActionRetry, Message: "授权响应格式异常，请按当前阶段重试", Doc: "上游响应不是 JSON 或字段缺失。token 阶段：授权码可能已被消费，会话终止并带 details.oauth_session_expired=true，需重新授权；profile/roles 阶段：令牌与会话保留，可按阶段重试或手动补填", AllowCustomMessage: true},
 		Def{Code: "OAUTH_START_FAILED", Category: CategoryInternal, Status: 500, Retryable: true, Action: ActionRetry, Message: "无法生成授权链接", Hint: "请稍后重试", Doc: "随机数生成失败"},
 		Def{Code: "PROXY_CHECK_FAILED", Category: CategoryInternal, Status: 500, Retryable: true, Action: ActionRetry, Message: "代理检测记录保存失败", Doc: "—"},
 		Def{Code: "BILL_INTERNAL_ERROR", Category: CategoryInternal, Status: 500, Retryable: true, Action: ActionRetry, Message: "账单处理失败", Hint: "请稍后重试；若持续出现，请把请求编号提供给管理员", Doc: "—"},
@@ -233,6 +239,7 @@ const (
 	CodeArchived                    = "ARCHIVED"
 	CodeAccountDelivered            = "ACCOUNT_DELIVERED"
 	CodeAccountInProgress           = "ACCOUNT_IN_PROGRESS"
+	CodeOauthSessionConflict        = "OAUTH_SESSION_CONFLICT"
 	CodeProxyInUse                  = "PROXY_IN_USE"
 	CodeConnectionInUse             = "CONNECTION_IN_USE"
 	CodeRoleInUse                   = "ROLE_IN_USE"

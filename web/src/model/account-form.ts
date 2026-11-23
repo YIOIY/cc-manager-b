@@ -40,6 +40,7 @@ export type AccountDateKey = 'register_time' | 'plan_start_time' | 'plan_end_tim
 /** Editable state of the account form; every input binds to a known key. */
 export interface AccountForm extends Partial<Record<CredentialKey, string>>, Partial<Record<AccountDateKey, string>> {
   id?: string
+  oauth_session_id?: string
   account?: string
   password?: string
   password_configured?: boolean
@@ -279,6 +280,7 @@ export function buildOnboardPayload(edit: AccountForm): Record<string, unknown> 
   if (!credential && !edit.credentials_configured) throw new Error('Claude 凭证为必填，请补齐全部字段')
   const payload: Record<string, unknown> = { platform_connection_id: edit.platform_connection_id }
   if (credential) payload.auth_json = credential
+  if (edit.oauth_session_id) payload.oauth_session_id = edit.oauth_session_id
   if (edit.id) payload.proxy_id = edit.proxy_id || ''
   for (const key of accountPayloadKeys) if (hasValue(edit[key])) payload[key] = edit[key]
   return payload
@@ -294,6 +296,7 @@ export function buildReauthorizePayload(edit: AccountForm): {
   auth_json?: CredentialPayload
   proxy_id: string
   claude_device_ids?: string[]
+  oauth_session_id?: string
 } {
   const proxy_id = String(edit.proxy_id ?? '')
   if (keepsSavedCredential(edit)) {
@@ -302,7 +305,11 @@ export function buildReauthorizePayload(edit: AccountForm): {
   }
   const credential = buildCredential(edit, { reuseSavedFields: !!edit.id && !!edit.credentials_configured })
   if (!credential) throw new Error('请先完成 Claude 授权或导入凭证')
-  return { auth_json: credential, proxy_id }
+  return {
+    auth_json: credential,
+    proxy_id,
+    ...(edit.oauth_session_id ? { oauth_session_id: edit.oauth_session_id } : {}),
+  }
 }
 
 /** Default dates for a brand-new account: registered today, plan starts today and runs one month. */
@@ -394,6 +401,7 @@ export interface OAuthSummary {
 }
 
 export interface OAuthResult {
+  oauth_session_id?: string
   auth_json: Partial<CredentialPayload>
   plan?: string
   register_time?: string
@@ -406,7 +414,7 @@ export function applyOAuthResult(edit: AccountForm, result: OAuthResult): Creden
   const email = result.auth_json.email?.trim()
   if (email && edit.account && email.toLowerCase() !== edit.account.trim().toLowerCase())
     throw new Error('授权邮箱与当前账号不一致，请登录对应账号后重新授权；新账号请先清空账号栏')
-  const next: AccountForm = { ...edit }
+  const next: AccountForm = { ...edit, oauth_session_id: result.oauth_session_id }
   for (const [key] of credentialFields) next[key] = ''
   next.id_token = ''
   next.claude_device_ids_text = ''

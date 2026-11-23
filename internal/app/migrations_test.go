@@ -104,3 +104,44 @@ func TestLegacyUsersRoleColumnIsDroppedSoUsersCanBeCreated(t *testing.T) {
 		t.Fatalf("create user status=%d %+v", res.StatusCode, body.Error)
 	}
 }
+
+// A database that ran the first cut of v19 holds dispatch values the settings
+// endpoint refuses (probe cache 120 s, preheat 0/0 and 300–900 s). v21 moves
+// only those fields to the documented defaults and leaves in-range values an
+// operator saved untouched.
+func TestOAuthDispatchDefaultsMigrationRepairsOutOfRangeRow(t *testing.T) {
+	for name, tc := range map[string]struct {
+		row  string
+		want [8]int
+	}{
+		"first-cut defaults": {"1,3,2,3,120,0,0,300,900,'[]',1", [8]int{3, 2, 3, 30, 1, 3, 5, 15}},
+		"operator values":    {"1,5,1,10,10,2,2,6,9,'[]',4", [8]int{5, 1, 10, 10, 2, 2, 6, 9}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, err := sql.Open("sqlite", t.TempDir()+"/dispatch.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err = db.Exec(baseSchema); err != nil {
+				t.Fatal(err)
+			}
+			if err = runMigrations(db, 20); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(`DELETE FROM oauth_dispatch_settings; INSERT INTO oauth_dispatch_settings VALUES(` + tc.row + `)`); err != nil {
+				t.Fatal(err)
+			}
+			if err = runMigrations(db, 21); err != nil {
+				t.Fatal(err)
+			}
+			var got [8]int
+			if err = db.QueryRow(`SELECT global_concurrency,exit_concurrency,exchange_interval_seconds,probe_cache_seconds,manual_preheat_seconds_min,manual_preheat_seconds_max,batch_preheat_seconds_min,batch_preheat_seconds_max FROM oauth_dispatch_settings WHERE id=1`).Scan(&got[0], &got[1], &got[2], &got[3], &got[4], &got[5], &got[6], &got[7]); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("after v21: %v want %v", got, tc.want)
+			}
+		})
+	}
+}
