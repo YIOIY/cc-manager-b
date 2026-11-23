@@ -1,6 +1,18 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { ADMIN_PASSWORD, api, login } from './helpers'
 import type { Account } from '../src/types/api'
+
+const oauthSessions = new WeakMap<Page, string[]>()
+
+test.beforeEach(({ page }) => {
+  oauthSessions.set(page, [])
+})
+
+test.afterEach(async ({ page }) => {
+  for (const id of oauthSessions.get(page) ?? []) {
+    await api(page, 'DELETE', `/claude-oauth/sessions/${id}`).catch(() => {})
+  }
+})
 
 test('新建上号：页内保存代理、PKCE 授权、补充资料、核对与明确提交', async ({ page }, testInfo) => {
   const errors: string[] = []
@@ -24,7 +36,13 @@ test('新建上号：页内保存代理、PKCE 授权、补充资料、核对与
   await expect(dialog.getByText('新代理已保存并选中。')).toBeVisible()
   await expect(dialog.getByRole('button', { name: '登录 Claude', exact: true })).toBeEnabled()
   await page.screenshot({ path: testInfo.outputPath('wizard-connect.png'), fullPage: true })
+  const startResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/claude-oauth/sessions' && response.request().method() === 'POST',
+  )
   await dialog.getByRole('button', { name: '登录 Claude', exact: true }).click()
+  const started = await startResponse
+  oauthSessions.get(page)?.push((await started.json()).data.id)
   const url = new URL(await dialog.locator('#claude-authorization-url').inputValue())
   expect(url.searchParams.get('code_challenge_method')).toBe('S256')
   await dialog.locator('#claude-authorization-result').fill('fixture#wrong-state')
@@ -226,7 +244,9 @@ test('已有账号重新授权沿用保存资料，设备缺失时有可见补�
   const started = await startResponse
   expect(started.status()).toBe(201)
   expect(started.request().postDataJSON().account_id).toBe(account.id)
-  expect(await started.text()).not.toContain('fixture-password')
+  const startedBody = await started.json()
+  oauthSessions.get(page)?.push(startedBody.data.id)
+  expect(JSON.stringify(startedBody)).not.toContain('fixture-password')
   await dialog.locator('#claude-authorization-result').fill('fixture')
   await dialog.getByRole('button', { name: '确认授权结果' }).click()
   await dialog.locator('[data-next]').click()
