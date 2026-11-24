@@ -19,15 +19,19 @@ type insightsReply struct {
 		AvgWeek      float64 `json:"avg_week_percent"`
 	} `json:"fleet"`
 	Quota []struct {
-		AccountID string   `json:"account_id"`
-		Account   string   `json:"account"`
-		Alias     string   `json:"alias"`
-		Status    string   `json:"status"`
-		FiveHour  *float64 `json:"five_hour_percent"`
-		FiveReset string   `json:"five_hour_reset_at"`
-		Week      *float64 `json:"week_percent"`
-		WeekReset string   `json:"week_reset_at"`
-		CostFen   *int64   `json:"cost_fen"`
+		AccountID         string   `json:"account_id"`
+		Account           string   `json:"account"`
+		Alias             string   `json:"alias"`
+		PlatformAccountID string   `json:"platform_account_id"`
+		CreatedByUserID   string   `json:"created_by_user_id"`
+		CreatedByNickname string   `json:"created_by_nickname"`
+		CreatedByUsername string   `json:"created_by_username"`
+		Status            string   `json:"status"`
+		FiveHour          *float64 `json:"five_hour_percent"`
+		FiveReset         string   `json:"five_hour_reset_at"`
+		Week              *float64 `json:"week_percent"`
+		WeekReset         string   `json:"week_reset_at"`
+		CostFen           *int64   `json:"cost_fen"`
 	} `json:"quota"`
 	Hourly []struct {
 		Hour    string `json:"hour"`
@@ -39,10 +43,11 @@ type insightsReply struct {
 		NextExpiry string         `json:"next_expiry"`
 	} `json:"composition"`
 	Idle []struct {
-		Account  string   `json:"account"`
-		Week     *float64 `json:"week_percent"`
-		PlanEnd  string   `json:"plan_end"`
-		DaysLeft *int     `json:"days_left"`
+		Account           string   `json:"account"`
+		PlatformAccountID string   `json:"platform_account_id"`
+		Week              *float64 `json:"week_percent"`
+		PlanEnd           string   `json:"plan_end"`
+		DaysLeft          *int     `json:"days_left"`
 	} `json:"idle"`
 	RecentJobs []struct {
 		ID         string `json:"id"`
@@ -91,6 +96,10 @@ func TestDashboardInsightsFleetQuotaAndComposition(t *testing.T) {
 	if hot.FiveHour == nil || *hot.FiveHour != 84 || hot.Week == nil || *hot.Week != 1 || hot.CostFen == nil || *hot.CostFen != 413269 || hot.Status != "using" || hot.FiveReset != "2026-11-11T16:50:00Z" || hot.AccountID == "" || hot.Alias == "" {
 		t.Fatalf("hot=%+v", hot)
 	}
+	// remoteAccount sets a1_id = upstream_id + 10000 (411605 → 421605).
+	if hot.PlatformAccountID != "421605" {
+		t.Fatalf("hot platform_account_id=%q", hot.PlatformAccountID)
+	}
 	if banned.FiveHour != nil || banned.Week != nil || banned.CostFen != nil || banned.Status != "ban" {
 		t.Fatalf("banned=%+v", banned)
 	}
@@ -107,7 +116,8 @@ func TestDashboardInsightsFleetQuotaAndComposition(t *testing.T) {
 	// hot uses 1% of its week but 84% of its 5-hour window: busy, not idle.
 	// banned has no usage and is not in use.
 	if len(out.Idle) != 1 || out.Idle[0].Account != "one@example.test" || out.Idle[0].Week == nil || *out.Idle[0].Week != 1 ||
-		out.Idle[0].PlanEnd != "2026-12-10" || out.Idle[0].DaysLeft == nil || *out.Idle[0].DaysLeft != 27 {
+		out.Idle[0].PlanEnd != "2026-12-10" || out.Idle[0].DaysLeft == nil || *out.Idle[0].DaysLeft != 27 ||
+		out.Idle[0].PlatformAccountID != "438802" {
 		t.Fatalf("idle=%+v", out.Idle)
 	}
 	if out.RecentJobs == nil || len(out.RecentJobs) != 0 {

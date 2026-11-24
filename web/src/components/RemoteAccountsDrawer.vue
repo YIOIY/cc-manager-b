@@ -139,6 +139,7 @@ const failing = new Set([
   'arrearage',
 ])
 function statusTone(s: string) {
+  if (s === 'offline') return 'danger'
   return failing.has(s) ? 'attention' : s === 'using' || s === 'online' ? 'teal' : ''
 }
 async function load() {
@@ -184,6 +185,11 @@ function onPage(p: number) {
 .mini-badge.yellow {
   background: #fdf6d8;
   color: #8a6d00;
+}
+.mini-badge.danger {
+  background: rgba(220, 38, 38, 0.14);
+  color: #c62828;
+  font-weight: 700;
 }
 .mini-badge.attention {
   background: var(--el-color-danger-light-9);

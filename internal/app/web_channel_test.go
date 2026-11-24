@@ -106,7 +106,7 @@ func TestWebLoginTestEndpoint(t *testing.T) {
 	}
 	res := admin.do(http.MethodPost, "/api/v1/platform-connections/conn/web-login-test", "")
 	_ = jsonDecode(res, &out)
-	if res.StatusCode != http.StatusOK || !out.Data.OK || out.Data.SupplierName != "住享科智" || out.Data.ExpiresIn != 18000 {
+	if res.StatusCode != http.StatusOK || !out.Data.OK || out.Data.SupplierName != "益充汇" || out.Data.ExpiresIn != 18000 {
 		t.Fatalf("status=%d out=%+v", res.StatusCode, out.Data)
 	}
 	var suspended string

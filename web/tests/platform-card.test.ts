@@ -55,7 +55,7 @@ test('token counts use thousands separators', () => {
 })
 
 test('shortPlatformAlias keeps provider and trailing id', () => {
-  expect(shortPlatformAlias('claude-住享科智-20261113006')).toBe('claude-20261113006')
+  expect(shortPlatformAlias('claude-益充汇-20261113006')).toBe('claude-20261113006')
   expect(shortPlatformAlias('claude-abc-def-20261113006')).toBe('claude-20261113006')
   expect(shortPlatformAlias('claude-only')).toBe('claude-only')
   expect(shortPlatformAlias('')).toBe('')

@@ -108,7 +108,7 @@ export function formatPercent(value: number | null | undefined): string {
   return `${Number(value).toFixed(2)}%`
 }
 
-/** Shorten platform aliases like `claude-住享科智-20261113006` to `claude-20261113006`. */
+/** Shorten platform aliases like `claude-益充汇-20261113006` to `claude-20261113006`. */
 export function shortPlatformAlias(alias: string | null | undefined): string {
   const value = (alias || '').trim()
   if (!value) return ''

@@ -11,9 +11,11 @@
           {{ label(f.field) }}：{{ f.message }}
         </li>
       </ul>
-      <p v-if="view.requestId" class="error-notice-meta">
-        请求编号 {{ view.requestId }}
-        <button type="button" class="error-notice-copy" @click="copy">{{ copied ? '已复制' : '复制错误信息' }}</button>
+      <p class="error-notice-meta">
+        <template v-if="view.requestId">请求编号 {{ view.requestId }}</template>
+        <button type="button" class="error-notice-copy" :class="{ first: !view.requestId }" @click="copy">
+          {{ copied ? '已复制' : '复制错误信息' }}
+        </button>
         <button type="button" class="error-notice-copy error-notice-report" @click="report">反馈这个问题</button>
       </p>
     </div>
@@ -142,6 +144,9 @@ async function copy() {
   font-size: 12px;
   color: var(--accent-dark);
   cursor: pointer;
+}
+.error-notice-copy.first {
+  margin-left: 0;
 }
 .error-notice-copy:hover {
   color: var(--accent-strong);

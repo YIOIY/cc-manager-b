@@ -18,6 +18,7 @@
       >
         <div class="idle-account">
           <strong :title="row.account">{{ row.account || shortPlatformAlias(row.alias) }}</strong>
+          <small v-if="accountMeta(row)" class="meta" :title="accountMeta(row)">{{ accountMeta(row) }}</small>
           <small v-if="shortPlatformAlias(row.alias)">{{ shortPlatformAlias(row.alias) }}</small>
         </div>
         <span class="idle-week" title="7 天窗口已用">7d {{ percent(row.week_percent) }}</span>
@@ -40,6 +41,18 @@ import { shortPlatformAlias } from '../model/platform-card'
 
 defineProps<{ rows: IdleRow[]; loading: boolean; failed?: boolean }>()
 const emit = defineEmits<{ open: [row: IdleRow] }>()
+
+function ownerLabel(row: IdleRow) {
+  return (row.created_by_nickname || row.created_by_username || '').trim()
+}
+
+function accountMeta(row: IdleRow) {
+  const parts: string[] = []
+  if (row.platform_account_id) parts.push('ID ' + row.platform_account_id)
+  const owner = ownerLabel(row)
+  if (owner) parts.push('所属 ' + owner)
+  return parts.join(' · ')
+}
 
 function percent(value: number | null): string {
   if (value === null || value === undefined) return '—'
@@ -90,6 +103,9 @@ function percent(value: number | null): string {
 .idle-account small {
   color: var(--muted);
   font-size: 11px;
+}
+.idle-account small.meta {
+  font-variant-numeric: tabular-nums;
 }
 .idle-week {
   color: var(--muted-strong);

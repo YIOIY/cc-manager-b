@@ -28,6 +28,7 @@
         >
           <div class="quota-account">
             <strong :title="row.account">{{ row.account || shortPlatformAlias(row.alias) || row.alias }}</strong>
+            <small v-if="accountMeta(row)" class="meta" :title="accountMeta(row)">{{ accountMeta(row) }}</small>
             <small v-if="isFailing(row.status)" class="bad">{{ runtimeLabel(row.status) }}</small>
             <small v-else :title="row.alias">{{ shortPlatformAlias(row.alias) || row.alias }}</small>
           </div>
@@ -71,6 +72,19 @@ function costUsd(fen: number | null) {
   if (fen === null) return '—'
   const cents = fenToUsdCents(fen, props.usdRate)
   return cents === null ? '—' : formatUsdCents(cents)
+}
+
+function ownerLabel(row: QuotaRow) {
+  return (row.created_by_nickname || row.created_by_username || '').trim()
+}
+
+/** Under the account name: platform id and owner, same wording as account cards. */
+function accountMeta(row: QuotaRow) {
+  const parts: string[] = []
+  if (row.platform_account_id) parts.push('ID ' + row.platform_account_id)
+  const owner = ownerLabel(row)
+  if (owner) parts.push('所属 ' + owner)
+  return parts.join(' · ')
 }
 
 const expanded = ref(false)
@@ -167,6 +181,10 @@ function windows(row: QuotaRow) {
 .quota-account small {
   color: var(--muted-soft);
   font-size: 11px;
+}
+.quota-account small.meta {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .quota-account small.bad {
   color: var(--danger);

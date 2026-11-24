@@ -45,6 +45,13 @@
     <el-button class="cu-query" type="primary" :loading="loading" :disabled="!connectionId" @click="reload"
       ><Search :size="14" />查询</el-button
     >
+    <el-button
+      class="cu-export"
+      :loading="exporting"
+      :disabled="!connectionId || !range?.[0] || !range?.[1]"
+      @click="exportExcel"
+      ><Download :size="14" />导出 Excel</el-button
+    >
   </div>
   <p class="cu-note">数据来自供应商网页后台同步，约每 2 小时更新一次。</p>
   <el-table
@@ -93,8 +100,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Search } from 'lucide-vue-next'
-import { api } from '../api'
+import { Download, Search } from 'lucide-vue-next'
+import { ApiError, api } from '../api'
 import ErrorNotice from '../components/ErrorNotice.vue'
 import PageHead from '../components/PageHead.vue'
 import { useSession } from '../composables/useSession'
@@ -118,6 +125,7 @@ const accountOptions = ref<ChannelUsageAccount[]>([])
 const owners = ref<ChannelUsageOwner[]>([])
 const data = ref<ChannelUsageResponse | null>(null)
 const loading = ref(false)
+const exporting = ref(false)
 const notice = ref<unknown | null>(null)
 const page = ref(1)
 const pageSize = ref(50)
@@ -169,26 +177,93 @@ async function loadAccounts() {
   owners.value = res.owners || []
   pruneUpstreamSelection()
 }
+/** Shared filters for list + Excel export (export omits pagination). */
+function filterParams(includePage: boolean) {
+  const params = new URLSearchParams({
+    connection_id: connectionId.value,
+    from: range.value[0],
+    to: range.value[1],
+  })
+  if (includePage) {
+    params.set('page', String(page.value))
+    params.set('page_size', String(pageSize.value))
+  }
+  if (upstreamIds.value.length) params.set('upstream_ids', upstreamIds.value.join(','))
+  if (isAdmin.value && ownerUserIds.value.length) params.set('owner_user_ids', ownerUserIds.value.join(','))
+  return params
+}
+
 async function load() {
   if (!connectionId.value || !range.value?.[0] || !range.value?.[1]) return
   loading.value = true
   notice.value = null
   try {
-    const params = new URLSearchParams({
-      connection_id: connectionId.value,
-      from: range.value[0],
-      to: range.value[1],
-      page: String(page.value),
-      page_size: String(pageSize.value),
-    })
-    if (upstreamIds.value.length) params.set('upstream_ids', upstreamIds.value.join(','))
-    if (isAdmin.value && ownerUserIds.value.length) params.set('owner_user_ids', ownerUserIds.value.join(','))
-    data.value = (await api<ChannelUsageResponse>('/platform-usage/channel-usage?' + params)).data
+    data.value = (await api<ChannelUsageResponse>('/platform-usage/channel-usage?' + filterParams(true))).data
   } catch (e) {
     notice.value = e
     data.value = null
   } finally {
     loading.value = false
+  }
+}
+
+function filenameFromDisposition(header: string | null, fallback: string) {
+  if (!header) return fallback
+  const utf = /filename\*=UTF-8''([^;]+)/i.exec(header)
+  if (utf?.[1]) {
+    try {
+      return decodeURIComponent(utf[1].trim())
+    } catch {
+      /* keep looking */
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header)
+  return plain?.[1]?.trim() || fallback
+}
+
+async function exportExcel() {
+  if (!connectionId.value || !range.value?.[0] || !range.value?.[1]) return
+  exporting.value = true
+  notice.value = null
+  try {
+    const res = await fetch('/api/v1/platform-usage/channel-usage/export?' + filterParams(false), {
+      credentials: 'include',
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => ({}))) as {
+        error?: { code?: string; message?: string; hint?: string }
+        request_id?: string
+      }
+      throw new ApiError(
+        res.status,
+        payload.error?.code || 'HTTP_' + res.status,
+        payload.error?.message || '导出失败',
+        {
+          hint: payload.error?.hint,
+          requestId: payload.request_id || res.headers.get('X-Request-ID') || undefined,
+        },
+      )
+    }
+    const blob = await res.blob()
+    const fallback = `channel-usage-${range.value[0]}-${range.value[1]}.xlsx`
+    const name = filenameFromDisposition(res.headers.get('Content-Disposition'), fallback)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'TimeoutError') {
+      notice.value = new ApiError(0, 'TIMEOUT', '导出超时')
+    } else if (e instanceof ApiError) {
+      notice.value = e
+    } else {
+      notice.value = new ApiError(0, 'NETWORK', '无法连接服务')
+    }
+  } finally {
+    exporting.value = false
   }
 }
 function reload() {
@@ -250,7 +325,8 @@ onMounted(async () => {
   width: 200px;
   max-width: 200px;
 }
-.cu-query {
+.cu-query,
+.cu-export {
   flex: 0 0 auto;
 }
 .cu-toolbar :deep(.el-select),

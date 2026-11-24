@@ -527,6 +527,11 @@ export interface QuotaRow {
   account_id: string
   account: string
   alias: string
+  /** Same display id as /accounts cards (aid, else delivery id). */
+  platform_account_id: string
+  created_by_user_id: string
+  created_by_nickname: string
+  created_by_username: string
   status: string
   five_hour_percent: number | null
   five_hour_reset_at: string
@@ -539,6 +544,10 @@ export interface IdleRow {
   account_id: string
   account: string
   alias: string
+  platform_account_id: string
+  created_by_user_id: string
+  created_by_nickname: string
+  created_by_username: string
   week_percent: number | null
   cost_fen: number | null
   plan_end: string

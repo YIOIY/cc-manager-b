@@ -17,7 +17,7 @@ import (
 // fixtureAccount is the 428802 row from the 2026-11-11 HAR with the email
 // replaced. auth_config and extra are JSON strings, exactly as the console
 // returns them.
-const fixtureAccount = `{"a1_id":20204,"a1_status":"using","a2_id":0,"a2_status":"","account_alias":"claude-住享科智-20261111002","account_md5":"d41d8cd98f00b204e9800998ecf8427ed41d8cd98f00b204e9800998ecf8427e","account_type":2,"api_key":"","api_secret":"","auth_config":"{\"account\": \"fixture@example.test\", \"password\": \"jonas****e3785\", \"plan\": \"claude/cc-max-20x\", \"plan_start_time\": \"2026-11-11\", \"plan_end_time\": \"2026-12-10\", \"register_time\": \"2026-11-03\", \"register_location\": \"US\", \"balance\": \"100\", \"payment_method\": \"google_pay\", \"register_device\": \"Mac\", \"warranty_period\": 1, \"tags\": [\"慢蒸\"]}","created_at":"2026-11-11 19:36","ext_status":"using","extra":"{\"cpa_usage\": {\"cost\": 35209959, \"utilization\": {\"week_reset_at\": 1794978000, \"week_used_percent\": 0.01, \"five_hour_reset_at\": 1794415800, \"five_hour_used_percent\": 0.05}, \"input_tokens\": 411638, \"output_tokens\": 82648}}","has_api_key":false,"has_api_secret":false,"has_cpa_auth_json":true,"id":428802,"is_locked":0,"model":"claude/cc-max-20x","models":[{"name":"claude/cc-max-20x","usable":true}],"project_id":"fixture@example.test","provider":"claude","proxy_type":"pool","region":"","remark":"","status":1,"supplier_id":228,"supplier_name":"住享科智","updated_at":"2026-11-11 21:20","usage_limit_period":"","usage_limit_type":"","usage_limit_value":0}`
+const fixtureAccount = `{"a1_id":20204,"a1_status":"using","a2_id":0,"a2_status":"","account_alias":"claude-益充汇-20261111002","account_md5":"d41d8cd98f00b204e9800998ecf8427ed41d8cd98f00b204e9800998ecf8427e","account_type":2,"api_key":"","api_secret":"","auth_config":"{\"account\": \"fixture@example.test\", \"password\": \"jonas****e3785\", \"plan\": \"claude/cc-max-20x\", \"plan_start_time\": \"2026-11-11\", \"plan_end_time\": \"2026-12-10\", \"register_time\": \"2026-11-03\", \"register_location\": \"US\", \"balance\": \"100\", \"payment_method\": \"google_pay\", \"register_device\": \"Mac\", \"warranty_period\": 1, \"tags\": [\"慢蒸\"]}","created_at":"2026-11-11 19:36","ext_status":"using","extra":"{\"cpa_usage\": {\"cost\": 35209959, \"utilization\": {\"week_reset_at\": 1794978000, \"week_used_percent\": 0.01, \"five_hour_reset_at\": 1794415800, \"five_hour_used_percent\": 0.05}, \"input_tokens\": 411638, \"output_tokens\": 82648}}","has_api_key":false,"has_api_secret":false,"has_cpa_auth_json":true,"id":428802,"is_locked":0,"model":"claude/cc-max-20x","models":[{"name":"claude/cc-max-20x","usable":true}],"project_id":"fixture@example.test","provider":"claude","proxy_type":"pool","region":"","remark":"","status":1,"supplier_id":228,"supplier_name":"益充汇","updated_at":"2026-11-11 21:20","usage_limit_period":"","usage_limit_type":"","usage_limit_value":0}`
 
 func withField(t *testing.T, raw, key string, value any) json.RawMessage {
 	t.Helper()
@@ -35,7 +35,7 @@ func TestParseWebAccountTolerates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.ID != 428802 || a.AID != 20204 || a.Email != "fixture@example.test" || a.Alias != "claude-住享科智-20261111002" || a.ExtStatus != "using" || a.A1Status != "using" || a.Locked || a.ProxyType != "pool" || !a.ModelsUsable || a.CreatedAt != "2026-11-11 19:36" {
+	if a.ID != 428802 || a.AID != 20204 || a.Email != "fixture@example.test" || a.Alias != "claude-益充汇-20261111002" || a.ExtStatus != "using" || a.A1Status != "using" || a.Locked || a.ProxyType != "pool" || !a.ModelsUsable || a.CreatedAt != "2026-11-11 19:36" {
 		t.Fatalf("identity fields: %+v", a)
 	}
 	p := a.Profile
@@ -143,7 +143,7 @@ func (s *consoleStub) handle(w http.ResponseWriter, r *http.Request) {
 		if s.emptyLoginKey {
 			key = ""
 		}
-		fmt.Fprintf(w, `{"token":%q,"name":"住享科智","public_key":%q,"expires_in":18000,"allow_fast_brush":0}`, s.currentToken(), key)
+		fmt.Fprintf(w, `{"token":%q,"name":"益充汇","public_key":%q,"expires_in":18000,"allow_fast_brush":0}`, s.currentToken(), key)
 	default:
 		if r.Header.Get("Authorization") != "Bearer "+s.currentToken() {
 			w.WriteHeader(401)
@@ -184,7 +184,7 @@ func (s *consoleStub) handle(w http.ResponseWriter, r *http.Request) {
 			if list == "" {
 				list = "[]"
 			}
-			fmt.Fprintf(w, `{"counts":{"all":%d,"using":%d,"ban":0},"list":%s,"page":%d,"page_size":100,"supplier_name":"住享科智","total":%d}`, s.total, s.total, list, page, s.total)
+			fmt.Fprintf(w, `{"counts":{"all":%d,"using":%d,"ban":0},"list":%s,"page":%d,"page_size":100,"supplier_name":"益充汇","total":%d}`, s.total, s.total, list, page, s.total)
 		case strings.HasSuffix(r.URL.Path, "/check-fail-reason") || strings.HasSuffix(r.URL.Path, "/claude-status-reason"):
 			s.reasons.Add(1)
 			fmt.Fprint(w, s.reasonBody)
@@ -217,7 +217,7 @@ func TestWebClientLoginAndList(t *testing.T) {
 		t.Fatal(err)
 	}
 	session, err := c.Login(context.Background())
-	if err != nil || session.SupplierName != "住享科智" || session.ExpiresIn != 18000 {
+	if err != nil || session.SupplierName != "益充汇" || session.ExpiresIn != 18000 {
 		t.Fatalf("login: %+v %v", session, err)
 	}
 	accounts, counts, total, err := c.ListAccounts(context.Background())

@@ -25,25 +25,33 @@ const (
 )
 
 type quotaRow struct {
-	AccountID       string   `json:"account_id"`
-	Account         string   `json:"account"`
-	Alias           string   `json:"alias"`
-	Status          string   `json:"status"`
-	FiveHourPercent *float64 `json:"five_hour_percent"`
-	FiveHourResetAt string   `json:"five_hour_reset_at"`
-	WeekPercent     *float64 `json:"week_percent"`
-	WeekResetAt     string   `json:"week_reset_at"`
-	CostFen         *int64   `json:"cost_fen"`
+	AccountID         string   `json:"account_id"`
+	Account           string   `json:"account"`
+	Alias             string   `json:"alias"`
+	PlatformAccountID string   `json:"platform_account_id"`
+	CreatedByUserID   string   `json:"created_by_user_id"`
+	CreatedByNickname string   `json:"created_by_nickname"`
+	CreatedByUsername string   `json:"created_by_username"`
+	Status            string   `json:"status"`
+	FiveHourPercent   *float64 `json:"five_hour_percent"`
+	FiveHourResetAt   string   `json:"five_hour_reset_at"`
+	WeekPercent       *float64 `json:"week_percent"`
+	WeekResetAt       string   `json:"week_reset_at"`
+	CostFen           *int64   `json:"cost_fen"`
 }
 
 // idleRow is an in-use account that has barely used its 7-day window.
 type idleRow struct {
-	AccountID   string   `json:"account_id"`
-	Account     string   `json:"account"`
-	Alias       string   `json:"alias"`
-	WeekPercent *float64 `json:"week_percent"`
-	CostFen     *int64   `json:"cost_fen"`
-	PlanEnd     string   `json:"plan_end"`
+	AccountID         string   `json:"account_id"`
+	Account           string   `json:"account"`
+	Alias             string   `json:"alias"`
+	PlatformAccountID string   `json:"platform_account_id"`
+	CreatedByUserID   string   `json:"created_by_user_id"`
+	CreatedByNickname string   `json:"created_by_nickname"`
+	CreatedByUsername string   `json:"created_by_username"`
+	WeekPercent       *float64 `json:"week_percent"`
+	CostFen           *int64   `json:"cost_fen"`
+	PlanEnd           string   `json:"plan_end"`
 	// DaysLeft is nil when the plan end date is unknown.
 	DaysLeft *int `json:"days_left"`
 }
@@ -103,10 +111,12 @@ func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJo
 func (a *App) fleetQuota(ctx context.Context, at time.Time, scope ownershipScope) (map[string]any, []quotaRow, map[string]int, []idleRow, string, error) {
 	ownerSQL, ownerArgs := scope.sqlAnd("a.created_by_user_id")
 	rows, err := a.DB.QueryContext(ctx, `SELECT a.id,a.account,COALESCE(a.plan_end_time,''),COALESCE(c.timezone,''),
-r.upstream_id IS NOT NULL,COALESCE(r.missing_since,''),COALESCE(r.superseded_by,''),COALESCE(r.alias,''),COALESCE(NULLIF(r.ext_status,''),r.a1_status,''),COALESCE(r.plan_end_time,''),
+r.upstream_id IS NOT NULL,COALESCE(l.upstream_id,''),COALESCE(r.upstream_aid,''),COALESCE(r.missing_since,''),COALESCE(r.superseded_by,''),COALESCE(r.alias,''),COALESCE(NULLIF(r.ext_status,''),r.a1_status,''),COALESCE(r.plan_end_time,''),
+COALESCE(a.created_by_user_id,''),COALESCE(u.nickname,''),COALESCE(u.username,''),
 r.five_hour_used,COALESCE(r.five_hour_reset_at,''),r.week_used,COALESCE(r.week_reset_at,''),r.usage_cost_micro,r.usage_input_tokens,r.usage_output_tokens
 FROM platform_links l JOIN accounts a ON a.id=l.account_id LEFT JOIN platform_connections c ON c.id=l.connection_id
 LEFT JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id
+LEFT JOIN users u ON u.id=a.created_by_user_id
 WHERE l.ingestion_state='accepted' AND a.archived=0`+ownerSQL+`
 ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',l.updated_at DESC`, ownerArgs...)
 	if err != nil {
@@ -122,11 +132,11 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 	var fiveSum, weekSum float64
 	var fiveN, weekN int
 	for rows.Next() {
-		var id, email, localEnd, zone, missing, superseded, alias, status, remoteEnd, fiveReset, weekReset string
+		var id, email, localEnd, zone, upstream, aid, missing, superseded, alias, status, remoteEnd, ownerID, nick, username, fiveReset, weekReset string
 		var hasRemote bool
 		var five, week sql.NullFloat64
 		var cost, in, out sql.NullInt64
-		if err = rows.Scan(&id, &email, &localEnd, &zone, &hasRemote, &missing, &superseded, &alias, &status, &remoteEnd, &five, &fiveReset, &week, &weekReset, &cost, &in, &out); err != nil {
+		if err = rows.Scan(&id, &email, &localEnd, &zone, &hasRemote, &upstream, &aid, &missing, &superseded, &alias, &status, &remoteEnd, &ownerID, &nick, &username, &five, &fiveReset, &week, &weekReset, &cost, &in, &out); err != nil {
 			return nil, nil, nil, nil, "", err
 		}
 		if seen[id] { // an older delivery of the same account
@@ -147,7 +157,12 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 		if !hasRemote || missing != "" || superseded != "" {
 			continue
 		}
-		q := quotaRow{AccountID: id, Account: email, Alias: alias, Status: status, FiveHourResetAt: fiveReset, WeekResetAt: weekReset}
+		platformID := platformAccountID(aid, upstream)
+		q := quotaRow{
+			AccountID: id, Account: email, Alias: alias, PlatformAccountID: platformID,
+			CreatedByUserID: ownerID, CreatedByNickname: nick, CreatedByUsername: username,
+			Status: status, FiveHourResetAt: fiveReset, WeekResetAt: weekReset,
+		}
 		if five.Valid {
 			v := percent(five.Float64)
 			q.FiveHourPercent = &v
@@ -169,7 +184,11 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 		outTokens += out.Int64
 		quota = append(quota, q)
 		if status == "using" && week.Valid && week.Float64 < idleWeekFraction && (!five.Valid || five.Float64 < idleWeekFraction) {
-			row := idleRow{AccountID: id, Account: email, Alias: alias, WeekPercent: q.WeekPercent, CostFen: q.CostFen, PlanEnd: end}
+			row := idleRow{
+				AccountID: id, Account: email, Alias: alias, PlatformAccountID: platformID,
+				CreatedByUserID: ownerID, CreatedByNickname: nick, CreatedByUsername: username,
+				WeekPercent: q.WeekPercent, CostFen: q.CostFen, PlanEnd: end,
+			}
 			if days, ok := daysUntil(end, at, zone); ok {
 				row.DaysLeft = &days
 			}

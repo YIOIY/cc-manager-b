@@ -1,8 +1,12 @@
 package app
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -132,6 +136,53 @@ func TestChannelUsageEndpoints(t *testing.T) {
 	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?connection_id=conn&from=2026-13-01&to="+today, ""), http.StatusUnprocessableEntity, "BILL_RANGE_INVALID")
 	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?from="+from+"&to="+today, ""), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
 	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage/accounts", ""), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
+
+	export := admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage/export?connection_id=conn&from="+from+"&to="+today, "")
+	defer export.Body.Close()
+	if export.StatusCode != 200 {
+		t.Fatalf("export status=%d", export.StatusCode)
+	}
+	ct := export.Header.Get("Content-Type")
+	if !strings.Contains(ct, "spreadsheetml") {
+		t.Fatalf("export content-type=%q", ct)
+	}
+	cd := export.Header.Get("Content-Disposition")
+	if !strings.Contains(cd, "channel-usage-") || !strings.Contains(cd, ".xlsx") {
+		t.Fatalf("disposition=%q", cd)
+	}
+	body, err := io.ReadAll(export.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sheet string
+	for _, f := range zr.File {
+		if f.Name == "xl/worksheets/sheet1.xml" {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sheet = string(raw)
+			break
+		}
+	}
+	if sheet == "" {
+		t.Fatal("missing sheet1.xml")
+	}
+	for _, want := range []string{"日期", "账号 ID", "消耗额度（美元）", "438802", "18.78", "合计"} {
+		if !strings.Contains(sheet, want) {
+			t.Fatalf("export sheet missing %q", want)
+		}
+	}
+	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage/export?from="+from+"&to="+today, ""), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
 }
 
 func TestChannelUsageRespectsOwnership(t *testing.T) {
@@ -201,5 +252,38 @@ func TestChannelUsageRespectsOwnership(t *testing.T) {
 	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?connection_id=cu-conn&from="+day+"&to="+day, ""), &out)
 	if out.Data.Total != 2 || out.Data.TotalCostFen != 2160 {
 		t.Fatalf("admin all=%+v", out.Data)
+	}
+
+	export := opsA.do(http.MethodGet, "/api/v1/platform-usage/channel-usage/export?connection_id=cu-conn&from="+day+"&to="+day, "")
+	defer export.Body.Close()
+	if export.StatusCode != 200 {
+		t.Fatalf("opsA export status=%d", export.StatusCode)
+	}
+	raw, err := io.ReadAll(export.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sheet string
+	for _, f := range zr.File {
+		if f.Name != "xl/worksheets/sheet1.xml" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sheet = string(body)
+	}
+	if !strings.Contains(sheet, "1001") || strings.Contains(sheet, "1002") {
+		t.Fatalf("opsA export should only include owned upstream: %s", sheet)
 	}
 }
