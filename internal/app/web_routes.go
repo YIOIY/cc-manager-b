@@ -30,7 +30,7 @@ type remoteRow struct {
 	Locked, AutoCreated                                                      int
 	RemoteCreatedAt, RemoteUpdatedAt, FirstSeenAt, LastSeenAt, MissingSince  string
 	SupersededBy, AccountID                                                  string
-	ReasonKind, ReasonText, ReasonFetchedAt                                  string
+	ReasonKind, ReasonText, ReasonFetchedAt, StatusChangedAt                 string
 	Plan, PlanStart, PlanEnd, RegisterTime, RegisterLocation, Balance        string
 	PaymentMethod, RegisterDevice, RechargeTime, WarrantyPeriod, TagsJSON    string
 	CostMicro, InputTokens, OutputTokens                                     sql.NullInt64
@@ -38,11 +38,11 @@ type remoteRow struct {
 	FiveHourResetAt, WeekResetAt, UsageObservedAt                            string
 }
 
-const remoteColumns = `r.connection_id,r.upstream_id,r.upstream_aid,r.account_email,r.alias,r.provider,r.model,r.models_json,r.ext_status,r.a1_status,r.a2_status,r.proxy_type,r.remark,r.is_locked,r.auto_created,r.remote_created_at,r.remote_updated_at,r.first_seen_at,r.last_seen_at,r.missing_since,r.superseded_by,r.account_id,r.reason_kind,r.reason_text,r.reason_fetched_at,r.plan,r.plan_start_time,r.plan_end_time,r.register_time,r.register_location,r.balance,r.payment_method,r.register_device,r.recharge_time,r.warranty_period,r.tags_json,r.usage_cost_micro,r.usage_input_tokens,r.usage_output_tokens,r.five_hour_used,r.week_used,r.five_hour_reset_at,r.week_reset_at,r.usage_observed_at`
+const remoteColumns = `r.connection_id,r.upstream_id,r.upstream_aid,r.account_email,r.alias,r.provider,r.model,r.models_json,r.ext_status,r.a1_status,r.a2_status,r.proxy_type,r.remark,r.is_locked,r.auto_created,r.remote_created_at,r.remote_updated_at,r.first_seen_at,r.last_seen_at,r.missing_since,r.superseded_by,r.account_id,r.reason_kind,r.reason_text,r.reason_fetched_at,r.status_changed_at,r.plan,r.plan_start_time,r.plan_end_time,r.register_time,r.register_location,r.balance,r.payment_method,r.register_device,r.recharge_time,r.warranty_period,r.tags_json,r.usage_cost_micro,r.usage_input_tokens,r.usage_output_tokens,r.five_hour_used,r.week_used,r.five_hour_reset_at,r.week_reset_at,r.usage_observed_at`
 
 func scanRemoteRow(rows interface{ Scan(...any) error }) (remoteRow, error) {
 	var x remoteRow
-	err := rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt)
+	err := rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.StatusChangedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt)
 	return x, err
 }
 
@@ -82,7 +82,8 @@ func platformBlock(x remoteRow, channel string, web webChannelState) map[string]
 	modelsUsable := strings.Contains(x.ModelsJSON, `"usable":true`)
 	block := map[string]any{
 		"status": status, "status_raw": x.ExtStatus, "locked": x.Locked == 1, "reason_kind": x.ReasonKind, "reason_text": x.ReasonText, "reason_fetched_at": x.ReasonFetchedAt,
-		"observed_at": x.LastSeenAt, "aid": x.AID, "upstream_id": x.UpstreamID, "alias": x.Alias, "provider": x.Provider, "model": x.Model, "models_usable": modelsUsable,
+		"status_changed_at": x.StatusChangedAt,
+		"observed_at":       x.LastSeenAt, "aid": x.AID, "upstream_id": x.UpstreamID, "alias": x.Alias, "provider": x.Provider, "model": x.Model, "models_usable": modelsUsable,
 		"remote_created_at": x.RemoteCreatedAt, "missing_since": x.MissingSince, "auto_created": x.AutoCreated == 1, "source_channel": channel, "remark": x.Remark,
 		"web_channel": map[string]any{"configured": web.Configured, "suspended": web.Suspended}, "usd_cny_rate": web.USDRate,
 		"profile": map[string]any{"plan": x.Plan, "plan_start_time": x.PlanStart, "plan_end_time": x.PlanEnd, "register_time": x.RegisterTime, "register_location": x.RegisterLocation, "balance": x.Balance, "payment_method": x.PaymentMethod, "register_device": x.RegisterDevice, "recharge_time": x.RechargeTime, "warranty_period": x.WarrantyPeriod, "tags": tags},

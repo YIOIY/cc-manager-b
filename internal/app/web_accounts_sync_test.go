@@ -204,6 +204,10 @@ func TestWebAccountsSyncMissingAndReasons(t *testing.T) {
 		t.Fatalf("reason calls=%d after three rounds, want 2 (6-hour refresh)", got)
 	}
 	// Status change refetches the reasons.
+	beforeChange := queryString(t, a, `SELECT status_changed_at FROM platform_remote_accounts WHERE upstream_id='4002'`)
+	if beforeChange == "" {
+		t.Fatal("status_changed_at empty after first ban sync")
+	}
 	y["ext_status"], y["a1_status"] = "check_fail", "check_fail"
 	stub.setAccounts(x, y)
 	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
@@ -211,6 +215,50 @@ func TestWebAccountsSyncMissingAndReasons(t *testing.T) {
 	}
 	if got := stub.reasons.Load(); got != 4 {
 		t.Fatalf("reason calls=%d after a status change, want 4", got)
+	}
+	afterChange := queryString(t, a, `SELECT status_changed_at FROM platform_remote_accounts WHERE upstream_id='4002'`)
+	if afterChange == "" || afterChange < beforeChange {
+		t.Fatalf("status_changed_at went backwards on status change: before=%q after=%q", beforeChange, afterChange)
+	}
+}
+
+func TestWebAccountsSyncStatusChangedAt(t *testing.T) {
+	a, stub := webFixture(t)
+	acc := remoteAccount(9001, "offline@example.test", "using", "2026-11-01 10:00", nil, nil)
+	stub.setAccounts(acc)
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	first := queryString(t, a, `SELECT status_changed_at FROM platform_remote_accounts WHERE upstream_id='9001'`)
+	if first == "" {
+		t.Fatal("status_changed_at empty on first insert")
+	}
+	// Same status: stamp stays put.
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	if got := queryString(t, a, `SELECT status_changed_at FROM platform_remote_accounts WHERE upstream_id='9001'`); got != first {
+		t.Fatalf("unchanged status moved status_changed_at: %q → %q", first, got)
+	}
+	time.Sleep(1100 * time.Millisecond) // now() is second-precision RFC3339
+	acc["ext_status"], acc["a1_status"] = "offline", "offline"
+	stub.setAccounts(acc)
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	offlineAt := queryString(t, a, `SELECT status_changed_at FROM platform_remote_accounts WHERE upstream_id='9001'`)
+	if offlineAt == "" || offlineAt <= first {
+		t.Fatalf("offline transition status_changed_at=%q first=%q", offlineAt, first)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	acc["ext_status"], acc["a1_status"] = "ban", "ban"
+	stub.setAccounts(acc)
+	if err := a.syncWebAccounts(context.Background(), "conn"); err != nil {
+		t.Fatal(err)
+	}
+	banAt := queryString(t, a, `SELECT status_changed_at FROM platform_remote_accounts WHERE upstream_id='9001'`)
+	if banAt == "" || banAt <= offlineAt {
+		t.Fatalf("ban transition status_changed_at=%q offline=%q", banAt, offlineAt)
 	}
 }
 

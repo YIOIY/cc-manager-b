@@ -59,10 +59,20 @@
               </el-button>
             </div>
             <p>{{ failingReason }}</p>
-            <small v-if="account.platform?.reason_fetched_at">{{
+            <small v-if="account.platform?.status_changed_at"
+              >状态变更 {{ formatDateTime(account.platform.status_changed_at) }}</small
+            >
+            <small v-else-if="account.platform?.reason_fetched_at">{{
               formatDateTime(account.platform.reason_fetched_at)
             }}</small>
           </div>
+        </div>
+        <div
+          v-else-if="platformStatus === 'offline' && account.platform?.status_changed_at"
+          class="delivery-status-changed"
+          data-status-changed
+        >
+          状态变更 {{ formatDateTime(account.platform.status_changed_at) }}
         </div>
         <AccountUsageTrend
           v-if="can('accounts.usage')"
@@ -807,8 +817,16 @@ watch(
   white-space: pre-wrap;
 }
 .delivery-reason small {
+  display: block;
+  margin-top: 4px;
   color: #a8704f;
   font-size: 11px;
+}
+.delivery-status-changed {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .delivery-profile {
   margin-top: 16px;

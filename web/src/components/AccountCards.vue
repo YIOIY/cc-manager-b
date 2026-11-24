@@ -48,7 +48,11 @@
           class="platform-reason"
           :title="
             card.platform.reason_text +
-            (card.platform.reason_fetched_at ? '\n' + formatDateTime(card.platform.reason_fetched_at) : '')
+            (card.platform.status_changed_at
+              ? '\n状态变更 ' + formatDateTime(card.platform.status_changed_at)
+              : card.platform.reason_fetched_at
+                ? '\n' + formatDateTime(card.platform.reason_fetched_at)
+                : '')
           "
         >
           <AlertCircle :size="13" />
@@ -61,6 +65,13 @@
           >
             {{ copiedId === card.id ? '已复制' : '复制' }}
           </button>
+        </div>
+        <div
+          v-else-if="card.platform.status_changed_at && (card.statusBadge === 'danger' || card.statusFailing)"
+          class="platform-status-changed"
+          :title="'本地同步发现状态变为「' + card.statusLabel + '」的时间'"
+        >
+          状态变更 {{ formatDateTime(card.platform.status_changed_at) }}
         </div>
         <div v-if="card.needsReauth" class="platform-reauth-hint">
           {{
@@ -607,6 +618,13 @@ const cards = computed<Card[]>(() =>
 
 .delivery-error-copy {
   margin-top: 6px;
+}
+
+.platform-status-changed {
+  margin-top: 8px;
+  color: var(--muted, #909399);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .platform-reauth-hint {

@@ -71,7 +71,7 @@ func TestWebChannelMigrationAddsTablesAndColumns(t *testing.T) {
 	}
 	defer fresh.DB.Close()
 	for table, required := range map[string][]string{
-		"platform_remote_accounts": {"connection_id", "upstream_id", "upstream_aid", "account_email", "ext_status", "missing_since", "superseded_by", "auto_created", "usage_cost_micro", "five_hour_used", "reason_text", "raw_json", "account_id"},
+		"platform_remote_accounts": {"connection_id", "upstream_id", "upstream_aid", "account_email", "ext_status", "missing_since", "superseded_by", "auto_created", "usage_cost_micro", "five_hour_used", "reason_text", "raw_json", "account_id", "status_changed_at"},
 		"platform_usage_snapshots": {"connection_id", "upstream_id", "account_id", "observed_at", "usage_cost_micro", "five_hour_used", "week_reset_at"},
 		"platform_bill_models":     {"connection_id", "upstream_id", "account_id", "bill_date", "model_name", "bill_model_name", "cost_fen", "generation", "final"},
 	} {

@@ -240,6 +240,7 @@ const linked = {
     reason_text:
       'Your account is on hold and can not use Claude Code. View details or appeal: https://claude.ai/restricted',
     reason_fetched_at: '2026-11-21T10:14:46Z',
+    status_changed_at: '2026-11-21T09:00:00Z',
     missing_since: '',
     web_channel: { configured: true, suspended: false },
     usd_cny_rate: 7.2,

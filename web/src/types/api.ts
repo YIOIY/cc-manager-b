@@ -221,6 +221,8 @@ export interface PlatformInfo {
   reason_kind: string
   reason_text: string
   reason_fetched_at: string
+  /** When the console status last changed (local sync clock); empty before v23. */
+  status_changed_at: string
   observed_at: string
   aid: string
   upstream_id: string

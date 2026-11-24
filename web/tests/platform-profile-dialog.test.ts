@@ -63,6 +63,7 @@ function platform(): PlatformInfo {
     reason_kind: '',
     reason_text: '',
     reason_fetched_at: '',
+    status_changed_at: '',
     observed_at: '2026-11-11T13:20:00Z',
     aid: '20204',
     upstream_id: '428802',
