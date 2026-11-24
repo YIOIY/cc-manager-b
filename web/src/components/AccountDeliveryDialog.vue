@@ -59,7 +59,7 @@
               </el-button>
             </div>
             <p>{{ failingReason }}</p>
-            <small v-if="account.platform?.status_changed_at"
+            <small v-if="showStatusChangedAt && account.platform?.status_changed_at"
               >状态变更 {{ formatDateTime(account.platform.status_changed_at) }}</small
             >
             <small v-else-if="account.platform?.reason_fetched_at">{{
@@ -68,7 +68,7 @@
           </div>
         </div>
         <div
-          v-else-if="platformStatus === 'offline' && account.platform?.status_changed_at"
+          v-else-if="showStatusChangedAt && account.platform?.status_changed_at"
           class="delivery-status-changed"
           data-status-changed
         >
@@ -315,6 +315,11 @@ const platformStatus = computed(() => props.account?.platform?.status || props.a
 const failingReason = computed(() =>
   isFailingStatus(platformStatus.value) ? props.account?.platform?.reason_text || '' : '',
 )
+/** Only ban / offline show the local status-change clock. */
+const showStatusChangedAt = computed(() => {
+  const s = platformStatus.value
+  return s === 'ban' || s === 'banned' || s === 'offline'
+})
 const canEditPlatform = computed(() => (props.account ? canEditPlatformProfile(props.account, { owns, can }) : false))
 const profileRows = computed<DetailRow[]>(() => {
   const a = props.account

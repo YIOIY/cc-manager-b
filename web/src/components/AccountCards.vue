@@ -48,7 +48,7 @@
           class="platform-reason"
           :title="
             card.platform.reason_text +
-            (card.platform.status_changed_at
+            (showStatusChangedAt(card) && card.platform.status_changed_at
               ? '\n状态变更 ' + formatDateTime(card.platform.status_changed_at)
               : card.platform.reason_fetched_at
                 ? '\n' + formatDateTime(card.platform.reason_fetched_at)
@@ -67,7 +67,7 @@
           </button>
         </div>
         <div
-          v-else-if="card.platform.status_changed_at && (card.statusBadge === 'danger' || card.statusFailing)"
+          v-if="showStatusChangedAt(card) && card.platform.status_changed_at"
           class="platform-status-changed"
           :title="'本地同步发现状态变为「' + card.statusLabel + '」的时间'"
         >
@@ -247,6 +247,12 @@ async function copyReason(id: string, text: string) {
   copiedTimer = setTimeout(() => {
     if (copiedId.value === id) copiedId.value = ''
   }, 1600)
+}
+
+/** Only ban / offline show the local status-change clock. */
+function showStatusChangedAt(card: Card) {
+  const status = card.platform?.status || card.platform_status
+  return status === 'ban' || status === 'banned' || status === 'offline'
 }
 
 type ProfileField = { key: string; label: string; value: string; local: string; diff: boolean }
