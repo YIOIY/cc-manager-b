@@ -51,7 +51,19 @@ test('renders nothing without an error and plain errors keep their message', () 
   ).toBe(false)
   const plain = mount(ErrorNotice, { props: { error: new Error('boom') } })
   expect(plain.text()).toContain('boom')
-  expect(plain.find('.error-notice-copy').exists()).toBe(false)
+  expect(plain.get('.error-notice-copy').text()).toContain('复制错误信息')
+})
+
+test('copy works even when the error has no request id', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const wrapper = mount(ErrorNotice, {
+    props: { error: new ApiError(422, 'VALIDATION_FAILED', '有一项资料不符合要求', { category: 'validation' }) },
+  })
+  expect(wrapper.text()).not.toContain('请求编号')
+  await wrapper.get('.error-notice-copy').trigger('click')
+  expect(writeText).toHaveBeenCalledOnce()
+  expect(writeText.mock.calls[0]![0]).toContain('VALIDATION_FAILED')
 })
 
 test('an error can be reported with its code and request id', async () => {

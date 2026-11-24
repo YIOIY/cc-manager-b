@@ -52,7 +52,12 @@
         <div v-if="failingReason" class="delivery-reason" data-reason>
           <AlertCircle :size="16" />
           <div>
-            <strong>{{ runtimeLabel(platformStatus) }}</strong>
+            <div class="delivery-reason-head">
+              <strong>{{ runtimeLabel(platformStatus) }}</strong>
+              <el-button text type="primary" size="small" data-copy-reason @click="copy(failingReason, '错误信息')"
+                >{{ copied === '错误信息' ? '已复制' : '复制错误信息' }}
+              </el-button>
+            </div>
             <p>{{ failingReason }}</p>
             <small v-if="account.platform?.reason_fetched_at">{{
               formatDateTime(account.platform.reason_fetched_at)
@@ -783,6 +788,17 @@ watch(
 .delivery-reason svg {
   flex: none;
   margin-top: 2px;
+}
+.delivery-reason-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.delivery-reason-head .el-button {
+  margin-left: auto;
+  padding: 0 2px;
+  height: auto;
 }
 .delivery-reason p {
   margin: 4px 0 0;

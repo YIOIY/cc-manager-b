@@ -1,8 +1,10 @@
 package app
 
 import (
+	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -10,6 +12,9 @@ import (
 	"cc-manager/internal/errs"
 	"cc-manager/internal/supplier"
 )
+
+// Soft cap so a wide date range cannot dump unbounded rows into memory.
+const channelUsageExportMaxRows = 50000
 
 // platformAccountID prefers the console aid (same rule as /accounts cards),
 // falling back to the delivery upstream_id.
@@ -124,21 +129,30 @@ WHERE r.connection_id=? AND r.missing_since=''`
 	write(w, http.StatusOK, out)
 }
 
-// channelUsage answers GET /platform-usage/channel-usage: daily totals from
-// platform_bill_models (web sync), filtered by upstream delivery ids and
-// optionally by owner (admins only).
-func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
+type channelUsageFilter struct {
+	connectionID string
+	rate         float64
+	dates        supplier.BillDateRange
+	where        string
+	args         []any
+	base         string
+	grouped      string
+}
+
+// parseChannelUsageFilter validates connection/date/owner/upstream filters for
+// both the paged JSON list and the Excel export.
+func (a *App) parseChannelUsageFilter(w http.ResponseWriter, r *http.Request) (*channelUsageFilter, bool) {
 	ctx := r.Context()
 	q := r.URL.Query()
 	connectionID := strings.TrimSpace(q.Get("connection_id"))
 	if connectionID == "" {
 		writeError(w, r, billField("connection_id", errs.FieldRequired, "请选择平台连接"))
-		return
+		return nil, false
 	}
 	var rate float64
 	if err := a.DB.QueryRowContext(ctx, `SELECT COALESCE(usd_cny_rate,?) FROM platform_connections WHERE id=?`, defaultUSDCNYRate, connectionID).Scan(&rate); err != nil {
 		writeError(w, r, errs.New(errs.CodeNotFound).WithMessage("平台连接不存在").WithDetail("resource", "platform_connection"))
-		return
+		return nil, false
 	}
 	if rate <= 0 {
 		rate = defaultUSDCNYRate
@@ -146,14 +160,7 @@ func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
 	dates, err := supplier.ValidateBillDates(q.Get("from"), q.Get("to"), nil, time.Time{}, false)
 	if err != nil {
 		writeError(w, r, billBad("BILL_RANGE_INVALID", "账单起止日期无效"))
-		return
-	}
-	page, size, paged, ok := pageParams(w, r)
-	if !ok {
-		return
-	}
-	if !paged {
-		page, size = 1, 50
+		return nil, false
 	}
 	scope := ownershipFrom(r)
 	where := ` WHERE b.connection_id=? AND b.bill_date>=? AND b.bill_date<=?`
@@ -177,7 +184,7 @@ func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
 			}
 			if len(cleaned) == 0 {
 				writeError(w, r, billField("owner_user_ids", errs.FieldInvalidFormat, "所属人无效"))
-				return
+				return nil, false
 			}
 			where += ` AND a.created_by_user_id IN (` + marks(len(cleaned)) + `)`
 			for _, id := range cleaned {
@@ -197,7 +204,7 @@ func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(cleaned) == 0 {
 			writeError(w, r, billBad("BILL_ACCOUNT_INVALID", "交付编号无效"))
-			return
+			return nil, false
 		}
 		where += ` AND b.upstream_id IN (` + marks(len(cleaned)) + `)`
 		for _, id := range cleaned {
@@ -210,17 +217,41 @@ LEFT JOIN users u ON u.id=a.created_by_user_id
 LEFT JOIN platform_remote_accounts r ON r.connection_id=b.connection_id AND r.upstream_id=b.upstream_id` + where
 	grouped := `SELECT b.bill_date,b.upstream_id,COALESCE(r.upstream_aid,''),COALESCE(a.account,''),COALESCE(a.created_by_user_id,''),COALESCE(u.nickname,''),COALESCE(u.username,''),SUM(b.cost_fen),MIN(b.final)` + base + `
 GROUP BY b.bill_date,b.upstream_id,COALESCE(r.upstream_aid,''),COALESCE(a.account,''),COALESCE(a.created_by_user_id,''),COALESCE(u.nickname,''),COALESCE(u.username,'')`
-	var total int
-	if err = a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+grouped+`)`, args...).Scan(&total); err != nil {
-		writeError(w, r, storageError(err, "渠道用量读取失败"))
-		return
-	}
-	rows, err := a.DB.QueryContext(ctx, grouped+` ORDER BY b.bill_date DESC,CAST(b.upstream_id AS INTEGER) DESC,b.upstream_id DESC LIMIT ? OFFSET ?`, append(append([]any{}, args...), size, (page-1)*size)...)
+	return &channelUsageFilter{
+		connectionID: connectionID,
+		rate:         rate,
+		dates:        dates,
+		where:        where,
+		args:         args,
+		base:         base,
+		grouped:      grouped,
+	}, true
+}
+
+type channelUsageRow struct {
+	billDate          string
+	upstreamID        string
+	platformAccountID string
+	account           string
+	ownerUserID       string
+	ownerNickname     string
+	ownerUsername     string
+	costFen           int64
+	costUsdCents      int64
+	costUsd           string
+	final             bool
+}
+
+func (a *App) scanChannelUsageRows(w http.ResponseWriter, r *http.Request, f *channelUsageFilter, limit, offset int) ([]channelUsageRow, bool) {
+	ctx := r.Context()
+	query := f.grouped + ` ORDER BY b.bill_date DESC,CAST(b.upstream_id AS INTEGER) DESC,b.upstream_id DESC`
+	args := append(append([]any{}, f.args...), limit, offset)
+	rows, err := a.DB.QueryContext(ctx, query+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		writeError(w, r, storageError(err, "渠道用量读取失败"))
-		return
+		return nil, false
 	}
-	list := []any{}
+	list := []channelUsageRow{}
 	for rows.Next() {
 		var day, upstream, aid, account, ownerID, nick, username string
 		var fen int64
@@ -228,46 +259,159 @@ GROUP BY b.bill_date,b.upstream_id,COALESCE(r.upstream_aid,''),COALESCE(a.accoun
 		if err = rows.Scan(&day, &upstream, &aid, &account, &ownerID, &nick, &username, &fen, &final); err != nil {
 			rows.Close()
 			writeError(w, r, storageError(err, "渠道用量读取失败"))
-			return
+			return nil, false
 		}
-		cents := fenToUsdCents(fen, rate)
-		list = append(list, map[string]any{
-			"bill_date":           day,
-			"upstream_id":         upstream,
-			"platform_account_id": platformAccountID(aid, upstream),
-			"account":             account,
-			"owner_user_id":       ownerID,
-			"owner_nickname":      nick,
-			"owner_username":      username,
-			"cost_fen":            fen,
-			"cost_usd_cents":      cents,
-			"cost_usd":            usdText(cents),
-			"final":               final == 1,
+		cents := fenToUsdCents(fen, f.rate)
+		list = append(list, channelUsageRow{
+			billDate:          day,
+			upstreamID:        upstream,
+			platformAccountID: platformAccountID(aid, upstream),
+			account:           account,
+			ownerUserID:       ownerID,
+			ownerNickname:     nick,
+			ownerUsername:     username,
+			costFen:           fen,
+			costUsdCents:      cents,
+			costUsd:           usdText(cents),
+			final:             final == 1,
 		})
 	}
 	if err = rows.Err(); err != nil {
 		rows.Close()
 		writeError(w, r, storageError(err, "渠道用量读取失败"))
-		return
+		return nil, false
 	}
 	rows.Close()
-	var totalFen int64
-	if err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(b.cost_fen),0)`+base, args...).Scan(&totalFen); err != nil {
+	return list, true
+}
+
+func channelUsageOwnerLabel(nick, username string) string {
+	if nick != "" {
+		return nick
+	}
+	if username != "" {
+		return username
+	}
+	return "—"
+}
+
+func channelUsageAccountLabel(account string) string {
+	if account != "" {
+		return account
+	}
+	return "（未关联本地账号）"
+}
+
+// channelUsage answers GET /platform-usage/channel-usage: daily totals from
+// platform_bill_models (web sync), filtered by upstream delivery ids and
+// optionally by owner (admins only).
+func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	f, ok := a.parseChannelUsageFilter(w, r)
+	if !ok {
+		return
+	}
+	page, size, paged, ok := pageParams(w, r)
+	if !ok {
+		return
+	}
+	if !paged {
+		page, size = 1, 50
+	}
+	var total int
+	if err := a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+f.grouped+`)`, f.args...).Scan(&total); err != nil {
 		writeError(w, r, storageError(err, "渠道用量读取失败"))
 		return
 	}
-	totalCents := fenToUsdCents(totalFen, rate)
+	rows, ok := a.scanChannelUsageRows(w, r, f, size, (page-1)*size)
+	if !ok {
+		return
+	}
+	list := make([]any, 0, len(rows))
+	for _, row := range rows {
+		list = append(list, map[string]any{
+			"bill_date":           row.billDate,
+			"upstream_id":         row.upstreamID,
+			"platform_account_id": row.platformAccountID,
+			"account":             row.account,
+			"owner_user_id":       row.ownerUserID,
+			"owner_nickname":      row.ownerNickname,
+			"owner_username":      row.ownerUsername,
+			"cost_fen":            row.costFen,
+			"cost_usd_cents":      row.costUsdCents,
+			"cost_usd":            row.costUsd,
+			"final":               row.final,
+		})
+	}
+	var totalFen int64
+	if err := a.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(b.cost_fen),0)`+f.base, f.args...).Scan(&totalFen); err != nil {
+		writeError(w, r, storageError(err, "渠道用量读取失败"))
+		return
+	}
+	totalCents := fenToUsdCents(totalFen, f.rate)
 	write(w, http.StatusOK, map[string]any{
 		"list":            list,
 		"total_cost_fen":  totalFen,
 		"total_cost_usd":  usdText(totalCents),
 		"total_usd_cents": totalCents,
-		"usd_cny_rate":    rate,
+		"usd_cny_rate":    f.rate,
 		"page":            page,
 		"page_size":       size,
 		"total":           total,
-		"from":            dates.StartDate,
-		"to":              dates.EndDate,
-		"connection_id":   connectionID,
+		"from":            f.dates.StartDate,
+		"to":              f.dates.EndDate,
+		"connection_id":   f.connectionID,
 	})
+}
+
+// channelUsageExport answers GET /platform-usage/channel-usage/export:
+// same filters as the list, all matching rows as an .xlsx attachment.
+func (a *App) channelUsageExport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	f, ok := a.parseChannelUsageFilter(w, r)
+	if !ok {
+		return
+	}
+	var total int
+	if err := a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+f.grouped+`)`, f.args...).Scan(&total); err != nil {
+		writeError(w, r, storageError(err, "渠道用量读取失败"))
+		return
+	}
+	if total > channelUsageExportMaxRows {
+		writeError(w, r, errs.New(errs.CodeQueryInvalid).
+			WithMessage("导出行数过多，请缩小日期范围或筛选条件").
+			WithHint(fmt.Sprintf("单次最多导出 %d 行，当前 %d 行", channelUsageExportMaxRows, total)))
+		return
+	}
+	rows, ok := a.scanChannelUsageRows(w, r, f, channelUsageExportMaxRows, 0)
+	if !ok {
+		return
+	}
+	var totalFen int64
+	if err := a.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(b.cost_fen),0)`+f.base, f.args...).Scan(&totalFen); err != nil {
+		writeError(w, r, storageError(err, "渠道用量读取失败"))
+		return
+	}
+	sheet := make([][]string, 0, len(rows)+2)
+	sheet = append(sheet, []string{"日期", "账号 ID", "账号", "所属人", "消耗额度（美元）"})
+	for _, row := range rows {
+		sheet = append(sheet, []string{
+			row.billDate,
+			row.platformAccountID,
+			channelUsageAccountLabel(row.account),
+			channelUsageOwnerLabel(row.ownerNickname, row.ownerUsername),
+			row.costUsd,
+		})
+	}
+	sheet = append(sheet, []string{"合计", "", "", "", usdText(fenToUsdCents(totalFen, f.rate))})
+
+	filename := fmt.Sprintf("channel-usage-%s-%s.xlsx", f.dates.StartDate, f.dates.EndDate)
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"; filename*=UTF-8''`+url.PathEscape(filename))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	if err := writeXLSX(w, "渠道用量", sheet); err != nil {
+		// Headers already sent; best effort log via writeError path is unavailable.
+		return
+	}
 }

@@ -21,11 +21,7 @@
       </div>
       <div class="account-card-badges">
         <span class="mini-badge yellow">{{ planLabel(card.plan) || '未配置套餐' }}</span>
-        <span
-          v-if="card.deliveryState === 'linked'"
-          class="mini-badge"
-          :class="card.statusFailing ? 'attention' : 'teal'"
-        >
+        <span v-if="card.deliveryState === 'linked'" class="mini-badge" :class="card.statusBadge">
           {{ card.statusLabel }}<Lock v-if="card.platform?.locked" :size="10" class="locked-icon" />
         </span>
         <span v-if="ownerLabel(card)" class="mini-badge creator" :title="'所属用户 ' + ownerLabel(card)"
@@ -57,6 +53,14 @@
         >
           <AlertCircle :size="13" />
           <span>{{ card.platform.reason_text }}</span>
+          <button
+            type="button"
+            class="platform-reason-copy"
+            :aria-label="'复制错误信息'"
+            @click.stop="copyReason(card.id, card.platform.reason_text)"
+          >
+            {{ copiedId === card.id ? '已复制' : '复制' }}
+          </button>
         </div>
         <div v-if="card.needsReauth" class="platform-reauth-hint">
           {{
@@ -98,6 +102,14 @@
         />
         <strong>{{ card.delivery.label }}</strong>
         <p :title="card.deliveryDetail">{{ card.deliveryDetail }}</p>
+        <button
+          v-if="(card.deliveryState === 'failed' || card.deliveryState === 'unknown') && card.deliveryDetail"
+          type="button"
+          class="delivery-error-copy"
+          @click.stop="copyReason(card.id, card.deliveryDetail)"
+        >
+          {{ copiedId === card.id ? '已复制' : '复制错误信息' }}
+        </button>
         <div v-if="card.deliveryState === 'pending' || card.deliveryState === 'failed'" class="account-material-status">
           <span>{{ card.password_configured ? '密码已配置' : '密码待补充' }}</span
           ><span>{{ card.credentials_configured ? '凭证已配置' : '凭证待补充' }}</span>
@@ -159,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   RefreshCw,
   AlertCircle,
@@ -186,6 +198,7 @@ import { useSession } from '../composables/useSession'
 import { canEditPlatformProfile } from '../model/account-detail'
 import PlatformUsageBlock from './PlatformUsageBlock.vue'
 import { formatTags, locationLabel, paymentLabel, shortPlatformAlias } from '../model/platform-card'
+import { copyText } from '../utils/clipboard'
 
 function billUsd(fen: number | undefined, rate: number | undefined) {
   if (!hasValue(fen)) return '未同步'
@@ -214,6 +227,17 @@ function ownerLabel(row: Account): string {
   return (row.created_by_nickname || row.created_by_username || '').trim()
 }
 
+const copiedId = ref('')
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function copyReason(id: string, text: string) {
+  if (!text || !(await copyText(text))) return
+  copiedId.value = id
+  clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => {
+    if (copiedId.value === id) copiedId.value = ''
+  }, 1600)
+}
+
 type ProfileField = { key: string; label: string; value: string; local: string; diff: boolean }
 type Card = Account & {
   deliveryState: DeliveryState
@@ -221,6 +245,7 @@ type Card = Account & {
   deliveryDetail: string
   statusLabel: string
   statusTone: string
+  statusBadge: string
   statusFailing: boolean
   needsReauth: boolean
   connectionNames: string
@@ -315,6 +340,7 @@ const cards = computed<Card[]>(() =>
       .join('、')
     const platformStatus = row.platform?.status || row.platform_status
     const failing = failingStatuses.has(platformStatus)
+    const offline = platformStatus === 'offline'
     const detail = deliveryDescription(state, row.submission_job)
     return {
       ...row,
@@ -324,12 +350,14 @@ const cards = computed<Card[]>(() =>
       statusLabel: runtimeLabel(platformStatus),
       statusTone:
         state === 'linked'
-          ? failing
+          ? failing || offline
             ? 'attention'
             : 'online'
           : state === 'failed' || state === 'unknown'
             ? 'attention'
             : 'unknown',
+      // Offline is intentional downtime: stronger red than the soft attention tone.
+      statusBadge: offline ? 'danger' : failing ? 'attention' : 'teal',
       statusFailing: failing,
       needsReauth: state === 'linked' && needsReauth(platformStatus),
       connectionNames: names,
@@ -461,6 +489,12 @@ const cards = computed<Card[]>(() =>
   color: #ff8a80;
 }
 
+.mini-badge.danger {
+  background: #5c0f0f;
+  color: #ff5252;
+  box-shadow: inset 0 0 0 1px rgba(255, 82, 82, 0.45);
+}
+
 .mini-badge.provider {
   background: #0077fa;
   color: white;
@@ -546,9 +580,33 @@ const cards = computed<Card[]>(() =>
 }
 
 .platform-reason span {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.platform-reason-copy,
+.delivery-error-copy {
+  flex: none;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent, #409eff);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.platform-reason-copy:hover,
+.delivery-error-copy:hover {
+  text-decoration: underline;
+}
+
+.delivery-error-copy {
+  margin-top: 6px;
 }
 
 .platform-reauth-hint {
@@ -778,10 +836,29 @@ const cards = computed<Card[]>(() =>
   color: #fc8800;
 }
 
+.platform-monitor .mini-badge.attention {
+  background: rgba(245, 63, 63, 0.1);
+  border-color: transparent;
+  color: #d4380d;
+}
+
+.platform-monitor .mini-badge.danger {
+  background: rgba(220, 38, 38, 0.14);
+  border-color: rgba(220, 38, 38, 0.35);
+  color: #c62828;
+  font-weight: 700;
+  box-shadow: none;
+}
+
 .platform-monitor .mini-badge.creator {
   background: var(--surface-soft);
   color: var(--ink-mid);
   border-color: var(--line);
+}
+
+.platform-monitor .platform-reason-copy,
+.platform-monitor .delivery-error-copy {
+  color: var(--accent-dark, #337ecc);
 }
 
 .platform-monitor .platform-empty {

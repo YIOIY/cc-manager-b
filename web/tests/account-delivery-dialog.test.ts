@@ -342,6 +342,7 @@ test('a linked account detail shows the full reason, the whole profile and a usa
   await flushPromises()
   // The reason is shown in full, not cut to a card line.
   expect(w.get('[data-reason]').text()).toContain('https://claude.ai/restricted')
+  expect(w.get('[data-copy-reason]').text()).toContain('复制错误信息')
   expect(w.get('[data-profile]').text()).toContain('套餐CC Max 20x')
   const profile = w.get('[data-profile]').text()
   for (const expected of [

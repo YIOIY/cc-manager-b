@@ -53,6 +53,11 @@ func (a *App) billRoutes(w http.ResponseWriter, r *http.Request, path string) bo
 			a.channelUsage(w, r)
 		}
 		return true
+	case "/channel-usage/export":
+		if requireBillMethod(w, r, "GET") {
+			a.channelUsageExport(w, r)
+		}
+		return true
 	case "/channel-usage/accounts":
 		if requireBillMethod(w, r, "GET") {
 			a.channelUsageAccounts(w, r)

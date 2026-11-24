@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import AccountCards from '../src/components/AccountCards.vue'
 import { session } from '../src/api'
@@ -7,6 +7,7 @@ import type { Account, PlatformInfo } from '../src/types/api'
 const wrappers: VueWrapper[] = []
 afterEach(() => {
   wrappers.splice(0).forEach((w) => w.unmount())
+  vi.unstubAllGlobals()
 })
 
 const stubs = {
@@ -25,7 +26,7 @@ function platform(overrides: Partial<PlatformInfo> = {}): PlatformInfo {
     observed_at: '2026-11-11T13:20:00Z',
     aid: '20204',
     upstream_id: '428802',
-    alias: 'claude-住享科智-20261111002',
+    alias: 'claude-益充汇-20261111002',
     provider: 'claude',
     model: 'claude/cc-max-20x',
     models_usable: true,
@@ -79,7 +80,7 @@ function account(info: PlatformInfo | null): Account {
     created_at: '2026-11-11T00:00:00Z',
     updated_at: '2026-11-11T00:00:00Z',
     platform_account_id: '20204',
-    platform_alias: 'claude-住享科智-20261111002',
+    platform_alias: 'claude-益充汇-20261111002',
     platform_status: info?.status || '',
     platform_observed_at: '2026-11-11T13:20:00Z',
     platform_links: [{ connection_id: 'conn', connection_name: 'tx', upstream_id: '428802' } as never],
@@ -111,7 +112,7 @@ test('a linked account mirrors the platform card and its usage block', () => {
   ]) {
     expect(text).toContain(expected)
   }
-  expect(text).not.toContain('住享科智')
+  expect(text).not.toContain('益充汇')
   expect(text).not.toContain('已关联')
   expect(text).not.toContain('汇率')
   expect(text).not.toContain('¥35.21')
@@ -132,8 +133,10 @@ test('without usage the block says the platform returned none', () => {
   expect(text).not.toContain('5h')
 })
 
-test('a banned account shows the reason', () => {
-  const text = render(
+test('a banned account shows the reason and a copy control', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const w = render(
     account(
       platform({
         status: 'ban',
@@ -143,9 +146,29 @@ test('a banned account shows the reason', () => {
         usage: null,
       }),
     ),
-  ).text()
+  )
+  const text = w.text()
   expect(text).toContain('已封禁')
   expect(text).toContain('账号被平台封禁：违规使用')
+  await w.get('.platform-reason-copy').trigger('click')
+  expect(writeText).toHaveBeenCalledWith('账号被平台封禁：违规使用')
+  expect(w.get('.platform-reason-copy').text()).toContain('已复制')
+})
+
+test('an offline account uses the stronger danger badge', () => {
+  const w = render(
+    account(
+      platform({
+        status: 'offline',
+        status_raw: 'offline',
+        reason_text: '',
+        usage: null,
+      }),
+    ),
+  )
+  expect(w.text()).toContain('已下线')
+  expect(w.get('.mini-badge.danger').text()).toContain('已下线')
+  expect(w.find('.mini-badge.teal').exists()).toBe(false)
 })
 
 test('an account the platform never listed keeps the old layout', () => {

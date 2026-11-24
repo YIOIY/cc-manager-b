@@ -128,6 +128,10 @@ const insights: DashboardInsights = {
       account_id: 'a2',
       account: 'ca@example.test',
       alias: 'claude-ca',
+      platform_account_id: '20204',
+      created_by_user_id: 'u1',
+      created_by_nickname: '小明',
+      created_by_username: 'ming',
       status: 'using',
       five_hour_percent: 88,
       five_hour_reset_at: '2026-11-13T06:50:00Z',
@@ -139,6 +143,10 @@ const insights: DashboardInsights = {
       account_id: 'a1',
       account: 'cj@example.test',
       alias: 'claude-cj',
+      platform_account_id: '30566',
+      created_by_user_id: 'u2',
+      created_by_nickname: '',
+      created_by_username: 'ops',
       status: 'using',
       five_hour_percent: 12,
       five_hour_reset_at: '',
@@ -150,6 +158,10 @@ const insights: DashboardInsights = {
       account_id: 'a3',
       account: 'gr@example.test',
       alias: 'claude-gr',
+      platform_account_id: '11001',
+      created_by_user_id: '',
+      created_by_nickname: '',
+      created_by_username: '',
       status: 'ban',
       five_hour_percent: null,
       five_hour_reset_at: '',
@@ -217,7 +229,7 @@ test('the attention list renders items and navigates to the account', async () =
   const [nearLimit, banned] = attention.items
   const w = await render(dashboard(), {
     ...attention,
-    items: [{ ...nearLimit!, alias: 'claude-住享科智-20261112003' }, banned!],
+    items: [{ ...nearLimit!, alias: 'claude-益充汇-20261112003' }, banned!],
   })
   const text = w.text()
   expect(text).toContain('5 小时窗口 88%')
@@ -225,7 +237,7 @@ test('the attention list renders items and navigates to the account', async () =
   expect(text).toContain('已封禁')
   expect(text).toContain('账号被暂停（封号）')
   expect(text).toContain('claude-20261112003')
-  expect(text).not.toContain('住享科智')
+  expect(text).not.toContain('益充汇')
   const row = w.find('[data-attention="428242"]')
   expect(row.exists()).toBe(true)
   await row.trigger('click')
@@ -294,6 +306,10 @@ test('idle accounts are listed with days left and open the account', async () =>
       account_id: 'i1',
       account: 'idle@example.test',
       alias: 'claude-idle',
+      platform_account_id: '90001',
+      created_by_user_id: 'u1',
+      created_by_nickname: '小明',
+      created_by_username: 'ming',
       week_percent: 2,
       cost_fen: 100,
       plan_end: '2026-12-18',
@@ -303,6 +319,10 @@ test('idle accounts are listed with days left and open the account', async () =>
       account_id: 'i2',
       account: 'unknown@example.test',
       alias: '',
+      platform_account_id: '',
+      created_by_user_id: '',
+      created_by_nickname: '',
+      created_by_username: '',
       week_percent: 0,
       cost_fen: null,
       plan_end: '',
@@ -314,6 +334,8 @@ test('idle accounts are listed with days left and open the account', async () =>
   expect(rows.map((r) => r.attributes('data-idle'))).toEqual(['i1', 'i2'])
   expect(rows[0]!.text()).toContain('7d 2%')
   expect(rows[0]!.text()).toContain('剩 27 天')
+  expect(rows[0]!.text()).toContain('ID 90001')
+  expect(rows[0]!.text()).toContain('所属 小明')
   expect(rows[1]!.text()).toContain('到期未知')
   await rows[0]!.trigger('click')
   expect(push).toHaveBeenCalledWith({ name: 'accounts', query: { q: 'idle@example.test' } })
@@ -329,9 +351,15 @@ test('the quota board lists every account with both windows and opens the accoun
   const rows = w.findAll('[data-quota]')
   expect(rows.map((r) => r.attributes('data-quota'))).toEqual(['a2', 'a1', 'a3'])
   expect(rows[0]!.text()).toContain('ca@example.test')
+  expect(rows[0]!.text()).toContain('ID 20204')
+  expect(rows[0]!.text()).toContain('所属 小明')
   expect(rows[0]!.text()).toContain('88%')
   expect(rows[0]!.text()).toContain('35%')
+  expect(rows[1]!.text()).toContain('ID 30566')
+  expect(rows[1]!.text()).toContain('所属 ops')
   expect(rows[2]!.text()).toContain('已封禁')
+  expect(rows[2]!.text()).toContain('ID 11001')
+  expect(rows[2]!.text()).not.toContain('所属')
   await rows[1]!.trigger('click')
   expect(push).toHaveBeenCalledWith({ name: 'accounts', query: { q: 'cj@example.test' } })
 })

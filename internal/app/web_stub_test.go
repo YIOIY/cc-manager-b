@@ -114,7 +114,7 @@ func (s *webConsoleStub) handle(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, `{"detail":"用户名或密码错误"}`)
 			return
 		}
-		fmt.Fprintf(w, `{"token":"tok%d","name":"住享科智","expires_in":18000}`, s.tokenSeq.Add(1))
+		fmt.Fprintf(w, `{"token":"tok%d","name":"益充汇","expires_in":18000}`, s.tokenSeq.Add(1))
 		return
 	}
 	if r.Header.Get("Authorization") != fmt.Sprintf("Bearer tok%d", s.tokenSeq.Load()) || s.tokenSeq.Load() == 0 {
@@ -180,7 +180,7 @@ func (s *webConsoleStub) handle(w http.ResponseWriter, r *http.Request) {
 			counts[fmt.Sprint(a["ext_status"])]++
 		}
 		encodedCounts, _ := json.Marshal(counts)
-		fmt.Fprintf(w, `{"counts":%s,"list":%s,"page":%d,"page_size":100,"supplier_name":"住享科智","total":%d}`, encodedCounts, list, page, total)
+		fmt.Fprintf(w, `{"counts":%s,"list":%s,"page":%d,"page_size":100,"supplier_name":"益充汇","total":%d}`, encodedCounts, list, page, total)
 	case strings.HasPrefix(path, "/supplier/accounts/"):
 		parts := strings.Split(strings.TrimPrefix(path, "/supplier/accounts/"), "/")
 		if len(parts) != 2 {
@@ -228,7 +228,7 @@ func remoteAccount(id int, email, status string, created string, usage map[strin
 		"id": id, "a1_id": id + 10000, "a1_status": status, "a2_id": 0, "a2_status": "", "account_alias": fmt.Sprintf("claude-fixture-%d", id), "account_md5": "md5", "account_type": 2,
 		"api_key": "", "api_secret": "", "auth_config": string(authConfig), "created_at": created, "ext_status": status, "extra": extra, "has_cpa_auth_json": true,
 		"is_locked": 0, "model": "claude/cc-max-20x", "models": []map[string]any{{"name": "claude/cc-max-20x", "usable": true}}, "project_id": email, "provider": "claude",
-		"proxy_type": "pool", "region": "", "remark": "", "status": 1, "supplier_id": 228, "supplier_name": "住享科智", "updated_at": created, "usage_limit_period": "", "usage_limit_type": "", "usage_limit_value": 0,
+		"proxy_type": "pool", "region": "", "remark": "", "status": 1, "supplier_id": 228, "supplier_name": "益充汇", "updated_at": created, "usage_limit_period": "", "usage_limit_type": "", "usage_limit_value": 0,
 	}
 }
 
