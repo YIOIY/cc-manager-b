@@ -166,6 +166,7 @@ function windows(row: QuotaRow) {
 .quota-account {
   display: flex;
   flex-direction: column;
+  gap: 4px;
   min-width: 0;
 }
 .quota-account strong,
@@ -181,6 +182,7 @@ function windows(row: QuotaRow) {
 .quota-account small {
   color: var(--muted-soft);
   font-size: 11px;
+  line-height: 1.4;
 }
 .quota-account small.meta {
   color: var(--muted);
