@@ -131,7 +131,7 @@ func (a *App) attachPlatformBlocks(ctx context.Context, out []any) error {
 		var accountID, metricsAt string
 		var webConfigured, webSuspended int
 		var usdRate float64
-		if err = rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt, &accountID, &metricsAt, &webConfigured, &webSuspended, &usdRate); err != nil {
+		if err = rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.StatusChangedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt, &accountID, &metricsAt, &webConfigured, &webSuspended, &usdRate); err != nil {
 			return err
 		}
 		m := byID[accountID]
@@ -209,7 +209,7 @@ func (a *App) remoteAccounts(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var x remoteRow
 		var local [6]string
-		if err = rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt, &local[0], &local[1], &local[2], &local[3], &local[4], &local[5]); err != nil {
+		if err = rows.Scan(&x.ConnectionID, &x.UpstreamID, &x.AID, &x.Email, &x.Alias, &x.Provider, &x.Model, &x.ModelsJSON, &x.ExtStatus, &x.A1Status, &x.A2Status, &x.ProxyType, &x.Remark, &x.Locked, &x.AutoCreated, &x.RemoteCreatedAt, &x.RemoteUpdatedAt, &x.FirstSeenAt, &x.LastSeenAt, &x.MissingSince, &x.SupersededBy, &x.AccountID, &x.ReasonKind, &x.ReasonText, &x.ReasonFetchedAt, &x.StatusChangedAt, &x.Plan, &x.PlanStart, &x.PlanEnd, &x.RegisterTime, &x.RegisterLocation, &x.Balance, &x.PaymentMethod, &x.RegisterDevice, &x.RechargeTime, &x.WarrantyPeriod, &x.TagsJSON, &x.CostMicro, &x.InputTokens, &x.OutputTokens, &x.FiveHour, &x.Week, &x.FiveHourResetAt, &x.WeekResetAt, &x.UsageObservedAt, &local[0], &local[1], &local[2], &local[3], &local[4], &local[5]); err != nil {
 			writeError(w, r, storageError(err, "平台账号读取失败"))
 			return
 		}
