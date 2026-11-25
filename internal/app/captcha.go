@@ -126,7 +126,7 @@ func (a *App) authCaptcha(w http.ResponseWriter, r *http.Request) {
 	answer := randomCaptchaAnswer()
 	img, err := renderCaptchaPNG(answer)
 	if err != nil {
-		serverError(w, r, "CAPTCHA_RENDER_FAILED", "无法生成验证码", err)
+		serverError(w, r, "INTERNAL_ERROR", "无法生成验证码", err)
 		return
 	}
 	a.captchas.put(id, answer, time.Now())
