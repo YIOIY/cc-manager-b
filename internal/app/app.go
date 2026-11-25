@@ -463,7 +463,7 @@ func accountListFilter(w http.ResponseWriter, q url.Values) (listFilter, bool) {
 		writeError(w, nil, queryInvalid("abnormal", "异常账号筛选值无效"))
 		return f, false
 	}
-	f.equals("t.platform_status", q.Get("platform_status"))
+	applyPlatformStatusFilter(&f, q.Get("platform_status"))
 	if v := strings.TrimSpace(q.Get("five_hour_min")); v != "" {
 		n, err := strconv.ParseFloat(v, 64)
 		if err != nil || n < 0 || n > 100 {
@@ -477,6 +477,74 @@ func accountListFilter(w http.ResponseWriter, q url.Values) (listFilter, bool) {
 	f.dateRange("t.created_at", q.Get("created_from"), q.Get("created_to"))
 	f.keyword(q.Get("q"), "t.account", "t.id", "t.plan", "t.register_location", "t.proxy_id", "t.proxy_host", "t.platform_account_id", "t.platform_alias", "t.platform_status")
 	return f, true
+}
+
+// applyPlatformStatusFilter accepts one status or a comma-separated list
+// (e.g. ban,banned for the 已封禁 tab).
+func applyPlatformStatusFilter(f *listFilter, raw string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	var values []string
+	seen := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || seen[part] {
+			continue
+		}
+		seen[part] = true
+		values = append(values, part)
+	}
+	if len(values) == 0 {
+		return
+	}
+	if len(values) == 1 {
+		f.equals("t.platform_status", values[0])
+		return
+	}
+	args := make([]any, len(values))
+	for i, v := range values {
+		args[i] = v
+	}
+	f.where = append(f.where, "t.platform_status IN ("+marks(len(values))+")")
+	f.args = append(f.args, args...)
+}
+
+// accountListFilterSansStatus is the accounts list filter without abnormal /
+// platform_status so status-tab counts stay independent of the active tab.
+func accountListFilterSansStatus(w http.ResponseWriter, q url.Values) (listFilter, bool) {
+	clone := url.Values{}
+	for key, vals := range q {
+		if key == "abnormal" || key == "platform_status" {
+			continue
+		}
+		clone[key] = append([]string{}, vals...)
+	}
+	return accountListFilter(w, clone)
+}
+
+// accountStatusTabCounts returns inventory tab totals for the current (non-status) filters.
+func (a *App) accountStatusTabCounts(ctx context.Context, f listFilter) (map[string]int, error) {
+	pred := accountAbnormalPredicate()
+	sql := `SELECT
+		COALESCE(SUM(CASE WHEN NOT (` + pred + `) THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN NOT (` + pred + `) AND lower(t.platform_status)='using' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN NOT (` + pred + `) AND lower(t.platform_status)='offline' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN lower(t.platform_status) IN ('ban','banned') THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN (` + pred + `) THEN 1 ELSE 0 END),0)
+	FROM (` + accountListBase + `) t` + f.sql()
+	var all, using, offline, ban, abnormal int
+	if err := a.DB.QueryRowContext(ctx, sql, f.args...).Scan(&all, &using, &offline, &ban, &abnormal); err != nil {
+		return nil, err
+	}
+	return map[string]int{
+		"all":      all,
+		"using":    using,
+		"offline":  offline,
+		"ban":      ban,
+		"abnormal": abnormal,
+	}, nil
 }
 
 // applyAccountOwnerFilter limits the list to selected owners. Admins only;
@@ -616,7 +684,19 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if paged {
-		write(w, http.StatusOK, pagedEnvelope(out, page, size, total))
+		payload := pagedEnvelope(out, page, size, total)
+		baseF, ok := accountListFilterSansStatus(w, r.URL.Query())
+		if ok {
+			scope.filterCreatedBy(&baseF, "t.created_by_user_id")
+			applyAccountOwnerFilter(&baseF, r.URL.Query(), scope.Admin)
+			if counts, err := a.accountStatusTabCounts(ctx, baseF); err != nil {
+				writeError(w, r, storageError(err, "账号统计失败"))
+				return
+			} else {
+				payload["tab_counts"] = counts
+			}
+		}
+		write(w, http.StatusOK, payload)
 		return
 	}
 	write(w, http.StatusOK, out)

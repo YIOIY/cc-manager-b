@@ -15,7 +15,21 @@
   <OAuthSettingsPanel v-if="listKey === 'proxies' && can('oauth.settings.view')" @changed="page.load" />
   <div class="list-workspace panel" :class="{ 'platform-monitor': listKey === 'accounts' }">
     <div class="list-heading">
-      <div>
+      <div v-if="page.statusTabs.value" class="status-tabs" role="tablist" aria-label="账号状态">
+        <button
+          v-for="tab in accountStatusTabs"
+          :key="tab.key"
+          type="button"
+          role="tab"
+          class="status-tab"
+          :class="{ active: page.statusTab.value === tab.key, attention: tab.key === 'abnormal' }"
+          :aria-selected="page.statusTab.value === tab.key"
+          @click="page.setStatusTab(tab.key)"
+        >
+          {{ tab.label }}<span class="tab-count">{{ page.tabCounts.value[tab.key] }}</span>
+        </button>
+      </div>
+      <div v-else>
         <span class="heading-icon small"><component :is="headingIcon" :size="18" /></span>
         <h2>{{ config.name }}</h2>
         <span class="count-badge">{{ page.total.value }}</span>
@@ -32,13 +46,10 @@
       :active-fields="page.activeFields.value"
       :active-filter-count="page.activeFilterCount.value"
       :has-conditions="page.hasConditions.value"
-      :abnormal-only="page.abnormalOnly.value"
       @apply="applySearch"
       @reset="page.resetFilters"
       @remove-query="page.removeQuery"
       @remove-condition="page.removeCondition"
-      @toggle-abnormal="page.toggleAbnormal"
-      @clear-abnormal="page.clearAbnormal"
     />
     <el-alert
       v-if="actionMessage"
@@ -299,7 +310,7 @@ import OAuthSettingsPanel from '../components/OAuthSettingsPanel.vue'
 import { api, errorMessage } from '../api'
 import { listConfigs, states, type Choice, type Column } from '../list-model'
 import { deliveryState, outcomeText } from '../account-workflow'
-import { useListPage } from '../composables/useListPage'
+import { useListPage, type AccountStatusTab } from '../composables/useListPage'
 import { useSession } from '../composables/useSession'
 import { formatDateTime, formatMoneyFen, formatPercent, hasValue, planLabel } from '../utils/format'
 import type {
@@ -320,6 +331,13 @@ const router = useRouter()
 const { can, canOnboard, onboardAllowed, owns, user, check } = useSession()
 const isAdmin = computed(() => !!user.value?.is_admin)
 const listKey = computed(() => route.meta.list || 'accounts')
+const accountStatusTabs: { key: AccountStatusTab; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'using', label: '使用中' },
+  { key: 'offline', label: '已下线' },
+  { key: 'ban', label: '已封禁' },
+  { key: 'abnormal', label: '异常' },
+]
 const canCreate = computed(
   () =>
     (listKey.value === 'accounts' && canOnboard()) ||
@@ -758,6 +776,69 @@ onMounted(async () => {
   font-weight: 500;
 }
 
+.status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.status-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-strong);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.status-tab:hover {
+  background: #f3f5f7;
+  color: var(--ink-soft);
+}
+
+.status-tab.active {
+  background: var(--tint-50);
+  color: var(--accent-dark);
+}
+
+.status-tab.attention.active {
+  background: #fff4e8;
+  color: #a85a12;
+}
+
+.tab-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: #e8eef2;
+  color: #5f717b;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-tab.active .tab-count {
+  background: #d8eee8;
+  color: var(--accent-dark);
+}
+
+.status-tab.attention.active .tab-count {
+  background: #ffe2c4;
+  color: #a85a12;
+}
+
 .action-feedback {
   margin: 10px 15px;
 }
@@ -907,6 +988,17 @@ onMounted(async () => {
 .platform-monitor .list-footer {
   border-color: var(--line);
   color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .list-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .status-tabs {
+    width: 100%;
+  }
 }
 
 @media (max-width: 620px) {

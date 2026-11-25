@@ -24,8 +24,8 @@ export interface ListConfig {
   endpoint: string
   /** paginate and filter on the server; filter keys map 1:1 to query params */
   serverPaged?: boolean
-  /** accounts list: toggle beside search to show only abnormal rows (default hides them) */
-  abnormalToggle?: boolean
+  /** accounts list: status tabs (全部/使用中/已下线/已封禁/异常); 全部 excludes abnormal */
+  statusTabs?: boolean
   description: string
   search: string[]
   placeholder: string
@@ -64,7 +64,7 @@ export const listConfigs: Record<string, ListConfig> = {
     name: '账号库存',
     endpoint: '/accounts',
     serverPaged: true,
-    abnormalToggle: true,
+    statusTabs: true,
     description: '管理账号资料、代理绑定与平台交付；消耗字段来自供应商观测快照。',
     search: [
       'account',

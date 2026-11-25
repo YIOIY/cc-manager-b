@@ -11,14 +11,6 @@
       <template #prefix><Search :size="17" /></template>
     </el-input>
     <el-button
-      v-if="config.abnormalToggle"
-      :type="abnormalOnly ? 'warning' : 'default'"
-      :plain="!abnormalOnly"
-      :aria-pressed="abnormalOnly"
-      @click="emit('toggleAbnormal')"
-      >异常账号</el-button
-    >
-    <el-button
       :class="{ 'is-filtered': activeFilterCount }"
       :aria-expanded="filtersOpen"
       @click="emit('update:filtersOpen', !filtersOpen)"
@@ -84,9 +76,6 @@
   <div v-if="hasConditions" class="active-filters">
     <span>当前筛选</span>
     <el-tag v-if="query" closable effect="plain" @close="emit('removeQuery')">关键词：{{ query }}</el-tag>
-    <el-tag v-if="abnormalOnly" closable effect="plain" type="warning" @close="emit('clearAbnormal')"
-      >仅异常账号</el-tag
-    >
     <el-tag
       v-for="field in activeFields"
       :key="field.key"
@@ -113,7 +102,6 @@ const props = defineProps<{
   activeFields: FilterField[]
   activeFilterCount: number
   hasConditions: boolean
-  abnormalOnly?: boolean
 }>()
 const emit = defineEmits<{
   'update:draftQuery': [value: string]
@@ -123,8 +111,6 @@ const emit = defineEmits<{
   reset: []
   removeQuery: []
   removeCondition: [key: string]
-  toggleAbnormal: []
-  clearAbnormal: []
 }>()
 
 function set(key: string, value: unknown) {

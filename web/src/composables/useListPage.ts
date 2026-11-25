@@ -18,12 +18,48 @@ function arrayData<T>(data: unknown): T[] {
   return Array.isArray(items) ? (items as T[]) : []
 }
 
+export type AccountStatusTab = 'all' | 'using' | 'offline' | 'ban' | 'abnormal'
+
+export type AccountTabCounts = Record<AccountStatusTab, number>
+
+const emptyTabCounts = (): AccountTabCounts => ({
+  all: 0,
+  using: 0,
+  offline: 0,
+  ban: 0,
+  abnormal: 0,
+})
+
 export interface ListPageOptions {
   /** extra requests issued with the list, e.g. lookups for a form */
   extra?: () => Promise<void>
   /** poll while this returns true (checked each tick) */
   pollWhile?: () => boolean
   pollIntervalMs?: number
+}
+
+function parseStatusTab(q: LocationQuery): AccountStatusTab {
+  const tab = typeof q.tab === 'string' ? q.tab : ''
+  if (tab === 'using' || tab === 'offline' || tab === 'ban' || tab === 'abnormal') return tab
+  if (q.abnormal === '1' || q.abnormal === 'true') return 'abnormal'
+  return tabForPlatformStatus(typeof q.f_platform_status === 'string' ? q.f_platform_status : '') || 'all'
+}
+
+/** Map a 平台状态 filter value onto a status tab, if it has one. */
+function tabForPlatformStatus(status: string): AccountStatusTab | null {
+  if (status === 'using' || status === 'offline') return status
+  if (status === 'ban' || status === 'banned' || status === 'ban,banned' || status === 'banned,ban') return 'ban'
+  return null
+}
+
+function platformStatusForTab(tab: AccountStatusTab): string | undefined {
+  if (tab === 'using' || tab === 'offline') return tab
+  if (tab === 'ban') return 'ban'
+  return undefined
+}
+
+function tabOwnsPlatformStatus(tab: AccountStatusTab): boolean {
+  return tab === 'using' || tab === 'offline' || tab === 'ban'
 }
 
 export function useListPage<T extends ListRow = ListRow>(
@@ -40,19 +76,26 @@ export function useListPage<T extends ListRow = ListRow>(
   const draftConditions = ref<Conditions>({})
   const conditions = ref<Conditions>({})
   const filtersOpen = ref(false)
-  const abnormalOnly = ref(false)
+  const statusTab = ref<AccountStatusTab>('all')
+  const tabCounts = ref<AccountTabCounts>(emptyTabCounts())
   const currentPage = ref(1)
   const pageSize = ref(20)
   const serverTotal = ref(0)
   let sequence = 0
   const serverPaged = computed(() => !!config.value?.serverPaged)
-  const abnormalToggle = computed(() => !!config.value?.abnormalToggle)
+  const statusTabs = computed(() => !!config.value?.statusTabs)
 
-  const activeFields = computed(() => config.value?.filters.filter((f) => hasValue(conditions.value[f.key])) || [])
-  const activeFilterCount = computed(() => activeFields.value.length)
-  const hasConditions = computed(
-    () => !!query.value || !!activeFilterCount.value || (abnormalToggle.value && abnormalOnly.value),
+  // Tab-owned 平台状态 is shown in the filter panel, but not as a redundant chip.
+  const activeFields = computed(
+    () =>
+      config.value?.filters.filter((f) => {
+        if (!hasValue(conditions.value[f.key])) return false
+        if (statusTabs.value && f.key === 'platform_status' && tabOwnsPlatformStatus(statusTab.value)) return false
+        return true
+      }) || [],
   )
+  const activeFilterCount = computed(() => activeFields.value.length)
+  const hasConditions = computed(() => !!query.value || !!activeFilterCount.value)
   const filteredItems = computed(() => {
     if (serverPaged.value) return items.value
     return config.value ? (filterRows(items.value, config.value, query.value, conditions.value) as T[]) : []
@@ -63,12 +106,35 @@ export function useListPage<T extends ListRow = ListRow>(
       : filteredItems.value.slice((currentPage.value - 1) * pageSize.value, currentPage.value * pageSize.value),
   )
   const total = computed(() => (serverPaged.value ? serverTotal.value : filteredItems.value.length))
+  const abnormalOnly = computed(() => statusTabs.value && statusTab.value === 'abnormal')
+
+  function mirrorTabIntoFilters(tab: AccountStatusTab, target: Conditions) {
+    const status = platformStatusForTab(tab)
+    if (status) target.platform_status = status
+    else if (tab === 'all' || tab === 'abnormal') delete target.platform_status
+  }
+
+  function statusTabParams(params: URLSearchParams) {
+    if (!statusTabs.value) return
+    // 全部 / 使用中 / 已下线 hide abnormal rows; 已封禁 shows every ban/banned row;
+    // 异常 is abnormal-only.
+    if (statusTab.value === 'abnormal') params.set('abnormal', '1')
+    else if (statusTab.value !== 'ban') params.set('abnormal', '0')
+    if (statusTab.value === 'using') params.set('platform_status', 'using')
+    else if (statusTab.value === 'offline') params.set('platform_status', 'offline')
+    else if (statusTab.value === 'ban') params.set('platform_status', 'ban,banned')
+  }
 
   function serverQuery(): string {
     const params = new URLSearchParams({ page: String(currentPage.value), page_size: String(pageSize.value) })
     if (query.value) params.set('q', query.value)
-    for (const [key, value] of Object.entries(conditions.value)) if (hasValue(value)) params.set(key, String(value))
-    if (abnormalToggle.value) params.set('abnormal', abnormalOnly.value ? '1' : '0')
+    for (const [key, value] of Object.entries(conditions.value)) {
+      if (!hasValue(value)) continue
+      // Tab owns using/offline/ban; other tabs can still use the platform_status filter.
+      if (statusTabs.value && tabOwnsPlatformStatus(statusTab.value) && key === 'platform_status') continue
+      params.set(key, String(value))
+    }
+    statusTabParams(params)
     return '?' + params.toString()
   }
 
@@ -80,17 +146,23 @@ export function useListPage<T extends ListRow = ListRow>(
       const value = q['f_' + field.key]
       if (typeof value === 'string' && value !== '') parsed[field.key] = field.type === 'number' ? Number(value) : value
     }
+    statusTab.value = statusTabs.value ? parseStatusTab(q) : 'all'
+    if (statusTabs.value) mirrorTabIntoFilters(statusTab.value, parsed)
     conditions.value = parsed
     draftConditions.value = { ...parsed }
-    abnormalOnly.value = abnormalToggle.value && (q.abnormal === '1' || q.abnormal === 'true')
     filtersOpen.value = activeFilterCount.value > 0
   }
 
   function writeRouteQuery() {
     const next: LocationQueryRaw = {}
     if (query.value) next.q = query.value
-    for (const [key, value] of Object.entries(conditions.value)) if (hasValue(value)) next['f_' + key] = String(value)
-    if (abnormalToggle.value && abnormalOnly.value) next.abnormal = '1'
+    for (const [key, value] of Object.entries(conditions.value)) {
+      if (!hasValue(value)) continue
+      // Persist tab statuses via `tab=` only; keep other platform_status values as f_platform_status.
+      if (statusTabs.value && key === 'platform_status' && tabOwnsPlatformStatus(statusTab.value)) continue
+      next['f_' + key] = String(value)
+    }
+    if (statusTabs.value && statusTab.value !== 'all') next.tab = statusTab.value
     if (route.name) lastQueries.set(String(route.name), next)
     router.replace({ query: next }).catch(() => undefined)
   }
@@ -107,8 +179,14 @@ export function useListPage<T extends ListRow = ListRow>(
       ])
       if (seq !== sequence) return
       items.value = arrayData<T>(list.data)
-      const pagination = (list.data as { pagination?: { total?: number } })?.pagination
-      serverTotal.value = pagination?.total ?? items.value.length
+      const data = list.data as {
+        pagination?: { total?: number }
+        tab_counts?: Partial<AccountTabCounts>
+      }
+      serverTotal.value = data.pagination?.total ?? items.value.length
+      if (statusTabs.value && data.tab_counts) {
+        tabCounts.value = { ...emptyTabCounts(), ...data.tab_counts }
+      }
       error.value = ''
     } catch (e) {
       if (seq === sequence) error.value = errorMessage(e)
@@ -127,6 +205,22 @@ export function useListPage<T extends ListRow = ListRow>(
     }
     query.value = draftQuery.value.trim()
     conditions.value = { ...draftConditions.value }
+    // Filter → tab: keep them aligned when 平台状态 changes.
+    if (statusTabs.value) {
+      const status = String(conditions.value.platform_status || '')
+      const matched = tabForPlatformStatus(status)
+      if (matched) {
+        statusTab.value = matched
+        const mirrored = platformStatusForTab(matched)!
+        conditions.value.platform_status = mirrored
+        draftConditions.value.platform_status = mirrored
+      } else if (status) {
+        // Other statuses (在线 / 登录失败 …) stay on 异常 if already there; otherwise 全部.
+        if (statusTab.value !== 'abnormal') statusTab.value = 'all'
+      } else if (tabOwnsPlatformStatus(statusTab.value)) {
+        statusTab.value = 'all'
+      }
+    }
     currentPage.value = 1
     writeRouteQuery()
     if (serverPaged.value) void load()
@@ -137,7 +231,7 @@ export function useListPage<T extends ListRow = ListRow>(
     query.value = ''
     draftConditions.value = {}
     conditions.value = {}
-    abnormalOnly.value = false
+    statusTab.value = 'all'
     currentPage.value = 1
     writeRouteQuery()
     if (serverPaged.value) void load()
@@ -152,20 +246,17 @@ export function useListPage<T extends ListRow = ListRow>(
   function removeCondition(key: string) {
     delete conditions.value[key]
     delete draftConditions.value[key]
+    if (key === 'platform_status' && tabOwnsPlatformStatus(statusTab.value)) statusTab.value = 'all'
     currentPage.value = 1
     writeRouteQuery()
     if (serverPaged.value) void load()
   }
-  function toggleAbnormal() {
-    if (!abnormalToggle.value) return
-    abnormalOnly.value = !abnormalOnly.value
-    currentPage.value = 1
-    writeRouteQuery()
-    if (serverPaged.value) void load()
-  }
-  function clearAbnormal() {
-    if (!abnormalOnly.value) return
-    abnormalOnly.value = false
+  function setStatusTab(tab: AccountStatusTab) {
+    if (!statusTabs.value || statusTab.value === tab) return
+    statusTab.value = tab
+    // Tab → filter: mirror into 条件筛选 so the panel matches the active tab.
+    mirrorTabIntoFilters(tab, conditions.value)
+    mirrorTabIntoFilters(tab, draftConditions.value)
     currentPage.value = 1
     writeRouteQuery()
     if (serverPaged.value) void load()
@@ -195,8 +286,10 @@ export function useListPage<T extends ListRow = ListRow>(
     draftConditions,
     conditions,
     filtersOpen,
+    statusTab,
+    statusTabs,
+    tabCounts,
     abnormalOnly,
-    abnormalToggle,
     currentPage,
     pageSize,
     activeFields,
@@ -211,8 +304,7 @@ export function useListPage<T extends ListRow = ListRow>(
     resetFilters,
     removeQuery,
     removeCondition,
-    toggleAbnormal,
-    clearAbnormal,
+    setStatusTab,
     polling,
     invalidate: () => sequence++,
   }

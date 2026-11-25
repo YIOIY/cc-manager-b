@@ -133,6 +133,7 @@ func TestAccountsSupportServerSidePagingAndFilters(t *testing.T) {
 		Data struct {
 			Items      []map[string]any `json:"items"`
 			Pagination struct{ Page, PageSize, Total int }
+			TabCounts  map[string]int `json:"tab_counts"`
 		}
 	}
 	var p paged
@@ -143,6 +144,9 @@ func TestAccountsSupportServerSidePagingAndFilters(t *testing.T) {
 	_ = jsonDecode(c.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=100&abnormal=0", ""), &p)
 	if p.Data.Pagination.Total != normalTotal {
 		t.Fatalf("abnormal=0 total=%d want %d", p.Data.Pagination.Total, normalTotal)
+	}
+	if p.Data.TabCounts["all"] != normalTotal || p.Data.TabCounts["abnormal"] != allTotal-normalTotal {
+		t.Fatalf("tab_counts=%v want all=%d abnormal=%d", p.Data.TabCounts, normalTotal, allTotal-normalTotal)
 	}
 	for _, item := range p.Data.Items {
 		if id, _ := item["id"].(string); id == "acc-b" || id == "acc-d" {

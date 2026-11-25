@@ -70,8 +70,8 @@ test('empty conditions are ignored and missing values never match a set filter',
   assert.deepEqual(filterRows(rows, accounts, '', { platform_status: 'on' }), [])
 })
 
-test('accounts list exposes abnormal toggle and platform status select', () => {
-  assert.equal(accounts.abnormalToggle, true)
+test('accounts list exposes status tabs and platform status select', () => {
+  assert.equal(accounts.statusTabs, true)
   const status = accounts.filters.find((f) => f.key === 'platform_status')
   assert.equal(status?.type, 'select')
   assert.ok(status?.options?.some((o) => o.value === 'login_failed'))
