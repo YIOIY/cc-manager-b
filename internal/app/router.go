@@ -22,6 +22,7 @@ func (a *App) Handler() http.Handler {
 	needAny := func(pattern string, h http.HandlerFunc, ps ...Permission) { route(pattern, a.requireAny(ps, guard(h))) }
 
 	api.HandleFunc("GET /api/v1/auth/session", a.authSession)
+	api.HandleFunc("GET /api/v1/auth/captcha", a.authCaptcha)
 	api.HandleFunc("POST /api/v1/auth/login", a.authLogin)
 	route("POST /api/v1/auth/logout", a.authLogout)
 

@@ -26,7 +26,8 @@ export default defineConfig({
       `cd .. && CC_MANAGER_LISTEN=127.0.0.1:${port} CC_MANAGER_DB=${dbPath} CC_MANAGER_ADMIN_PASSWORD=${ADMIN_PASSWORD}` +
         ' CC_MANAGER_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= CC_MANAGER_WEB_DIR=web/dist CC_MANAGER_LOG_LEVEL=warn' +
         // The fixture proxies are fake; skip the live proxy / Claude reachability checks.
-        ' CC_MANAGER_STUB_NETWORK_PROBES=1 ./bin/cc-manager',
+        // Captcha answers are exposed so the suite can fill the login form.
+        ' CC_MANAGER_STUB_NETWORK_PROBES=1 CC_MANAGER_CAPTCHA_DEBUG=1 ./bin/cc-manager',
     ].join(' && '),
     url: `http://127.0.0.1:${port}/healthz`,
     reuseExistingServer: false,

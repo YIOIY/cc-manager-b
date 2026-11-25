@@ -73,7 +73,7 @@ test('login retries once with a fresh anonymous session when the CSRF token is s
       },
     })
   })
-  await useSession().login('admin', 'secret-password-123')
+  await useSession().login('admin', 'secret-password-123', 'cap-1', 'AB12')
   expect(logins).toBe(2)
   expect(useSession().authenticated.value).toBe(true)
 })

@@ -6,13 +6,55 @@ export { ADMIN_PASSWORD }
 /** The login view is rendered in place of the shell on any URL while signed out. */
 export const loginCard = (page: Page) => page.locator('.login-card')
 
+/** Captures the debug captcha answer from the page's /auth/captcha response. */
+export async function fillLoginCaptcha(page: Page) {
+  let answer = ''
+  const onResponse = async (response: { url: () => string; ok: () => boolean; json: () => Promise<any> }) => {
+    if (!response.url().includes('/api/v1/auth/captcha') || !response.ok()) return
+    try {
+      const json = await response.json()
+      if (json?.data?.answer) answer = String(json.data.answer)
+    } catch {
+      /* ignore non-JSON */
+    }
+  }
+  page.on('response', onResponse)
+  try {
+    if (!(await page.getByPlaceholder('输入图形验证码').inputValue())) {
+      // Trigger a refresh if the initial response was missed.
+      await page.getByRole('button', { name: '点击刷新验证码' }).click()
+    }
+    await expect.poll(() => answer, { timeout: 10_000 }).not.toBe('')
+    await page.getByPlaceholder('输入图形验证码').fill(answer)
+  } finally {
+    page.off('response', onResponse)
+  }
+}
+
 export async function login(page: Page, username: string, password: string) {
-  await page.goto('/')
-  await expect(loginCard(page)).toBeVisible()
-  await page.getByPlaceholder('输入管理员账号').fill(username)
-  await page.getByPlaceholder('输入登录密码').fill(password)
-  await page.getByRole('button', { name: '登录', exact: true }).click()
-  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
+  let answer = ''
+  const onResponse = async (response: { url: () => string; ok: () => boolean; json: () => Promise<any> }) => {
+    if (!response.url().includes('/api/v1/auth/captcha') || !response.ok()) return
+    try {
+      const json = await response.json()
+      if (json?.data?.answer) answer = String(json.data.answer)
+    } catch {
+      /* ignore non-JSON */
+    }
+  }
+  page.on('response', onResponse)
+  try {
+    await page.goto('/')
+    await expect(loginCard(page)).toBeVisible()
+    await expect.poll(() => answer, { timeout: 10_000 }).not.toBe('')
+    await page.getByPlaceholder('输入管理员账号').fill(username)
+    await page.getByPlaceholder('输入登录密码').fill(password)
+    await page.getByPlaceholder('输入图形验证码').fill(answer)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
+  } finally {
+    page.off('response', onResponse)
+  }
 }
 
 export async function logout(page: Page) {

@@ -9,6 +9,7 @@
 - 同源 JSON API，前缀 `/api/v1`；浏览器不直接请求供应商平台。
 - 使用服务端会话 Cookie，不使用浏览器长期 Bearer Token。变更请求携带 `X-CSRF-Token`。
 - `GET /auth/session` 返回会话状态和CSRF令牌；未登录时也可建立仅用于登录CSRF校验的短期匿名会话。
+- `GET /auth/captcha` 返回登录用图形验证码（`captcha_id` + PNG data URL）；`POST /auth/login` 必须携带匹配的 `captcha_id`/`captcha`，校验失败返回 `422 CAPTCHA_INVALID`。
 - 服务端使用Origin校验、SameSite和CSRF验证；登录、登出也包含CSRF防护。
 - 本地 `id` 为UUID字符串；平台 `upstream_id`、`upstream_aid` 使用十进制字符串输出。
 - 时间戳为RFC3339（默认UTC）；业务日期为 `YYYY-MM-DD`，不能让浏览器转成UTC后改变日期。
@@ -84,7 +85,8 @@
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /auth/session` | 返回authenticated、用户摘要、CSRF令牌和可用能力；不返回秘密 |
-| `POST /auth/login` | username/password验证，建立会话并轮换ID；返回会话摘要 |
+| `GET /auth/captcha` | 签发一次性图形验证码，返回 `captcha_id` 与 `image`（data URL） |
+| `POST /auth/login` | username/password + captcha_id/captcha 验证，建立会话并轮换ID；返回会话摘要 |
 | `POST /auth/logout` | 撤销当前会话 |
 | `GET /capabilities` | 返回本地能力开关、允许套餐、已知字段规范、枚举、限制与平台待确认项 |
 | `GET /dashboard` | 本地库存和数据聚合，返回各数据源新鲜度 |
@@ -450,7 +452,7 @@ OAuth 会话与账号写入的配合（详见 [授权录入说明](claude-oauth-
 
 ## 附录：2026-11-08 实现变更
 
-- `POST /auth/login`：失败按来源 IP + 用户名指数退避，超限返回 `429 AUTH_RATE_LIMITED` 并带 `Retry-After`；请求体上限 16KB。
+- `POST /auth/login`：须先通过图形验证码；失败按来源 IP + 用户名指数退避，超限返回 `429 AUTH_RATE_LIMITED` 并带 `Retry-After`；验证码错误返回 `422 CAPTCHA_INVALID`（不计入密码失败退避）；请求体上限 16KB。
 - 所有写接口：请求体上限 256KB（导入预览 5MB），超限返回 `413 PAYLOAD_TOO_LARGE`；JSON 不合法返回 `400 INVALID_JSON`。
 - `PATCH /accounts/{id}`、`PUT /accounts/{id}/credentials`、`PUT /platform-connections/{id}`：可选 `expected_version`，不匹配返回 `409 VERSION_CONFLICT`；PATCH 同时校验套餐、日期格式/顺序与代理存在性。
 - 唯一约束冲突返回 `409`（`ACCOUNT_EXISTS` / `CONNECTION_EXISTS` / `PROXY_EXISTS` / `ROLE_EXISTS` / `USER_EXISTS` / `IDEMPOTENCY_CONFLICT`）；数据库忙 / 锁定 / 磁盘满等暂时性故障返回 `503 STORAGE_UNAVAILABLE`，其余返回 `500 INTERNAL_ERROR`；响应体与响应头的 `request_id` 对应服务日志。
@@ -497,7 +499,7 @@ OAuth 会话与账号写入的配合（详见 [授权录入说明](claude-oauth-
 | `GET /platform-usage/bills/models` | `connection_id`、`from`、`to` 必填，`account_ids` 逗号分隔可选，分页；返回按天按账号按模型的 `list`、`by_account`、`by_model`、`total_cost_fen`、`coverage{days_requested, days_present, today, today_final: false}`。当天的行 `final=false` |
 | `POST /platform-usage/bills/models/sync` | `{connection_id}`；立即跑一次网页账单同步，202 `{run_id, state}`；退避中 409 `SYNC_IN_BACKOFF`（`details.next_attempt_at`）；未配置 422 `WEB_NOT_CONFIGURED`；已暂停 502 `WEB_SUSPENDED`。同一连接的账号同步正在进行时会等它结束再跑 |
 | `GET /platform-usage/channel-usage/accounts` | 需 `channel_usage.view`；`connection_id` 必填；返回仍在平台列表中的交付：`list[{upstream_id, platform_account_id, account, account_id, owner_*}]`（`platform_account_id` 与账号卡「ID」一致）；管理员另附 `owners`。非管理员只看到归属自己的关联交付 |
-| `GET /platform-usage/channel-usage` | 需 `channel_usage.view`；`connection_id`、`from`、`to` 必填；可选 `upstream_ids`（逗号分隔交付 ID）、`owner_user_ids`（逗号分隔，仅管理员生效；兼容 `owner_user_id`）、分页；从 `platform_bill_models` 按日+交付聚合，返回 `list[{bill_date, upstream_id, platform_account_id, account, owner_*, cost_fen, cost_usd, cost_usd_cents, final}]`、`total_cost_*`、`usd_cny_rate` |
+| `GET /platform-usage/channel-usage` | 需 `channel_usage.view`；`connection_id`、`from`、`to` 必填；可选 `upstream_ids`（逗号分隔交付 ID）、`owner_user_ids`（逗号分隔，仅管理员生效；兼容 `owner_user_id`）、分页；从 `platform_bill_models` 按日+交付聚合，返回 `list[{bill_date, upstream_id, platform_account_id, account, owner_*, cost_fen, cost_usd, cost_usd_cents, final}]`、`by_day[{bill_date, cost_fen, cost_usd, cost_usd_cents}]`（跨账号按天合计）、`total_cost_*`、`usd_cny_rate` |
 | `POST /accounts/{id}/platform-profile` | 修改平台上的账号资料（网页通道唯一的写操作，需 `accounts.platform_edit`）：`{changes: {字段: 值}, base: {字段: 提交前看到的值}}`，可改字段 `plan`、`register_time`、`plan_start_time`、`plan_end_time`、`register_location`（不可清空）与 `balance`（0–100）、`payment_method`、`register_device`、`recharge_time`、`warranty_period`、`remark`（可清空）；日期 `YYYY-MM-DD`。校验失败 422 `VALIDATION_FAILED`（逐字段）；账号未关联、平台记录已移除/被替换、`base` 与当前快照不一致 → 409 `VERSION_CONFLICT`；未配置网页登录 422 `WEB_NOT_CONFIGURED`，暂停中 `WEB_SUSPENDED`，平台拒绝 502 `WEB_*`/`PLATFORM_*`。成功 200 `{verified, hint?, changed[], platform}`：平台整条记录被覆盖（密码、凭证、标签、代理不变），随后重读平台列表刷新快照（`verified=true`）；重读失败则用提交值更新快照并返回 `verified=false` 与 `hint`；本地账号同步写回（套餐、日期、注册地区入列，可选字段入 `metadata_json`，`version+1`）；审计 `account.platform_profile_update`，detail 为改动字段名 |
 | `GET /accounts`、`GET /accounts/{id}`、`GET /platform-connections/{id}/remote-accounts` | `platform` 块新增 `remark`（平台备注）与 `web_channel{configured, suspended}`（该连接的网页通道是否可用于修改资料） |
 | `GET/POST /platform-connections`、`PUT/PATCH /platform-connections/{id}` | 新增 `usd_cny_rate`：平台把美元原价折算成人民币的固定汇率（1 美元兑多少人民币），默认 7.2；请求里可选，必须是 1–20 的数字，否则 422 `VALIDATION_FAILED`（字段 `usd_cny_rate`）；修改时写审计 `connection.usd_rate_set`（detail 如 `7.2 → 7.3`）。账号的 `platform` 块同时带出所属连接的 `usd_cny_rate`，卡片用 `cost_fen ÷ usd_cny_rate` 显示美元 |

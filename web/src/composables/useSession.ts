@@ -82,9 +82,16 @@ export function useSession() {
     inflight = run.catch(() => undefined)
     return run
   }
-  async function login(username: string, password: string) {
+  async function login(username: string, password: string, captchaId: string, captcha: string) {
     if (refreshing) await refreshing
-    const attempt = () => api<Session>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+    const body = () =>
+      JSON.stringify({
+        username,
+        password,
+        captcha_id: captchaId,
+        captcha,
+      })
+    const attempt = () => api<Session>('/auth/login', { method: 'POST', body: body() })
     try {
       await attempt()
     } catch (e) {

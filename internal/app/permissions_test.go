@@ -9,7 +9,14 @@ import (
 
 func (c *testClient) loginAs(username, password string) *http.Response {
 	c.t.Helper()
-	res := c.do(http.MethodPost, "/api/v1/auth/login", `{"username":"`+username+`","password":"`+password+`"}`)
+	id, answer := c.issueCaptcha()
+	body, _ := json.Marshal(map[string]string{
+		"username":   username,
+		"password":   password,
+		"captcha_id": id,
+		"captcha":    answer,
+	})
+	res := c.do(http.MethodPost, "/api/v1/auth/login", string(body))
 	if res.StatusCode == http.StatusOK {
 		var env struct {
 			Data struct {

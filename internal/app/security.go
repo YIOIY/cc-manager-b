@@ -314,8 +314,10 @@ func (a *App) authLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		CaptchaID string `json:"captcha_id"`
+		Captcha   string `json:"captcha"`
 	}
 	if !decodeJSON(w, r, &in, 16<<10) {
 		return
@@ -325,6 +327,10 @@ func (a *App) authLogin(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	if wait := a.logins.retryAfter(key, now); wait > 0 {
 		writeError(w, r, errs.New(errs.CodeAuthRateLimited).WithDetail("retry_after_seconds", int(wait/time.Second)+1))
+		return
+	}
+	if !a.verifyLoginCaptcha(in.CaptchaID, in.Captcha) {
+		writeError(w, r, errs.New(errs.CodeCaptchaInvalid))
 		return
 	}
 	username := strings.TrimSpace(in.Username)

@@ -56,26 +56,32 @@
   <p class="cu-note">数据来自供应商网页后台同步，约每 2 小时更新一次。</p>
   <el-table
     class="cu-table"
-    :data="data?.list || []"
+    :data="tableRows"
     v-loading="loading"
     size="small"
     empty-text="暂无数据"
     table-layout="fixed"
+    :row-class-name="rowClassName"
   >
-    <el-table-column label="日期" min-width="120" prop="bill_date" />
-    <el-table-column label="账号 ID" min-width="120">
+    <el-table-column label="日期" min-width="120">
       <template #default="{ row }">
-        <span class="mono">{{ row.platform_account_id }}</span>
+        <template v-if="row.kind === 'day_total'">当日合计</template>
+        <template v-else>{{ row.bill_date }}</template>
       </template>
     </el-table-column>
-    <el-table-column label="账号" min-width="120" prop="account" show-overflow-tooltip>
+    <el-table-column label="账号 ID" min-width="120">
       <template #default="{ row }">
-        {{ row.account || '（未关联本地账号）' }}
+        <span v-if="row.kind === 'detail'" class="mono">{{ row.platform_account_id }}</span>
+      </template>
+    </el-table-column>
+    <el-table-column label="账号" min-width="120" show-overflow-tooltip>
+      <template #default="{ row }">
+        <template v-if="row.kind === 'detail'">{{ row.account || '（未关联本地账号）' }}</template>
       </template>
     </el-table-column>
     <el-table-column label="所属人" min-width="120" show-overflow-tooltip>
       <template #default="{ row }">
-        {{ row.owner_nickname || row.owner_username || '—' }}
+        <template v-if="row.kind === 'detail'">{{ row.owner_nickname || row.owner_username || '—' }}</template>
       </template>
     </el-table-column>
     <el-table-column label="消耗额度（美元）" min-width="120" align="right">
@@ -110,8 +116,13 @@ import type {
   ChannelUsageAccountsResponse,
   ChannelUsageOwner,
   ChannelUsageResponse,
+  ChannelUsageRow,
   ConnectionOption,
 } from '../types/api'
+
+type DetailRow = ChannelUsageRow & { kind: 'detail' }
+type DayTotalRow = { kind: 'day_total'; bill_date: string; cost_usd: string }
+type TableRow = DetailRow | DayTotalRow
 
 const { user } = useSession()
 const isAdmin = computed(() => !!user.value?.is_admin)
@@ -136,6 +147,35 @@ const filteredAccounts = computed(() => {
   const allowed = new Set(ownerUserIds.value)
   return accountOptions.value.filter((a) => a.owner_user_id && allowed.has(a.owner_user_id))
 })
+
+/** Detail rows with a day-total row after each complete date group on this page. */
+const tableRows = computed((): TableRow[] => {
+  const list = data.value?.list || []
+  if (!list.length) return []
+  const byDay = new Map((data.value?.by_day || []).map((d) => [d.bill_date, d.cost_usd]))
+  const lastPage = !data.value || page.value * pageSize.value >= data.value.total
+  const rows: TableRow[] = []
+  for (let i = 0; i < list.length; i++) {
+    const row = list[i]
+    if (!row) continue
+    rows.push({ kind: 'detail', ...row })
+    const next = list[i + 1]
+    const groupEnded = !next || next.bill_date !== row.bill_date
+    // Skip the subtotal when this date continues on the next page.
+    if (groupEnded && (next || lastPage)) {
+      rows.push({
+        kind: 'day_total',
+        bill_date: row.bill_date,
+        cost_usd: byDay.get(row.bill_date) || '0.00',
+      })
+    }
+  }
+  return rows
+})
+
+function rowClassName({ row }: { row: TableRow }) {
+  return row.kind === 'day_total' ? 'cu-day-total' : ''
+}
 
 function dayString(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -343,6 +383,13 @@ onMounted(async () => {
 }
 .cu-table {
   width: 100%;
+}
+.cu-table :deep(.cu-day-total) {
+  background: #f5f6f8;
+  font-weight: 600;
+}
+.cu-table :deep(.cu-day-total td) {
+  color: #1c1f23;
 }
 .cu-pager {
   display: flex;

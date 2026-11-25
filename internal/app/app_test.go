@@ -30,8 +30,24 @@ func TestLocalAccountAndProxyFlow(t *testing.T) {
 	}
 	_ = json.NewDecoder(res.Body).Decode(&sessionResp)
 	res.Body.Close()
-	loginBody := bytes.NewBufferString(`{"username":"admin","password":"secret-password"}`)
-	loginReq, _ := http.NewRequest(http.MethodPost, s.URL+"/api/v1/auth/login", loginBody)
+	res, _ = client.Get(s.URL + "/api/v1/auth/captcha")
+	var captchaResp struct {
+		Data struct {
+			ID string `json:"captcha_id"`
+		} `json:"data"`
+	}
+	_ = json.NewDecoder(res.Body).Decode(&captchaResp)
+	res.Body.Close()
+	answer, ok := a.captchas.peek(captchaResp.Data.ID)
+	if !ok {
+		t.Fatal("missing captcha answer")
+	}
+	loginPayload, _ := json.Marshal(map[string]string{
+		"username": "admin", "password": "secret-password",
+		"captcha_id": captchaResp.Data.ID, "captcha": answer,
+	})
+	loginReq, _ := http.NewRequest(http.MethodPost, s.URL+"/api/v1/auth/login", bytes.NewReader(loginPayload))
+	loginReq.Header.Set("Content-Type", "application/json")
 	loginReq.Header.Set("Origin", "http://"+loginReq.Host)
 	loginReq.Header.Set("X-CSRF-Token", sessionResp.Data.CSRF)
 	res, err = client.Do(loginReq)

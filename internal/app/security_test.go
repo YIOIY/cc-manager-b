@@ -14,6 +14,7 @@ import (
 
 type testClient struct {
 	t      *testing.T
+	app    *App
 	server *httptest.Server
 	client *http.Client
 	csrf   string
@@ -24,9 +25,32 @@ func newTestClient(t *testing.T, a *App) *testClient {
 	server := httptest.NewServer(a.Handler())
 	t.Cleanup(server.Close)
 	jar, _ := cookiejar.New(nil)
-	c := &testClient{t: t, server: server, client: &http.Client{Jar: jar}}
+	c := &testClient{t: t, app: a, server: server, client: &http.Client{Jar: jar}}
 	c.refreshSession()
 	return c
+}
+
+// issueCaptcha fetches a challenge and peeks the answer from the in-memory store.
+func (c *testClient) issueCaptcha() (id, answer string) {
+	c.t.Helper()
+	res, err := c.client.Get(c.server.URL + "/api/v1/auth/captcha")
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var env struct {
+		Data struct {
+			ID string `json:"captcha_id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
+		c.t.Fatal(err)
+	}
+	answer, ok := c.app.captchas.peek(env.Data.ID)
+	if !ok || env.Data.ID == "" {
+		c.t.Fatalf("captcha missing id=%q", env.Data.ID)
+	}
+	return env.Data.ID, answer
 }
 
 func (c *testClient) refreshSession() {
@@ -57,18 +81,31 @@ func (c *testClient) do(method, path, body string) *http.Response {
 }
 
 func (c *testClient) login(password string) *http.Response {
-	res := c.do(http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"`+password+`"}`)
-	if res.StatusCode == http.StatusOK {
-		var env struct {
-			Data struct {
-				CSRF string `json:"csrf_token"`
-			} `json:"data"`
-		}
-		_ = json.NewDecoder(res.Body).Decode(&env)
-		c.csrf = env.Data.CSRF
+	return c.loginAs("admin", password)
+}
+
+func TestLoginRequiresCaptcha(t *testing.T) {
+	t.Setenv("CC_MANAGER_ADMIN_PASSWORD", "correct-horse-battery")
+	a, err := newApp(t.TempDir()+"/captcha-login.db", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	c := newTestClient(t, a)
+	res := c.do(http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"correct-horse-battery"}`)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("missing captcha status=%d", res.StatusCode)
 	}
 	res.Body.Close()
-	return res
+	id, _ := c.issueCaptcha()
+	res = c.do(http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"correct-horse-battery","captcha_id":"`+id+`","captcha":"XXXX"}`)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("wrong captcha status=%d", res.StatusCode)
+	}
+	res.Body.Close()
+	if res := c.login("correct-horse-battery"); res.StatusCode != http.StatusOK {
+		t.Fatalf("valid captcha login status=%d", res.StatusCode)
+	}
 }
 
 func TestLoginThrottlesRepeatedFailuresPerClient(t *testing.T) {

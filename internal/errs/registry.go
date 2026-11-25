@@ -18,6 +18,7 @@ func init() {
 		Def{Code: "AUTH_REQUIRED", Category: CategoryAuth, Status: 401, Action: ActionLogin, Message: "尚未登录或登录已失效", Hint: "请重新登录", Doc: "无会话、会话被清理或服务重启；USER_DISABLED 情形阶段 2 拆出"},
 		Def{Code: "AUTH_INVALID", Category: CategoryAuth, Status: 401, Action: ActionFixInput, Message: "账号或密码不正确", Doc: "登录失败；不区分用户不存在与密码错误"},
 		Def{Code: "AUTH_RATE_LIMITED", Category: CategoryRateLimit, Status: 429, Action: ActionWait, Message: "登录尝试过于频繁", Hint: "请稍后再试", Doc: "登录节流"},
+		Def{Code: "CAPTCHA_INVALID", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "验证码错误或已过期", Hint: "请刷新验证码后重试", Doc: "登录图形验证码缺失、不匹配或已消费"},
 		Def{Code: "CSRF_FAILED", Category: CategoryAuth, Status: 403, Action: ActionRetry, Message: "页面会话已过期", Hint: "请刷新页面后重试", Doc: "缺少或不匹配的 X-CSRF-Token"},
 		Def{Code: "ORIGIN_FAILED", Category: CategoryAuth, Status: 403, Action: ActionNone, Message: "请求来源与当前站点不一致", Doc: "Origin 头与 Host 不匹配"},
 		Def{Code: "PERMISSION_DENIED", Category: CategoryPermission, Status: 403, Action: ActionContactAdmin, Message: "当前账号没有执行此操作的权限", Hint: "如需此权限请联系管理员", Doc: "details.permission 为所需权限；阶段 1 保留自定义文案", AllowCustomMessage: true},
@@ -182,6 +183,7 @@ const (
 	CodeAuthRequired                = "AUTH_REQUIRED"
 	CodeAuthInvalid                 = "AUTH_INVALID"
 	CodeAuthRateLimited             = "AUTH_RATE_LIMITED"
+	CodeCaptchaInvalid              = "CAPTCHA_INVALID"
 	CodeCsrfFailed                  = "CSRF_FAILED"
 	CodeOriginFailed                = "ORIGIN_FAILED"
 	CodePermissionDenied            = "PERMISSION_DENIED"

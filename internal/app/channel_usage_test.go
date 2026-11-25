@@ -97,6 +97,11 @@ func TestChannelUsageEndpoints(t *testing.T) {
 				CostUsd           string `json:"cost_usd"`
 				Final             bool   `json:"final"`
 			} `json:"list"`
+			ByDay []struct {
+				BillDate string `json:"bill_date"`
+				CostFen  int64  `json:"cost_fen"`
+				CostUsd  string `json:"cost_usd"`
+			} `json:"by_day"`
 			Total        int     `json:"total"`
 			TotalCostFen int64   `json:"total_cost_fen"`
 			TotalCostUsd string  `json:"total_cost_usd"`
@@ -114,6 +119,16 @@ func TestChannelUsageEndpoints(t *testing.T) {
 	// 13521 fen / 7.2 ≈ 1878 cents → 18.78
 	if out.Data.TotalCostUsd != "18.78" {
 		t.Fatalf("total usd=%q", out.Data.TotalCostUsd)
+	}
+	if len(out.Data.ByDay) != 2 {
+		t.Fatalf("by_day=%+v", out.Data.ByDay)
+	}
+	byDay := map[string]int64{}
+	for _, d := range out.Data.ByDay {
+		byDay[d.BillDate] = d.CostFen
+	}
+	if byDay[today] != 3521 || byDay[yesterday] != 10000 {
+		t.Fatalf("by_day totals=%v", byDay)
 	}
 	foundToday := false
 	for _, row := range out.Data.List {

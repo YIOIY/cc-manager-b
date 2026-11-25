@@ -278,7 +278,27 @@ func TestBillRoutesRequireAuthCSRFAndReturnQueued(t *testing.T) {
 	}
 	json.NewDecoder(response.Body).Decode(&session)
 	response.Body.Close()
-	request, _ = http.NewRequest("POST", server.URL+"/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"local-dev-password"}`))
+	response, err = client.Get(server.URL + "/api/v1/auth/captcha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captcha struct {
+		Data struct {
+			ID string `json:"captcha_id"`
+		} `json:"data"`
+	}
+	json.NewDecoder(response.Body).Decode(&captcha)
+	response.Body.Close()
+	answer, ok := a.captchas.peek(captcha.Data.ID)
+	if !ok {
+		t.Fatal("missing captcha")
+	}
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin", "password": "local-dev-password",
+		"captcha_id": captcha.Data.ID, "captcha": answer,
+	})
+	request, _ = http.NewRequest("POST", server.URL+"/api/v1/auth/login", bytes.NewReader(loginBody))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", session.Data.CSRF)
 	response, err = client.Do(request)
 	if err != nil {

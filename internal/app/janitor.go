@@ -27,6 +27,7 @@ func (a *App) startJanitor(ctx context.Context) {
 			now := time.Now()
 			a.sessions.sweep(now)
 			a.logins.sweep(now)
+			a.captchas.sweep(now)
 			a.writes.sweep(now)
 			a.oauth.sweep(now)
 		}))

@@ -39,6 +39,7 @@
 | `BILL_ROW_INVALID` | upstream | — | 否 | check_platform | 平台返回的账单行格式不正确 | 账单同步项；来自 supplier 包 |
 | `BILL_UPSTREAM_ERROR` | upstream | 502 | 是 | retry | 平台账单查询失败 | 账单查询 5xx |
 | `BILL_WINDOW_INVALID` | validation | 422 | 否 | fix_input | 账单日期不在可查询窗口内 | HTTP 与同步项共用 |
+| `CAPTCHA_INVALID` | validation | 422 | 否 | fix_input | 验证码错误或已过期 | 登录图形验证码缺失、不匹配或已消费 |
 | `CONNECTION_CHANGED` | conflict | — | 否 | retry | 平台连接配置已变化 | 账单同步项：任务执行期间连接被修改 |
 | `CONNECTION_DISABLED` | validation | 422 | 否 | fix_input | 平台连接已停用或未配置令牌 |  |
 | `CONNECTION_EXISTS` | conflict | 409 | 否 | none | 平台连接已存在 | 唯一约束冲突 |

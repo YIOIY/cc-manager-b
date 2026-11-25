@@ -30,7 +30,10 @@ type Config struct {
 	// end-to-end suite sets it: its fixture proxies are not real. Never enable
 	// it outside tests, because it turns both safeguards into no-ops.
 	StubNetworkProbes bool
-	Version           string
+	// CaptchaDebug includes the plaintext answer in /auth/captcha responses so
+	// automated browser tests can fill the form. Never enable in production.
+	CaptchaDebug bool
+	Version      string
 }
 
 const (
@@ -54,6 +57,7 @@ func LoadConfig() (Config, error) {
 		TrustProxy:         os.Getenv("CC_MANAGER_TRUST_PROXY") == "1",
 		WriteRatePerMinute: defaultWriteRate,
 		StubNetworkProbes:  os.Getenv("CC_MANAGER_STUB_NETWORK_PROBES") == "1",
+		CaptchaDebug:       os.Getenv("CC_MANAGER_CAPTCHA_DEBUG") == "1",
 	}
 	if _, err := supplier.ProxyFromEnv(); err != nil {
 		return cfg, fmt.Errorf("CC_MANAGER_SUPPLIER_PROXY: %w", err)

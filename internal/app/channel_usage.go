@@ -348,9 +348,14 @@ func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, storageError(err, "渠道用量读取失败"))
 		return
 	}
+	byDay, ok := a.scanChannelUsageByDay(w, r, f)
+	if !ok {
+		return
+	}
 	totalCents := fenToUsdCents(totalFen, f.rate)
 	write(w, http.StatusOK, map[string]any{
 		"list":            list,
+		"by_day":          byDay,
 		"total_cost_fen":  totalFen,
 		"total_cost_usd":  usdText(totalCents),
 		"total_usd_cents": totalCents,
@@ -362,6 +367,40 @@ func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
 		"to":              f.dates.EndDate,
 		"connection_id":   f.connectionID,
 	})
+}
+
+// scanChannelUsageByDay sums cost across accounts for each bill_date in the
+// filtered window (newest first), using the same ownership/account filters.
+func (a *App) scanChannelUsageByDay(w http.ResponseWriter, r *http.Request, f *channelUsageFilter) ([]map[string]any, bool) {
+	ctx := r.Context()
+	rows, err := a.DB.QueryContext(ctx, `SELECT b.bill_date,COALESCE(SUM(b.cost_fen),0)`+f.base+`
+GROUP BY b.bill_date ORDER BY b.bill_date DESC`, f.args...)
+	if err != nil {
+		writeError(w, r, storageError(err, "渠道用量读取失败"))
+		return nil, false
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var day string
+		var fen int64
+		if err = rows.Scan(&day, &fen); err != nil {
+			writeError(w, r, storageError(err, "渠道用量读取失败"))
+			return nil, false
+		}
+		cents := fenToUsdCents(fen, f.rate)
+		out = append(out, map[string]any{
+			"bill_date":      day,
+			"cost_fen":       fen,
+			"cost_usd_cents": cents,
+			"cost_usd":       usdText(cents),
+		})
+	}
+	if err = rows.Err(); err != nil {
+		writeError(w, r, storageError(err, "渠道用量读取失败"))
+		return nil, false
+	}
+	return out, true
 }
 
 // channelUsageExport answers GET /platform-usage/channel-usage/export:

@@ -24,6 +24,30 @@
               <template #prefix><KeyRound :size="16" /></template>
             </el-input>
           </el-form-item>
+          <el-form-item label="验证码">
+            <div class="login-captcha">
+              <el-input
+                v-model="form.captcha"
+                autocomplete="off"
+                maxlength="8"
+                placeholder="输入图形验证码"
+                @keyup.enter="submit"
+              >
+                <template #prefix><ShieldCheck :size="16" /></template>
+              </el-input>
+              <button
+                type="button"
+                class="login-captcha-image"
+                :disabled="captchaLoading"
+                title="点击刷新验证码"
+                aria-label="点击刷新验证码"
+                @click="refreshCaptcha"
+              >
+                <img v-if="captchaImage" :src="captchaImage" alt="图形验证码" />
+                <span v-else>{{ captchaLoading ? '加载中…' : '点击获取' }}</span>
+              </button>
+            </div>
+          </el-form-item>
           <el-alert v-if="error" :title="error" type="error" :closable="false" />
           <el-button native-type="submit" type="primary" class="wfull" :loading="busy">
             <span>{{ busy ? '正在验证…' : '登录' }}</span>
@@ -36,35 +60,64 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { KeyRound, UsersRound } from 'lucide-vue-next'
+import { onMounted, reactive, ref } from 'vue'
+import { KeyRound, ShieldCheck, UsersRound } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
+import { api, errorMessage } from '../api'
 import { useSession } from '../composables/useSession'
 import { firstAllowedRoute } from '../router'
-import { errorMessage } from '../api'
 
 const { login, can } = useSession()
 const route = useRoute()
 const router = useRouter()
-const form = reactive({ username: '', password: '' })
+const form = reactive({ username: '', password: '', captcha: '' })
 const busy = ref(false)
 const error = ref('')
+const captchaId = ref('')
+const captchaImage = ref('')
+const captchaLoading = ref(false)
+
+async function refreshCaptcha() {
+  if (captchaLoading.value) return
+  captchaLoading.value = true
+  try {
+    const r = await api<{ captcha_id: string; image: string }>('/auth/captcha')
+    captchaId.value = r.data.captcha_id
+    captchaImage.value = r.data.image
+    form.captcha = ''
+  } catch (e) {
+    error.value = errorMessage(e, '验证码加载失败')
+  } finally {
+    captchaLoading.value = false
+  }
+}
 
 async function submit() {
   if (busy.value) return
+  if (!form.captcha.trim() || !captchaId.value) {
+    error.value = '请输入验证码'
+    if (!captchaId.value) await refreshCaptcha()
+    return
+  }
   busy.value = true
   error.value = ''
   try {
-    await login(form.username.trim(), form.password)
+    await login(form.username.trim(), form.password, captchaId.value, form.captcha.trim())
     form.password = ''
+    form.captcha = ''
     const target = firstAllowedRoute()
     if (route.meta.permission && !can(route.meta.permission)) await router.replace({ name: target })
   } catch (e) {
     error.value = errorMessage(e, '登录失败')
+    await refreshCaptcha()
   } finally {
     busy.value = false
   }
 }
+
+onMounted(() => {
+  void refreshCaptcha()
+})
 </script>
 
 <style>
@@ -164,6 +217,44 @@ async function submit() {
   font-size: 14px;
 }
 
+.login-captcha {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.login-captcha-image {
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #e5e6e8;
+  border-radius: 6px;
+  background: #f5f6f8;
+  cursor: pointer;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: #6b7075;
+  font-size: 12px;
+}
+
+.login-captcha-image:hover:not(:disabled) {
+  border-color: #c8c9cc;
+}
+
+.login-captcha-image:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.login-captcha-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .login-card .el-alert {
   margin: 0 0 12px;
 }
@@ -190,6 +281,9 @@ async function submit() {
   }
   .login-card h1 {
     font-size: 22px;
+  }
+  .login-captcha {
+    grid-template-columns: 1fr 120px;
   }
 }
 

@@ -383,8 +383,17 @@ export interface ChannelUsageRow {
   final: boolean
 }
 
+/** Per-calendar-day total across all matching accounts. */
+export interface ChannelUsageDayTotal {
+  bill_date: string
+  cost_fen: number
+  cost_usd_cents: number
+  cost_usd: string
+}
+
 export interface ChannelUsageResponse {
   list: ChannelUsageRow[]
+  by_day: ChannelUsageDayTotal[]
   total_cost_fen: number
   total_cost_usd: string
   total_usd_cents: number

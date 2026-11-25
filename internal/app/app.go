@@ -29,6 +29,7 @@ type App struct {
 	keys              *secretbox.Keyring
 	sessions          *sessionStore
 	logins            *loginLimiter
+	captchas          *captchaStore
 	writes            *writeLimiter
 	oauth             oauthPendingStore
 	oauthCooldown     oauthAccountCooldown
@@ -140,9 +141,12 @@ func NewWithConfig(cfg Config, workers bool) (*App, error) {
 			return nil, err
 		}
 	}
-	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now(), oauthGate: newOAuthGateAtomic(oauthGateSize), oauthExitGate: newExitGateAtomic(2, oauthGateWait)}
+	a := &App{DB: db, cfg: cfg, keys: keys, sessions: newSessionStore(), logins: newLoginLimiter(), captchas: newCaptchaStore(), writes: newWriteLimiter(cfg.WriteRatePerMinute), billInterval: cfg.BillInterval, started: time.Now(), oauthGate: newOAuthGateAtomic(oauthGateSize), oauthExitGate: newExitGateAtomic(2, oauthGateWait)}
 	if cfg.StubNetworkProbes {
 		slog.Warn("network probes are stubbed (CC_MANAGER_STUB_NETWORK_PROBES=1); use this for end-to-end tests only")
+	}
+	if cfg.CaptchaDebug {
+		slog.Warn("login captcha answers are exposed (CC_MANAGER_CAPTCHA_DEBUG=1); use this for automated tests only")
 	}
 	if autoStubProxyProbe || cfg.StubNetworkProbes {
 		a.probeCandidateProxy = func(context.Context, string) (proxyProbeResult, error) {
