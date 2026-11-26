@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS proxies(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAUL
 CREATE TABLE IF NOT EXISTS platform_connections(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',token_secret TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT '',allowed_plans_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '',web_username TEXT NOT NULL DEFAULT '',web_password_secret TEXT NOT NULL DEFAULT '',web_suspended_at TEXT NOT NULL DEFAULT '',web_suspended_reason TEXT NOT NULL DEFAULT '',usd_cny_rate REAL NOT NULL DEFAULT 7.2);
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT '',account_id TEXT NOT NULL DEFAULT '',connection_id TEXT NOT NULL DEFAULT '',payload_json TEXT NOT NULL DEFAULT '{}',result_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS oauth_dispatch_settings(id INTEGER PRIMARY KEY CHECK(id=1),global_concurrency INTEGER NOT NULL,exit_concurrency INTEGER NOT NULL,exchange_interval_seconds INTEGER NOT NULL,probe_cache_seconds INTEGER NOT NULL,manual_preheat_seconds_min INTEGER NOT NULL,manual_preheat_seconds_max INTEGER NOT NULL,batch_preheat_seconds_min INTEGER NOT NULL,batch_preheat_seconds_max INTEGER NOT NULL,ua_pool_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL DEFAULT '',password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,can_onboard INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
+CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,nickname TEXT NOT NULL DEFAULT '',password_hash TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,can_onboard INTEGER NOT NULL DEFAULT 1,daily_onboard_limit INTEGER NOT NULL DEFAULT 0,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_login_at TEXT);
+CREATE TABLE IF NOT EXISTS system_settings(id INTEGER PRIMARY KEY CHECK(id=1),daily_onboard_max INTEGER NOT NULL DEFAULT 0,onboard_window_start TEXT NOT NULL DEFAULT '',onboard_window_end TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS roles(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,description TEXT NOT NULL DEFAULT '',builtin INTEGER NOT NULL DEFAULT 0,permissions_json TEXT NOT NULL DEFAULT '[]',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS user_roles(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id),PRIMARY KEY(user_id,role_id));
 CREATE TABLE IF NOT EXISTS audit_events(id INTEGER PRIMARY KEY AUTOINCREMENT,action TEXT NOT NULL DEFAULT '',resource_type TEXT NOT NULL DEFAULT '',resource_id TEXT NOT NULL DEFAULT '',actor TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT '');
@@ -268,7 +269,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	var counts struct {
 		accounts, archived, ready, linked, observed, proxies, disabledProxies, jobsRunning, jobsQueued, jobsSucceeded, jobsFailed int
-		billRequests, billCost                                                                                                    int64
+		billRequests                                                                                                              int64
 	}
 	recent := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
 	today := time.Now().UTC().Format("2006-01-02")
@@ -287,8 +288,6 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	args = append(args, jobArgs...)
 	args = append(args, today)
 	args = append(args, billArgs...)
-	args = append(args, today)
-	args = append(args, billArgs...)
 	err := a.DB.QueryRowContext(ctx, `SELECT
 (SELECT COUNT(*) FROM accounts WHERE archived=0`+accountScope+`),
 (SELECT COUNT(*) FROM accounts WHERE archived=1`+accountScope+`),
@@ -301,9 +300,13 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 (SELECT COUNT(*) FROM jobs WHERE state='queued'`+jobScope+`),
 (SELECT COUNT(*) FROM jobs WHERE state='succeeded'`+jobScope+`),
 (SELECT COUNT(*) FROM jobs WHERE state='failed'`+jobScope+`),
-(SELECT COALESCE(SUM(request_count),0) FROM platform_bill_daily WHERE bill_date=?`+billScope+`),
-(SELECT COALESCE(SUM(cost_fen),0) FROM platform_bill_daily WHERE bill_date=?`+billScope+`)`, args...).Scan(
-		&counts.accounts, &counts.archived, &counts.ready, &counts.linked, &counts.observed, &counts.proxies, &counts.disabledProxies, &counts.jobsRunning, &counts.jobsQueued, &counts.jobsSucceeded, &counts.jobsFailed, &counts.billRequests, &counts.billCost)
+(SELECT COALESCE(SUM(request_count),0) FROM platform_bill_daily WHERE bill_date=?`+billScope+`)`, args...).Scan(
+		&counts.accounts, &counts.archived, &counts.ready, &counts.linked, &counts.observed, &counts.proxies, &counts.disabledProxies, &counts.jobsRunning, &counts.jobsQueued, &counts.jobsSucceeded, &counts.jobsFailed, &counts.billRequests)
+	if err != nil {
+		writeError(w, r, storageError(err, "读取概览失败"))
+		return
+	}
+	todayCostCents, err := a.sumBillDailyUSDCents(ctx, today, billScope, billArgs)
 	if err != nil {
 		writeError(w, r, storageError(err, "读取概览失败"))
 		return
@@ -345,8 +348,28 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		"accounts": map[string]any{"total": counts.accounts, "ready": counts.ready, "archived": counts.archived, "platform_linked": counts.linked, "observed_recently": counts.observed, "by_plan": plansByCount},
 		"jobs":     map[string]any{"running": counts.jobsRunning, "queued": counts.jobsQueued, "succeeded": counts.jobsSucceeded, "failed": counts.jobsFailed},
 		"proxies":  map[string]any{"healthy": counts.proxies, "enabled": counts.proxies, "disabled": counts.disabledProxies},
-		"platform": mergeMaps(mergeMaps(map[string]any{"today_requests": counts.billRequests, "today_cost_fen": counts.billCost}, syncHealth), webHealth),
+		"platform": mergeMaps(mergeMaps(map[string]any{"today_requests": counts.billRequests, "today_cost_usd_cents": todayCostCents, "today_cost_usd": usdText(todayCostCents)}, syncHealth), webHealth),
 	})
+}
+
+// sumBillDailyUSDCents converts each day's RMB fen rows with that connection's
+// rate, then sums USD cents (bill_date filter already applied by the caller).
+func (a *App) sumBillDailyUSDCents(ctx context.Context, day, scopeSQL string, scopeArgs []any) (int64, error) {
+	rows, err := a.DB.QueryContext(ctx, `SELECT b.cost_fen,COALESCE(c.usd_cny_rate,?) FROM platform_bill_daily b LEFT JOIN platform_connections c ON c.id=b.connection_id WHERE b.bill_date=?`+scopeSQL, append([]any{defaultUSDCNYRate, day}, scopeArgs...)...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var total int64
+	for rows.Next() {
+		var fen int64
+		var rate float64
+		if err = rows.Scan(&fen, &rate); err != nil {
+			return 0, err
+		}
+		total += fenToUsdCents(fen, rate)
+	}
+	return total, rows.Err()
 }
 
 // accounts serves GET (list) and POST (create draft).
@@ -372,7 +395,7 @@ const accountListBase = `WITH latest AS (
 	SELECT l.* FROM platform_links l
 	WHERE l.rowid=(SELECT rowid FROM platform_links x WHERE x.account_id=l.account_id ORDER BY x.updated_at DESC,x.rowid DESC LIMIT 1)
 ), bill AS (
-	SELECT b.account_id,b.cost_fen FROM platform_bill_daily b
+	SELECT b.account_id,b.cost_fen,b.connection_id FROM platform_bill_daily b
 	WHERE b.rowid=(SELECT rowid FROM platform_bill_daily x WHERE x.account_id=b.account_id ORDER BY x.bill_date DESC,x.rowid DESC LIMIT 1)
 ), remote AS (
 	SELECT r.connection_id,r.upstream_id,r.five_hour_used,r.last_seen_at FROM platform_remote_accounts r
@@ -382,7 +405,7 @@ COALESCE(NULLIF(NULLIF(m.upstream_aid,''),'0'),NULLIF(NULLIF(l.upstream_aid,''),
 COALESCE(m.alias,l.alias,'') AS platform_alias,
 CASE WHEN COALESCE(l.last_observed_at,'')>=COALESCE(m.fetched_at,'') THEN COALESCE(l.runtime_status,m.runtime_status,'') ELSE COALESCE(m.runtime_status,l.runtime_status,'') END AS platform_status,
 CASE WHEN COALESCE(l.last_observed_at,'')>=COALESCE(m.fetched_at,'') THEN COALESCE(l.last_observed_at,m.fetched_at,'') ELSE COALESCE(m.fetched_at,l.last_observed_at,'') END AS platform_observed_at,
-m.requests,m.prompt_tokens,m.completion_tokens,m.success_rate,bill.cost_fen,
+m.requests,m.prompt_tokens,m.completion_tokens,m.success_rate,bill.cost_fen,COALESCE(bc.usd_cny_rate,7.2),
 CASE
 	WHEN EXISTS(SELECT 1 FROM platform_links pl WHERE pl.account_id=a.id AND pl.ingestion_state='accepted' AND COALESCE(pl.upstream_id,'')<>'') THEN 'linked'
 	WHEN EXISTS(SELECT 1 FROM deliveries d WHERE d.account_id=a.id AND d.ingestion_state IN ('unknown','accepted')) THEN 'unknown'
@@ -395,7 +418,7 @@ COALESCE(a.created_by_user_id,'') AS created_by_user_id,
 COALESCE(u.nickname,'') AS created_by_nickname,
 COALESCE(u.username,'') AS created_by_username,
 COALESCE(px.host,'') AS proxy_host
-FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id LEFT JOIN remote rem ON rem.connection_id=l.connection_id AND rem.upstream_id=l.upstream_id LEFT JOIN users u ON u.id=a.created_by_user_id LEFT JOIN proxies px ON px.id=a.proxy_id AND a.proxy_id<>''`
+FROM accounts a LEFT JOIN latest m ON m.account_id=a.id LEFT JOIN link l ON l.account_id=a.id LEFT JOIN bill ON bill.account_id=a.id LEFT JOIN platform_connections bc ON bc.id=bill.connection_id LEFT JOIN remote rem ON rem.connection_id=l.connection_id AND rem.upstream_id=l.upstream_id LEFT JOIN users u ON u.id=a.created_by_user_id LEFT JOIN proxies px ON px.id=a.proxy_id AND a.proxy_id<>''`
 
 // unpagedAccountLimit caps the legacy array response; the UI always pages.
 const unpagedAccountLimit = 2000
@@ -645,9 +668,9 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 		var version, archived int
 		var rid int64
 		var requests, prompt, completion, cost sql.NullInt64
-		var success, fiveHour sql.NullFloat64
+		var success, fiveHour, billRate sql.NullFloat64
 		var channel, createdByID, createdByNickname, createdByUsername, proxyHost string
-		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &onboarding, &fiveHour, &channel, &createdByID, &createdByNickname, &createdByUsername, &proxyHost); err != nil {
+		if err = rows.Scan(&id, &account, &plan, &loc, &rt, &ps, &pe, &proxy, &version, &archived, &created, &updated, &rid, &upstreamID, &alias, &platformStatus, &observed, &requests, &prompt, &completion, &success, &cost, &billRate, &onboarding, &fiveHour, &channel, &createdByID, &createdByNickname, &createdByUsername, &proxyHost); err != nil {
 			writeError(w, r, storageError(err, "账号读取失败"))
 			return
 		}
@@ -665,7 +688,13 @@ func (a *App) listAccounts(w http.ResponseWriter, r *http.Request) {
 			m["platform_success_rate_percent"] = success.Float64
 		}
 		if cost.Valid {
-			m["platform_cost_fen"] = cost.Int64
+			rate := defaultUSDCNYRate
+			if billRate.Valid {
+				rate = billRate.Float64
+			}
+			cents, text := costUSDFields(cost.Int64, rate)
+			m["platform_cost_usd_cents"] = cents
+			m["platform_cost_usd"] = text
 		}
 		m["platform_channel"] = channel
 		out = append(out, m)
@@ -1114,7 +1143,7 @@ func (a *App) accountPlatformUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out["metrics"] = list
-	bills, err := a.DB.QueryContext(r.Context(), `SELECT upstream_id,bill_date,request_count,prompt_tokens,completion_tokens,cache_read_input_tokens,cache_write_input_tokens,cost_fen,fetched_at,revision,finalized FROM platform_bill_daily WHERE account_id=? ORDER BY bill_date DESC LIMIT 90`, id)
+	bills, err := a.DB.QueryContext(r.Context(), `SELECT b.upstream_id,b.bill_date,b.request_count,b.prompt_tokens,b.completion_tokens,b.cache_read_input_tokens,b.cache_write_input_tokens,b.cost_fen,b.fetched_at,b.revision,b.finalized,COALESCE(c.usd_cny_rate,?) FROM platform_bill_daily b LEFT JOIN platform_connections c ON c.id=b.connection_id WHERE b.account_id=? ORDER BY b.bill_date DESC LIMIT 90`, defaultUSDCNYRate, id)
 	if err != nil {
 		writeError(w, r, storageError(err, "读取平台账单失败"))
 		return
@@ -1125,11 +1154,13 @@ func (a *App) accountPlatformUsage(w http.ResponseWriter, r *http.Request) {
 		var upstream, date, fetched string
 		var req, prompt, completion, read, writeN, cost, rev int64
 		var final int
-		if err = bills.Scan(&upstream, &date, &req, &prompt, &completion, &read, &writeN, &cost, &fetched, &rev, &final); err != nil {
+		var rate float64
+		if err = bills.Scan(&upstream, &date, &req, &prompt, &completion, &read, &writeN, &cost, &fetched, &rev, &final, &rate); err != nil {
 			writeError(w, r, storageError(err, "读取平台账单失败"))
 			return
 		}
-		list = append(list, map[string]any{"platform_account_id": upstream, "bill_date": date, "request_count": req, "prompt_tokens": prompt, "completion_tokens": completion, "cache_read_input_tokens": read, "cache_write_input_tokens": writeN, "cost_fen": cost, "fetched_at": fetched, "revision": rev, "finalized": final == 1})
+		cents, text := costUSDFields(cost, rate)
+		list = append(list, map[string]any{"platform_account_id": upstream, "bill_date": date, "request_count": req, "prompt_tokens": prompt, "completion_tokens": completion, "cache_read_input_tokens": read, "cache_write_input_tokens": writeN, "cost_usd_cents": cents, "cost_usd": text, "fetched_at": fetched, "revision": rev, "finalized": final == 1})
 	}
 	if err = bills.Err(); err != nil {
 		writeError(w, r, storageError(err, "读取平台账单失败"))

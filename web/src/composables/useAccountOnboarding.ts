@@ -50,7 +50,7 @@ export type AccountOnboardingEmit = {
 }
 
 export function useAccountOnboarding(props: AccountOnboardingProps, emit: AccountOnboardingEmit) {
-  const { check, onboardAllowed } = useSession()
+  const { check, onboardAllowed, onboardBlockedMessage } = useSession()
   const step = ref(1)
   const edit = ref<AccountForm>({})
   const source = ref<'oauth' | 'import' | 'manual' | 'saved' | ''>('')
@@ -746,7 +746,7 @@ export function useAccountOnboarding(props: AccountOnboardingProps, emit: Accoun
         /* API still enforces */
       }
       if (!onboardAllowed()) {
-        notice.value = new Error('当前账号已被禁止上号，请联系管理员')
+        notice.value = new Error(onboardBlockedMessage())
         return
       }
       const payload = buildOnboardPayload(edit.value)

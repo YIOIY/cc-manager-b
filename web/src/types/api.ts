@@ -41,6 +41,8 @@ export type Permission =
   | 'roles.manage'
   | 'feedback.manage'
   | 'announcement.manage'
+  | 'settings.view'
+  | 'settings.manage'
 
 export interface RoleRef {
   id: string
@@ -52,10 +54,23 @@ export interface SessionUser {
   id: string
   username: string
   nickname: string
+  /** Per-user switch from 用户管理; independent of time window / daily caps. */
   can_onboard: boolean
+  daily_onboard_limit: number
+  /** Effective gate: user switch + global window + daily caps. */
+  onboard_allowed: boolean
+  /** When onboard_allowed is false: ONBOARD_DISABLED / ONBOARD_OUTSIDE_WINDOW / ONBOARD_DAILY_LIMIT. */
+  onboard_block_code?: string
   roles: RoleRef[]
   permissions: Permission[]
   is_admin: boolean
+}
+
+export interface SystemSettings {
+  daily_onboard_max: number
+  onboard_window_start: string
+  onboard_window_end: string
+  version: number
 }
 
 export interface Session {
@@ -70,6 +85,7 @@ export interface User {
   nickname: string
   enabled: boolean
   can_onboard: boolean
+  daily_onboard_limit: number
   version: number
   created_at: string
   updated_at: string
@@ -163,7 +179,8 @@ export interface Account {
   platform_prompt_tokens?: number
   platform_completion_tokens?: number
   platform_success_rate_percent?: number
-  platform_cost_fen?: number
+  platform_cost_usd?: string
+  platform_cost_usd_cents?: number
   platform_links: PlatformLink[]
   /** Which channel the displayed platform_status came from ('' when never observed). */
   platform_channel?: 'web' | 'openapi' | ''
@@ -201,10 +218,10 @@ export interface PlatformProfile {
   tags: string[]
 }
 
-/** The console's "账号用量" block. Percentages are 0–100, cost in fen. */
+/** The console's "账号用量" block. Percentages are 0–100; cost is USD from the API. */
 export interface PlatformUsage {
-  cost_fen: number
-  cost_yuan: string
+  cost_usd: string
+  cost_usd_cents: number
   input_tokens: number
   output_tokens: number
   five_hour_used_percent: number
@@ -238,7 +255,7 @@ export interface PlatformInfo {
   remark: string
   /** Whether this connection's console channel can carry a profile edit. */
   web_channel: { configured: boolean; suspended: boolean }
-  /** The platform's fixed RMB-per-dollar rate (from the connection), for showing RMB costs in dollars. */
+  /** The platform's fixed RMB-per-dollar rate (from the connection); API already converts costs with it. */
   usd_cny_rate: number
   profile: PlatformProfile
   usage: PlatformUsage | null
@@ -320,8 +337,8 @@ export interface BillModelRow {
   upstream_id: string
   model_name: string
   bill_model_name: string
-  cost_fen: number
-  cost_yuan: string
+  cost_usd: string
+  cost_usd_cents: number
   final: boolean
   fetched_at: string
   generation: number
@@ -329,10 +346,10 @@ export interface BillModelRow {
 
 export interface BillModelsResponse {
   list: BillModelRow[]
-  by_account: { account_id: string; account: string; cost_fen: number; cost_yuan: string }[]
-  by_model: { model_name: string; cost_fen: number; cost_yuan: string }[]
-  total_cost_fen: number
-  total_cost_yuan: string
+  by_account: { account_id: string; account: string; cost_usd: string; cost_usd_cents: number }[]
+  by_model: { model_name: string; cost_usd: string; cost_usd_cents: number }[]
+  total_cost_usd: string
+  total_cost_usd_cents: number
   coverage: {
     days_requested: number
     days_present: number
@@ -377,7 +394,6 @@ export interface ChannelUsageRow {
   owner_user_id: string
   owner_nickname: string
   owner_username: string
-  cost_fen: number
   cost_usd_cents: number
   cost_usd: string
   final: boolean
@@ -386,7 +402,6 @@ export interface ChannelUsageRow {
 /** Per-calendar-day total across all matching accounts. */
 export interface ChannelUsageDayTotal {
   bill_date: string
-  cost_fen: number
   cost_usd_cents: number
   cost_usd: string
 }
@@ -394,7 +409,6 @@ export interface ChannelUsageDayTotal {
 export interface ChannelUsageResponse {
   list: ChannelUsageRow[]
   by_day: ChannelUsageDayTotal[]
-  total_cost_fen: number
   total_cost_usd: string
   total_usd_cents: number
   usd_cny_rate: number
@@ -408,8 +422,8 @@ export interface ChannelUsageResponse {
 
 export interface UsageHistoryPoint {
   observed_at: string
-  cost_fen: number
-  cost_yuan: string
+  cost_usd: string
+  cost_usd_cents: number
   input_tokens: number
   output_tokens: number
   five_hour_used_percent: number
@@ -428,7 +442,7 @@ export interface ProxyCheck {
   message: string
 }
 
-/** Picker option from GET /lookups/proxies: identity only, no checks or auth. */
+/** Picker option from GET /lookups/proxies: unused proxies only (optional account_id keeps current binding); identity only, no checks or auth. */
 export interface ProxyOption {
   id: string
   name: string
@@ -509,7 +523,8 @@ export interface Dashboard {
 /** Platform usage summary plus the health of the metrics sync. */
 export interface DashboardPlatform {
   today_requests: number
-  today_cost_fen: number
+  today_cost_usd?: string
+  today_cost_usd_cents?: number
   last_sync_at: string
   last_sync_state: string
   sync_status?: 'ok' | 'failing' | 'never'
@@ -524,13 +539,16 @@ export interface DashboardPlatform {
   web_bills_health?: DashboardPlatform
   remote_counts_by_status?: Record<string, number>
   near_limit_accounts?: number
-  today_model_cost_fen?: number
-  week_model_cost_fen?: number
+  today_model_cost_usd?: string
+  today_model_cost_usd_cents?: number
+  week_model_cost_usd?: string
+  week_model_cost_usd_cents?: number
   /** All-time bill total for the caller's ownership scope (admin = all). */
-  total_model_cost_fen?: number
+  total_model_cost_usd?: string
+  total_model_cost_usd_cents?: number
   cost_by_day?: SpendDay[]
-  cost_by_model?: { model_name: string; cost_fen: number }[]
-  cost_by_account?: { account_id: string; account: string; cost_fen: number }[]
+  cost_by_model?: { model_name: string; cost_usd: string; cost_usd_cents: number }[]
+  cost_by_account?: { account_id: string; account: string; cost_usd: string; cost_usd_cents: number }[]
 }
 
 /** One account on the dashboard's quota board. Percentages are 0–100; null when the platform reports no usage. */
@@ -548,7 +566,8 @@ export interface QuotaRow {
   five_hour_reset_at: string
   week_percent: number | null
   week_reset_at: string
-  cost_fen: number | null
+  cost_usd_cents: number | null
+  cost_usd?: string
 }
 
 export interface IdleRow {
@@ -560,7 +579,8 @@ export interface IdleRow {
   created_by_nickname: string
   created_by_username: string
   week_percent: number | null
-  cost_fen: number | null
+  cost_usd_cents: number | null
+  cost_usd?: string
   plan_end: string
   /** null when the plan end date is unknown. */
   days_left: number | null
@@ -569,7 +589,8 @@ export interface IdleRow {
 export interface HourlyCost {
   /** Start of the hour, RFC 3339 UTC. */
   hour: string
-  cost_fen: number
+  cost_usd_cents: number
+  cost_usd: string
 }
 
 export interface RecentJob {
@@ -588,7 +609,8 @@ export interface DashboardInsights {
   usd_cny_rate: number | null
   fleet: {
     accounts: number
-    cost_fen_total: number
+    cost_usd_cents_total: number
+    cost_usd_total: string
     input_tokens: number
     output_tokens: number
     avg_five_hour_percent: number
@@ -610,7 +632,8 @@ export interface DashboardInsights {
 
 export interface SpendDay {
   date: string
-  cost_fen: number
+  cost_usd: string
+  cost_usd_cents: number
   final: boolean
 }
 

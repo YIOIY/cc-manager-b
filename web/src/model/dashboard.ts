@@ -23,9 +23,9 @@ export function accountQuery(item: AttentionItem): { q: string } {
 
 export function spendBars(days: SpendDay[]): number[] {
   let max = 0
-  for (const d of days) if (d.cost_fen > max) max = d.cost_fen
+  for (const d of days) if (d.cost_usd_cents > max) max = d.cost_usd_cents
   if (max === 0) return days.map(() => 0)
-  return days.map((d) => Math.round((d.cost_fen / max) * 100))
+  return days.map((d) => Math.round((d.cost_usd_cents / max) * 100))
 }
 
 const severityTone: Record<string, 'danger' | 'warning' | 'info'> = { danger: 'danger', warn: 'warning', info: 'info' }
@@ -38,16 +38,16 @@ export function severityTag(severity: string): 'danger' | 'warning' | 'info' {
 export function dayChange(days: SpendDay[]): { percent: number; up: boolean } | null {
   const done = days.filter((d) => d.final)
   if (done.length < 2) return null
-  const last = done[done.length - 1]!.cost_fen
-  const before = done[done.length - 2]!.cost_fen
+  const last = done[done.length - 1]!.cost_usd_cents
+  const before = done[done.length - 2]!.cost_usd_cents
   if (before <= 0) return null
   return { percent: Math.round((Math.abs(last - before) / before) * 100), up: last >= before }
 }
 
-/** Mean spend of the complete days, in fen. */
-export function dailyAverageFen(days: SpendDay[]): number {
+/** Mean spend of the complete days, in USD cents. */
+export function dailyAverageCents(days: SpendDay[]): number {
   const done = days.filter((d) => d.final)
-  return done.length ? Math.round(done.reduce((sum, d) => sum + d.cost_fen, 0) / done.length) : 0
+  return done.length ? Math.round(done.reduce((sum, d) => sum + d.cost_usd_cents, 0) / done.length) : 0
 }
 
 export interface ShareSegment {
@@ -69,10 +69,10 @@ export function shareSegments(counts: Record<string, number>, order: string[] = 
 
 /** Bar heights (0–100) for the hourly spend; an hour with any spend stays visible. */
 export function hourlyBars(hours: HourlyCost[]): (HourlyCost & { height: number })[] {
-  const max = hours.reduce((m, h) => Math.max(m, h.cost_fen), 0)
+  const max = hours.reduce((m, h) => Math.max(m, h.cost_usd_cents), 0)
   return hours.map((h) => ({
     ...h,
-    height: max && h.cost_fen > 0 ? Math.max(3, Math.round((h.cost_fen / max) * 100)) : 0,
+    height: max && h.cost_usd_cents > 0 ? Math.max(3, Math.round((h.cost_usd_cents / max) * 100)) : 0,
   }))
 }
 
@@ -81,9 +81,9 @@ export function hourlySummary(hours: HourlyCost[]): { total: number; peak: numbe
   let peak = 0
   let peakHour: string | null = null
   for (const h of hours) {
-    total += h.cost_fen
-    if (h.cost_fen > peak) {
-      peak = h.cost_fen
+    total += h.cost_usd_cents
+    if (h.cost_usd_cents > peak) {
+      peak = h.cost_usd_cents
       peakHour = h.hour
     }
   }

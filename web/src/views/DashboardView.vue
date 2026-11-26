@@ -19,20 +19,20 @@
     </div>
     <div class="stat" data-stat="today_cost">
       <span>今日消费</span>
-      <b class="money">{{ usd(todayFen) || '—' }}</b>
+      <b class="money">{{ todayUsd || '—' }}</b>
       <p class="stat-total">
         <span>总消费</span>
-        <strong>{{ usd(totalFen) || '—' }}</strong>
+        <strong>{{ totalUsd || '—' }}</strong>
       </p>
       <small
-        >7 天 {{ usd(weekFen) || '—' }} · 日均 {{ usd(dailyAverage) || '—'
+        >7 天 {{ weekUsd || '—' }} · 日均 {{ dailyAverageUsd || '—'
         }}<template v-if="change"
           >，昨天比前一天<i :class="change.up ? 'up' : 'down'"
             >{{ change.up ? '多' : '少' }} {{ change.percent }}%</i
           ></template
         ></small
       >
-      <small class="stat-foot">今日未出齐，约 2 小时延迟</small>
+      <small class="stat-foot">今日数据约有 2 小时延迟</small>
     </div>
     <div class="stat" data-stat="action" :class="{ attention: actionTotal > 0 }">
       <span>需要动手</span>
@@ -67,16 +67,10 @@
       :rows="insights?.quota || []"
       :loading="insightsLoading"
       :failed="insightsFailed"
-      :usd-rate="insights?.usd_cny_rate ?? undefined"
       @open="(row) => go({ q: row.account || row.alias })"
       @all="go({})"
     />
-    <SpendPanel
-      :platform="dash?.platform"
-      :hourly="insights?.hourly"
-      :usd-rate="insights?.usd_cny_rate ?? undefined"
-      @bills="router.push({ name: 'platformBills' })"
-    />
+    <SpendPanel :platform="dash?.platform" :hourly="insights?.hourly" @bills="router.push({ name: 'platformBills' })" />
   </div>
 
   <div class="dashboard-grid">
@@ -170,8 +164,8 @@ import IdleAccounts from '../components/IdleAccounts.vue'
 import { api, errorMessage } from '../api'
 import type { AttentionItem, AttentionResponse, Dashboard, DashboardInsights } from '../types/api'
 import { formatDateTime } from '../utils/format'
-import { accountQuery, dailyAverageFen, dayChange } from '../model/dashboard'
-import { fenToUsdCents, formatUsdCents } from '../model/money'
+import { accountQuery, dailyAverageCents, dayChange } from '../model/dashboard'
+import { formatUsd, formatUsdCents } from '../model/money'
 
 const router = useRouter()
 const dash = ref<Dashboard>()
@@ -206,11 +200,23 @@ const bannedCount = computed(() =>
   Object.entries(remoteCounts.value).reduce((n, [status, c]) => (failingStatuses.has(status) ? n + Number(c) : n), 0),
 )
 const nearLimit = computed(() => dash.value?.platform.near_limit_accounts ?? 0)
-const todayFen = computed(() => dash.value?.platform.today_model_cost_fen ?? 0)
-const weekFen = computed(() => dash.value?.platform.week_model_cost_fen ?? 0)
-const totalFen = computed(() => dash.value?.platform.total_model_cost_fen ?? 0)
+const todayUsd = computed(() => {
+  const v = dash.value?.platform.today_model_cost_usd
+  return v != null ? formatUsd(v) : ''
+})
+const weekUsd = computed(() => {
+  const v = dash.value?.platform.week_model_cost_usd
+  return v != null ? formatUsd(v) : ''
+})
+const totalUsd = computed(() => {
+  const v = dash.value?.platform.total_model_cost_usd
+  return v != null ? formatUsd(v) : ''
+})
 const days = computed(() => dash.value?.platform.cost_by_day || [])
-const dailyAverage = computed(() => dailyAverageFen(days.value))
+const dailyAverageUsd = computed(() => {
+  const cents = dailyAverageCents(days.value)
+  return cents ? formatUsdCents(cents) : ''
+})
 const change = computed(() => dayChange(days.value))
 const expiry = computed(() => insights.value?.composition.expiry || {})
 const expiringSoon = computed(
@@ -237,11 +243,6 @@ const webHealth = computed<SyncHealthView>(() =>
 // Open the folded section by default when a sync channel is failing.
 const systemAlert = computed(() => webHealth.value.tone === 'danger' || metricsHealth.value.tone === 'danger')
 
-// Dollars when the platform rate is known (from insights); otherwise blank.
-function usd(fen: number): string {
-  const cents = fenToUsdCents(fen, insights.value?.usd_cny_rate)
-  return cents === null ? '' : formatUsdCents(cents)
-}
 function go(query: Record<string, string>) {
   router.push({ name: 'accounts', query })
 }

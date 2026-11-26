@@ -332,9 +332,9 @@ PATCH对顶层字段逐项合并：未出现保持，null删除，字符串/数�
 
 `connection_id/from/to` 必填；账号是本地 ID，空数组表示全部。支持 `bill_date_desc/bill_date_asc`，稳定次序包含账号和行 ID。`page_size` 允许 10、20、50、100。单次最多指定 10000 个账号。关键词匹配账号、关联别名、供应商 id 和平台 aid；修订次数可设非负下界。未知字段和多余 JSON 对象被拒绝。
 
-返回 `data.items/pagination/totals/coverage/timezone`。`items` 的 `supplier_account_id` 是供应商上号返回的 id；`platform_account_id` 是 aid，未知时为 null。计数、Token、`cost_fen` 是十进制字符串，金额单位为分。所有本轮日账单保持 `finalized:false`；`revision` 初始 1，仅数值变化时递增。
+返回 `data.items/pagination/totals/coverage/timezone`。`items` 的 `supplier_account_id` 是供应商上号返回的 id；`platform_account_id` 是 aid，未知时为 null。计数、Token 是十进制字符串；金额按连接 `usd_cny_rate` 在服务端把库内人民币分折算为 `cost_usd_cents`（整数）与 `cost_usd`（两位小数字符串，如 `"1.67"`），前端直接显示美元、不再换算。所有本轮日账单保持 `finalized:false`；`revision` 初始 1，仅数值变化时递增。
 
-`totals` 为当前筛选的**全部已保存行**合计，不受分页影响；包含 `currency:CNY`、`scope:all_matching_saved_rows`、`is_partial`。`coverage` 按连接、账号、日期和归档范围计算，不受关键词或修订次数改变；包含 `expected_items/verified_items/legacy_unverified_items/missing_items/no_data_items/failed_items/stale_items/latest_fetched_at/complete`。缺失、失败和 no_data 可能覆盖同一账号日，不能把这些数字直接相加。只有全部期望账号日都有新鲜、已校验的数据时才完整。
+`totals` 为当前筛选的**全部已保存行**合计，不受分页影响；包含 `currency:USD`、`cost_usd` / `cost_usd_cents`、`scope:all_matching_saved_rows`、`is_partial`。`coverage` 按连接、账号、日期和归档范围计算，不受关键词或修订次数改变；包含 `expected_items/verified_items/legacy_unverified_items/missing_items/no_data_items/failed_items/stale_items/latest_fetched_at/complete`。缺失、失败和 no_data 可能覆盖同一账号日，不能把这些数字直接相加。只有全部期望账号日都有新鲜、已校验的数据时才完整。
 
 同步示例：
 
@@ -372,14 +372,15 @@ PATCH对顶层字段逐项合并：未出现保持，null删除，字符串/数�
   "data": {
     "account_id": "7f4a5aef-4176-45df-8441-13036c369720",
     "source": "bill",
-    "currency": "CNY",
+    "currency": "USD",
     "totals": {
       "requests": "1234",
       "prompt_tokens": "100000",
       "completion_tokens": "50000",
       "cache_read_input_tokens": "3000",
       "cache_write_input_tokens": "1000",
-      "cost_fen": "1234",
+      "cost_usd": "1.71",
+      "cost_usd_cents": "171",
       "success_rate_percent": null
     },
     "coverage": { "complete": true, "missing_dates": [] },
@@ -395,7 +396,7 @@ PATCH对顶层字段逐项合并：未出现保持，null删除，字符串/数�
 }
 ```
 
-`cost_fen:"1234"`显示¥12.34；不能当¥1234。metrics返回 `cost_fen:null`，而不是0；bill没有成功率时返回null。`finalized:false`表示仍可能因平台延迟发生修订，不能仅凭距当前2小时就声称上游账单绝不变化。
+`cost_usd:"1.71"`表示 $1.71（由人民币分按连接汇率折算）；不能当美分整数直接显示。metrics 金额字段同理；没有金额时返回 null 而不是 0；bill 没有成功率时返回 null。`finalized:false`表示仍可能因平台延迟发生修订，不能仅凭距当前2小时就声称上游账单绝不变化。
 
 跨账号总数/金额只在相同source和不重叠窗口内聚合。缺项保留不完整标记，成功率权重未知时不返回伪精确总体值。
 
@@ -407,8 +408,8 @@ PATCH对顶层字段逐项合并：未出现保持，null删除，字符串/数�
 | `POST /platform-connections` | 创建管理员指定的连接 |
 | `PATCH /platform-connections/{id}` | 修改base_url、timezone、allowed_plans、enabled和Token；只写秘密 |
 | `POST /platform-connections/{id}/test` | 对已关联账号做只读查询验证；无账号时仅校验配置并返回auth_state:unknown |
-| `GET /settings/system` | 非敏感同步/保留策略摘要 |
-| `PATCH /settings/system` | 版本化修改允许的本地策略；网络安全范围单独由管理员管理 |
+| `GET /system-settings` | 全局上号限额：`daily_onboard_max`（0=不限制）、`onboard_window_start/end`（`HH:MM`，皆空=全天）、`version`；需 `settings.view` |
+| `PUT /system-settings` | 版本化修改上述字段；需 `settings.manage`；保存后立即对上号相关写入生效 |
 | `GET /audit-events` | 按时间、动作、资源查询脱敏审计 |
 
 平台写入 `openapi_token` 为write-only，GET只返回 `token_configured`；不返回掩码Token当作可回填值。不能把网页登录会话Token当OpenAPI Token自动导入。
@@ -465,10 +466,10 @@ OAuth 会话与账号写入的配合（详见 [授权录入说明](claude-oauth-
 ## 附录：用户与权限（RBAC，2026-11-08）
 
 - 权限名为 `<模块>.<动作>`，完整目录由 `GET /permissions` 返回：`[{key, label, permissions:[{key,label,hint}]}]`（需 `roles.view`）。无权限统一 `403 PERMISSION_DENIED`。
-- `GET /auth/session` / `POST /auth/login` 返回 `user: {id, username, nickname, can_onboard, roles:[{id,name,builtin}], permissions:[...], is_admin}`。`is_admin` 表示持有内置管理员角色（超级权限）。`can_onboard=false` 时即使持有 `accounts.onboard` / `accounts.create` / `accounts.import`，上号相关写接口仍返回 `403 ONBOARD_DISABLED`。
+- `GET /auth/session` / `POST /auth/login` 返回 `user: {id, username, nickname, can_onboard, daily_onboard_limit, onboard_allowed, onboard_block_code, roles:[{id,name,builtin}], permissions:[...], is_admin}`。`is_admin` 表示持有内置管理员角色（超级权限）。`can_onboard` 是用户开关；`onboard_allowed` 是综合判定（用户开关 + 全局时段 + 每日上限），为 false 时 `onboard_block_code` 为 `ONBOARD_DISABLED` / `ONBOARD_OUTSIDE_WINDOW` / `ONBOARD_DAILY_LIMIT`。上号相关写接口同步按此拦截。每日上限 0=不限制；按 `Asia/Shanghai` 自然日统计 `account.submit`。
 - `POST /auth/password`（任何登录用户）：`{current_password, new_password}`。
 - 角色：`GET /roles`（`roles.view`）→ `[{id,name,description,builtin,permissions,version,user_count,...}]`；`POST /roles` `{name, description, permissions[]}`；`PATCH /roles/{id}` `{name?, description?, permissions?, expected_version?}`；`DELETE /roles/{id}`。约束：权限名必须在目录内且不超过操作者自身权限（`VALIDATION_FAILED`）；管理员角色权限不可改、内置角色不可改名/删除（`ROLE_IMMUTABLE`）；仍被绑定的角色不可删（`ROLE_IN_USE`）；重名 `409 ROLE_EXISTS`。
-- 用户：`GET /users`（`users.view`）；`POST /users` `{username, password, role_ids[]}`（`users.create`）；`PATCH /users/{id}` `{role_ids?, enabled?, can_onboard?, password?, nickname?, expected_version?}`（`users.update`，带 `password` 还需 `users.reset_password`）；`DELETE /users/{id}`（`users.delete`）。约束：至少一个角色；非管理员不能授予管理员角色或修改管理员用户；`SELF_DEMOTION` / `SELF_DISABLE` / `SELF_DELETE` / `LAST_ADMIN`。`can_onboard` 默认 `true`，关闭后禁止该用户新建/上号/导入/Claude OAuth。
+- 用户：`GET /users`（`users.view`）；`POST /users` `{username, password, role_ids[]}`（`users.create`）；`PATCH /users/{id}` `{role_ids?, enabled?, can_onboard?, daily_onboard_limit?, password?, nickname?, expected_version?}`（`users.update`，带 `password` 还需 `users.reset_password`）；`DELETE /users/{id}`（`users.delete`）。约束：至少一个角色；非管理员不能授予管理员角色或修改管理员用户；`SELF_DEMOTION` / `SELF_DISABLE` / `SELF_DELETE` / `LAST_ADMIN`。`can_onboard` 默认 `true`，关闭后禁止该用户新建/上号/导入/Claude OAuth。`daily_onboard_limit` 默认 `0`（不限制），为正整数时限制该用户当日上号次数。
 - 审计新增 `role.create` / `role.update` / `role.delete`；`user.*` 事件的 detail 记录角色 id 列表。
 
 ## 附录：列表分页与写限速（2026-11-08）
@@ -480,7 +481,7 @@ OAuth 会话与账号写入的配合（详见 [授权录入说明](claude-oauth-
 
 ## 附录：查找接口与代理编辑（2026-11-09）
 
-- `GET /lookups/platform-connections` → `[{id,name,base_url,timezone,enabled}]`，需 `accounts.view`、`bills.view` 或 `channel_usage.view`；`GET /lookups/proxies` → `[{id,name,scheme,host,port,enabled}]`，需 `accounts.view` 或 `accounts.onboard`。均不含令牌、密码与检测记录，供下拉选择使用。
+- `GET /lookups/platform-connections` → `[{id,name,base_url,timezone,enabled}]`，需 `accounts.view`、`bills.view` 或 `channel_usage.view`；`GET /lookups/proxies` → `[{id,name,scheme,host,port,enabled}]`，需 `accounts.view` 或 `accounts.onboard`。均不含令牌、密码与检测记录，供下拉选择使用。代理下拉只返回尚未被未归档账号绑定的代理；可选 `account_id` 以保留该账号当前已绑定的代理（编辑/重新授权）。
 - `PATCH /proxies/{id}`（`proxies.update`）：`{name?, scheme?, host?, port?, username?, password?, clear_password?, enabled?, expected_version?}`，返回 `{id, version}`；校验同创建，版本不匹配 `409 VERSION_CONFLICT`。
 - `DELETE /proxies/{id}`（`proxies.delete`）：仍被未归档账号绑定时 `409 PROXY_IN_USE`；成功时删除检测记录并把已归档账号的 `proxy_id` 置空，返回 `{id, deleted:true}`。
 - `GET /proxies` 新增 `username`、`password_configured`。审计新增 `proxy.update`、`proxy.delete`。
@@ -494,19 +495,19 @@ OAuth 会话与账号写入的配合（详见 [授权录入说明](claude-oauth-
 | `POST /platform-connections`、`PATCH /platform-connections/{id}` | 新增字段 `web_username`、`web_password`（明文只出现在请求里，服务端加密保存；更新时密码留空表示不变）、`web_clear: true`（清除网页登录并解除暂停）。列表与 `GET /lookups/platform-connections` 返回 `web_username`、`web_configured`、`web_suspended_at`、`web_suspended_reason`，永不返回密码 |
 | `POST /platform-connections/{id}/web-login-test` | 用保存的凭证登录一次，返回 `{ok, supplier_name, expires_in, tested_at}`；未配置 422 `WEB_NOT_CONFIGURED`，失败 502 `WEB_LOGIN_FAILED`；成功会解除"登录连续失败"暂停 |
 | `GET /platform-connections/{id}/remote-accounts` | 平台账号对账：`status`、`q`、`page`、`page_size`；每项为账号 `platform` 块加 `email`、`account_id`、`account`、`superseded_by`、`first_seen_at`、`profile_diff`（本地与平台不一致的字段名）、`profile_incomplete`；附 `summary{total, linked, auto_created, unmatched, superseded, missing}` 与 `counts_by_status`。非管理员只看到已关联到自己账号的远端记录（未匹配 / 无归属自动导入仅管理员可见）；列表、`summary`、`counts_by_status` 一并按归属收窄 |
-| `GET /accounts`、`GET /accounts/{id}` | 新增 `platform` 对象（平台未列出该账号时为 `null`）：`status`、`status_raw`、`locked`、`reason_kind`、`reason_text`、`reason_fetched_at`、`observed_at`、`aid`、`upstream_id`、`alias`、`provider`、`model`、`models_usable`、`remote_created_at`、`missing_since`、`auto_created`、`source_channel`（`web`/`openapi`，按观察时间新者）、`profile{plan, plan_start_time, plan_end_time, register_time, register_location, balance, payment_method, register_device, recharge_time, warranty_period, tags}`、`usage{cost_fen, cost_yuan, input_tokens, output_tokens, five_hour_used_percent, five_hour_reset_at, week_used_percent, week_reset_at, observed_at}` 或 `null`。列表新增筛选 `five_hour_min`（0–100）与排序 `sort=five_hour_desc`；`platform_status` 改为取观察时间更新的通道 |
-| `GET /accounts/{id}/platform-usage-history?days=7` | 用量快照时间序列（1–90 天，只在数值变化时记录）：`observed_at`、`cost_fen`、`input_tokens`、`output_tokens`、`five_hour_used_percent`、`week_used_percent` 等 |
-| `GET /platform-usage/bills/models` | `connection_id`、`from`、`to` 必填，`account_ids` 逗号分隔可选，分页；返回按天按账号按模型的 `list`、`by_account`、`by_model`、`total_cost_fen`、`coverage{days_requested, days_present, today, today_final: false}`。当天的行 `final=false` |
+| `GET /accounts`、`GET /accounts/{id}` | 新增 `platform` 对象（平台未列出该账号时为 `null`）：`status`、`status_raw`、`locked`、`reason_kind`、`reason_text`、`reason_fetched_at`、`observed_at`、`aid`、`upstream_id`、`alias`、`provider`、`model`、`models_usable`、`remote_created_at`、`missing_since`、`auto_created`、`source_channel`（`web`/`openapi`，按观察时间新者）、`profile{...}`、`usage{cost_usd, cost_usd_cents, input_tokens, output_tokens, five_hour_used_percent, five_hour_reset_at, week_used_percent, week_reset_at, observed_at}` 或 `null`。列表新增筛选 `five_hour_min`（0–100）与排序 `sort=five_hour_desc`；`platform_status` 改为取观察时间更新的通道 |
+| `GET /accounts/{id}/platform-usage-history?days=7` | 用量快照时间序列（1–90 天，只在数值变化时记录）：`observed_at`、`cost_usd`、`cost_usd_cents`、`input_tokens`、`output_tokens`、`five_hour_used_percent`、`week_used_percent` 等 |
+| `GET /platform-usage/bills/models` | `connection_id`、`from`、`to` 必填，`account_ids` 逗号分隔可选，分页；返回按天按账号按模型的 `list`、`by_account`、`by_model`、`total_cost_usd`、`total_cost_usd_cents`、`coverage{days_requested, days_present, today, today_final: false}`。当天的行 `final=false` |
 | `POST /platform-usage/bills/models/sync` | `{connection_id}`；立即跑一次网页账单同步，202 `{run_id, state}`；退避中 409 `SYNC_IN_BACKOFF`（`details.next_attempt_at`）；未配置 422 `WEB_NOT_CONFIGURED`；已暂停 502 `WEB_SUSPENDED`。同一连接的账号同步正在进行时会等它结束再跑 |
 | `GET /platform-usage/channel-usage/accounts` | 需 `channel_usage.view`；`connection_id` 必填；返回仍在平台列表中的交付：`list[{upstream_id, platform_account_id, account, account_id, owner_*}]`（`platform_account_id` 与账号卡「ID」一致）；管理员另附 `owners`。非管理员只看到归属自己的关联交付 |
-| `GET /platform-usage/channel-usage` | 需 `channel_usage.view`；`connection_id`、`from`、`to` 必填；可选 `upstream_ids`（逗号分隔交付 ID）、`owner_user_ids`（逗号分隔，仅管理员生效；兼容 `owner_user_id`）、分页；从 `platform_bill_models` 按日+交付聚合，返回 `list[{bill_date, upstream_id, platform_account_id, account, owner_*, cost_fen, cost_usd, cost_usd_cents, final}]`、`by_day[{bill_date, cost_fen, cost_usd, cost_usd_cents}]`（跨账号按天合计）、`total_cost_*`、`usd_cny_rate` |
+| `GET /platform-usage/channel-usage` | 需 `channel_usage.view`；`connection_id`、`from`、`to` 必填；可选 `upstream_ids`（逗号分隔交付 ID）、`owner_user_ids`（逗号分隔，仅管理员生效；兼容 `owner_user_id`）、分页；从 `platform_bill_models` 按日+交付聚合，返回 `list[{bill_date, upstream_id, platform_account_id, account, owner_*, cost_usd, cost_usd_cents, final}]`、`by_day[{bill_date, cost_usd, cost_usd_cents}]`（跨账号按天合计）、`total_cost_usd`、`total_usd_cents`、`usd_cny_rate` |
 | `POST /accounts/{id}/platform-profile` | 修改平台上的账号资料（网页通道唯一的写操作，需 `accounts.platform_edit`）：`{changes: {字段: 值}, base: {字段: 提交前看到的值}}`，可改字段 `plan`、`register_time`、`plan_start_time`、`plan_end_time`、`register_location`（不可清空）与 `balance`（0–100）、`payment_method`、`register_device`、`recharge_time`、`warranty_period`、`remark`（可清空）；日期 `YYYY-MM-DD`。校验失败 422 `VALIDATION_FAILED`（逐字段）；账号未关联、平台记录已移除/被替换、`base` 与当前快照不一致 → 409 `VERSION_CONFLICT`；未配置网页登录 422 `WEB_NOT_CONFIGURED`，暂停中 `WEB_SUSPENDED`，平台拒绝 502 `WEB_*`/`PLATFORM_*`。成功 200 `{verified, hint?, changed[], platform}`：平台整条记录被覆盖（密码、凭证、标签、代理不变），随后重读平台列表刷新快照（`verified=true`）；重读失败则用提交值更新快照并返回 `verified=false` 与 `hint`；本地账号同步写回（套餐、日期、注册地区入列，可选字段入 `metadata_json`，`version+1`）；审计 `account.platform_profile_update`，detail 为改动字段名 |
 | `GET /accounts`、`GET /accounts/{id}`、`GET /platform-connections/{id}/remote-accounts` | `platform` 块新增 `remark`（平台备注）与 `web_channel{configured, suspended}`（该连接的网页通道是否可用于修改资料） |
-| `GET/POST /platform-connections`、`PUT/PATCH /platform-connections/{id}` | 新增 `usd_cny_rate`：平台把美元原价折算成人民币的固定汇率（1 美元兑多少人民币），默认 7.2；请求里可选，必须是 1–20 的数字，否则 422 `VALIDATION_FAILED`（字段 `usd_cny_rate`）；修改时写审计 `connection.usd_rate_set`（detail 如 `7.2 → 7.3`）。账号的 `platform` 块同时带出所属连接的 `usd_cny_rate`，卡片用 `cost_fen ÷ usd_cny_rate` 显示美元 |
-| `GET /dashboard/insights` | 仪表盘下半部分的聚合（`dashboard.view`）：`usd_cny_rate`（所有启用连接的平台汇率一致时为该值，否则 `null`）；`fleet{accounts, cost_fen_total, input_tokens, output_tokens, avg_five_hour_percent, avg_week_percent}`（已关联且平台仍在列的账号）；`quota[{account_id, account, alias, status, five_hour_percent, five_hour_reset_at, week_percent, week_reset_at, cost_fen}]`（按 5 小时占用降序，无用量的在后，最多 50 条）；`hourly[{hour, cost_fen}]`（最近 24 个整点小时，由用量快照的累计花费增量得出）；`composition{by_delivery, expiry{expired, within_7, within_30, later, unknown}}`；`recent_jobs[{id, account_id, account, connection, state, code, updated_at}]`（最近 6 条上号任务，只含结果码；没有 `jobs.view` 时为 `null`） |
+| `GET/POST /platform-connections`、`PUT/PATCH /platform-connections/{id}` | 新增 `usd_cny_rate`：平台把美元原价折算成人民币的固定汇率（1 美元兑多少人民币），默认 7.2；请求里可选，必须是 1–20 的数字，否则 422 `VALIDATION_FAILED`（字段 `usd_cny_rate`）；修改时写审计 `connection.usd_rate_set`（detail 如 `7.2 → 7.3`）。账号 `platform` 块带出所属连接的 `usd_cny_rate`；接口返回的 `cost_usd` / `cost_usd_cents` 已按该汇率折算，前端只展示、不做除法 |
+| `GET /dashboard/insights` | 仪表盘下半部分的聚合（`dashboard.view`）：`usd_cny_rate`（所有启用连接的平台汇率一致时为该值，否则 `null`）；`fleet{accounts, cost_usd_cents_total, cost_usd_total, input_tokens, output_tokens, avg_five_hour_percent, avg_week_percent}`；`quota[{..., cost_usd, cost_usd_cents}]`（按 5 小时占用降序，最多 50 条）；`hourly[{hour, cost_usd, cost_usd_cents}]`（最近 24 个整点小时，由用量快照累计花费增量按汇率折算）；`composition{...}`；`recent_jobs[{...}]`（没有 `jobs.view` 时为 `null`） |
 | `GET /dashboard/attention` | 需要处理的已关联账号，最多 8 条：`items[{kind: near_limit|banned|expiring|missing|profile_diff, severity: danger|warn|info, account_id, account, alias, label, detail, upstream_id, reset_at, expires_at, value}]`（排序：接近限额（≥95% 在前）→ 失败状态 → 到期（已到期为负数在前）→ 平台已移除 → 资料不一致）与 `counts`（各类全量数）。只看已关联且未归档的账号；到期阈值 30 天 |
-| `GET /dashboard` | `platform` 块另新增 `week_model_cost_fen`、`total_model_cost_fen`（账单全量合计，管理员看全部、其他人只看自己创建的账号）、`cost_by_day[{date, cost_fen, final}]`（连接时区最近 7 天，缺天补 0）、`cost_by_model[{model_name, cost_fen}]` 前 5、`cost_by_account[{account_id, account, cost_fen}]` 前 5；`today_model_cost_fen` 按连接时区的今天计算（时区空或无效时为 UTC） |
-| `GET /dashboard` | `platform` 块新增 `web_sync_health`（两种网页同步中较差者，结构同指标同步健康）、`web_accounts_health`、`web_bills_health`、`remote_counts_by_status`、`near_limit_accounts`（5 小时窗口 ≥80%）、`today_model_cost_fen` |
+| `GET /dashboard` | `platform` 块另新增 `today_model_cost_usd` / `today_model_cost_usd_cents`、`week_model_cost_usd*`、`total_model_cost_usd*`（账单全量合计，管理员看全部、其他人只看自己创建的账号）、`cost_by_day[{date, cost_usd, cost_usd_cents, final}]`（连接时区最近 7 天，缺天补 0）、`cost_by_model` / `cost_by_account` 前 5（均为 `cost_usd` + `cost_usd_cents`）；`today_cost_usd_cents` 等为当日汇总 |
+| `GET /dashboard` | `platform` 块新增 `web_sync_health`（两种网页同步中较差者，结构同指标同步健康）、`web_accounts_health`、`web_bills_health`、`remote_counts_by_status`、`near_limit_accounts`（5 小时窗口 ≥80%） |
 
 同步记录 `sync_runs.kind` 新增 `web-accounts` 与 `web-bills`；审计事件新增 `connection.web_credentials_set`、`connection.web_credentials_cleared`、`connection.web_suspended`、`connection.web_login_test`、`account.platform_import`（自动建号，detail 为交付 ID）、`account.platform_relink`（同邮箱换交付，detail 为 `旧->新`）、`bills.web_sync`。网页通道只调用读取接口；平台侧的修改、改代理、封禁等操作不提供。
 

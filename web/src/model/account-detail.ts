@@ -2,7 +2,8 @@ import type { Account, Job, AuditEvent, Permission } from '../types/api'
 
 export interface UsageSnapshot {
   observed_at: string
-  cost_fen: number
+  cost_usd_cents: number
+  cost_usd?: string
   input_tokens: number
   output_tokens: number
   five_hour_used_percent: number
@@ -13,7 +14,7 @@ export interface UsageSnapshot {
 
 export interface DaySpend {
   date: string
-  fen: number
+  cents: number
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -30,12 +31,12 @@ export function localDay(iso: string): string {
  */
 export function dailySpend(list: UsageSnapshot[]): DaySpend[] {
   const lastOfDay = new Map<string, number>()
-  for (const s of list) lastOfDay.set(localDay(s.observed_at), s.cost_fen)
+  for (const s of list) lastOfDay.set(localDay(s.observed_at), s.cost_usd_cents)
   const days = [...lastOfDay.keys()].sort()
   const out: DaySpend[] = []
   for (let i = 1; i < days.length; i++) {
     const diff = lastOfDay.get(days[i]!)! - lastOfDay.get(days[i - 1]!)!
-    out.push({ date: days[i]!, fen: Math.max(0, diff) })
+    out.push({ date: days[i]!, cents: Math.max(0, diff) })
   }
   return out
 }

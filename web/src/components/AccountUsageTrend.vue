@@ -36,8 +36,8 @@
         <small>{{ rangeText }}</small>
       </div>
       <div v-if="spend.length" class="trend-spend" role="img" aria-label="每日花费">
-        <div v-for="d in spend" :key="d.date" class="spend-bar" :title="d.date + ' ' + money(d.fen)">
-          <i><em :style="{ height: Math.max(d.fen ? 4 : 0, (d.fen / spendMax) * 100) + '%' }"></em></i>
+        <div v-for="d in spend" :key="d.date" class="spend-bar" :title="d.date + ' ' + money(d.cents)">
+          <i><em :style="{ height: Math.max(d.cents ? 4 : 0, (d.cents / spendMax) * 100) + '%' }"></em></i>
           <small>{{ d.date.slice(5) }}</small>
         </div>
       </div>
@@ -49,9 +49,9 @@
 import { computed, ref, watch } from 'vue'
 import { api } from '../api'
 import { dailySpend, downsample, type UsageSnapshot } from '../model/account-detail'
-import { fenToUsdCents, formatUsdCents } from '../model/money'
+import { formatUsdCents } from '../model/money'
 
-const props = defineProps<{ accountId: string; usdRate?: number }>()
+const props = defineProps<{ accountId: string }>()
 const W = 600
 const H = 110
 const days = ref(7)
@@ -89,10 +89,9 @@ function line(key: 'five_hour_used_percent' | 'week_used_percent') {
     .join(' ')
 }
 const spend = computed(() => dailySpend(list.value))
-const spendMax = computed(() => Math.max(1, ...spend.value.map((d) => d.fen)))
-function money(fen: number) {
-  const cents = fenToUsdCents(fen, props.usdRate)
-  return cents === null ? '—' : formatUsdCents(cents)
+const spendMax = computed(() => Math.max(1, ...spend.value.map((d) => d.cents)))
+function money(cents: number) {
+  return formatUsdCents(cents)
 }
 const rangeText = computed(() => {
   const a = points.value[0]?.observed_at.slice(5, 16).replace('T', ' ')

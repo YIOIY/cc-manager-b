@@ -10,7 +10,7 @@ import type { AuditEvent, Job } from '../src/types/api'
 
 const snap = (at: string, cost: number): UsageSnapshot => ({
   observed_at: at,
-  cost_fen: cost,
+  cost_usd_cents: cost,
   input_tokens: 0,
   output_tokens: 0,
   five_hour_used_percent: 0,
@@ -29,14 +29,14 @@ test('daily spend is the difference between consecutive days last cumulative cos
   ]
   // 11-18 has no baseline; 11-19 spent 1000-400, 11-20 spent nothing.
   expect(dailySpend(list)).toEqual([
-    { date: '2026-11-19', fen: 600 },
-    { date: '2026-11-20', fen: 0 },
+    { date: '2026-11-19', cents: 600 },
+    { date: '2026-11-20', cents: 0 },
   ])
 })
 
 test('a platform-side reset never produces negative spend', () => {
   const list = [snap('2026-11-18T20:00:00', 900), snap('2026-11-19T20:00:00', 50)]
-  expect(dailySpend(list)).toEqual([{ date: '2026-11-19', fen: 0 }])
+  expect(dailySpend(list)).toEqual([{ date: '2026-11-19', cents: 0 }])
   expect(dailySpend([snap('2026-11-18T20:00:00', 900)])).toEqual([])
 })
 

@@ -138,7 +138,7 @@ const emit = defineEmits<{
   /** The selected proxy cannot reach Claude; the parent should bring the proxy field into view. */
   'change-proxy': []
 }>()
-const { check, onboardAllowed } = useSession()
+const { check, onboardAllowed, onboardBlockedMessage } = useSession()
 interface Pending {
   id: string
   authorization_url: string
@@ -270,7 +270,7 @@ async function start(refresh = false) {
       /* API still enforces */
     }
     if (!onboardAllowed()) {
-      error.value = '当前账号已被禁止上号，请联系管理员'
+      error.value = onboardBlockedMessage()
       return
     }
     const { data } = await api<Pending>('/claude-oauth/sessions', {

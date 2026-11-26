@@ -93,25 +93,25 @@ func TestChannelUsageEndpoints(t *testing.T) {
 				UpstreamID        string `json:"upstream_id"`
 				PlatformAccountID string `json:"platform_account_id"`
 				Account           string `json:"account"`
-				CostFen           int64  `json:"cost_fen"`
+				CostUsdCents      int64  `json:"cost_usd_cents"`
 				CostUsd           string `json:"cost_usd"`
 				Final             bool   `json:"final"`
 			} `json:"list"`
 			ByDay []struct {
-				BillDate string `json:"bill_date"`
-				CostFen  int64  `json:"cost_fen"`
-				CostUsd  string `json:"cost_usd"`
+				BillDate     string `json:"bill_date"`
+				CostUsdCents int64  `json:"cost_usd_cents"`
+				CostUsd      string `json:"cost_usd"`
 			} `json:"by_day"`
-			Total        int     `json:"total"`
-			TotalCostFen int64   `json:"total_cost_fen"`
-			TotalCostUsd string  `json:"total_cost_usd"`
-			USDRate      float64 `json:"usd_cny_rate"`
+			Total         int     `json:"total"`
+			TotalUsdCents int64   `json:"total_usd_cents"`
+			TotalCostUsd  string  `json:"total_cost_usd"`
+			USDRate       float64 `json:"usd_cny_rate"`
 		} `json:"data"`
 	}
 	res = admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?connection_id=conn&from="+from+"&to="+today+"&page=1&page_size=20", "")
 	_ = jsonDecode(res, &out)
-	if res.StatusCode != 200 || out.Data.Total != 2 || out.Data.TotalCostFen != 13521 {
-		t.Fatalf("status=%d total=%d sum=%d list=%+v", res.StatusCode, out.Data.Total, out.Data.TotalCostFen, out.Data.List)
+	if res.StatusCode != 200 || out.Data.Total != 2 || out.Data.TotalUsdCents != 1878 {
+		t.Fatalf("status=%d total=%d cents=%d list=%+v", res.StatusCode, out.Data.Total, out.Data.TotalUsdCents, out.Data.List)
 	}
 	if out.Data.USDRate != 7.2 {
 		t.Fatalf("rate=%v", out.Data.USDRate)
@@ -125,16 +125,16 @@ func TestChannelUsageEndpoints(t *testing.T) {
 	}
 	byDay := map[string]int64{}
 	for _, d := range out.Data.ByDay {
-		byDay[d.BillDate] = d.CostFen
+		byDay[d.BillDate] = d.CostUsdCents
 	}
-	if byDay[today] != 3521 || byDay[yesterday] != 10000 {
+	if byDay[today] != 489 || byDay[yesterday] != 1389 {
 		t.Fatalf("by_day totals=%v", byDay)
 	}
 	foundToday := false
 	for _, row := range out.Data.List {
 		if row.UpstreamID == "428802" && row.BillDate == today {
 			foundToday = true
-			if row.CostFen != 3521 || row.Final || row.PlatformAccountID != "438802" {
+			if row.CostUsdCents != 489 || row.CostUsd != "4.89" || row.Final || row.PlatformAccountID != "438802" {
 				t.Fatalf("today row=%+v", row)
 			}
 		}
@@ -144,8 +144,8 @@ func TestChannelUsageEndpoints(t *testing.T) {
 	}
 
 	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?connection_id=conn&from="+from+"&to="+today+"&upstream_ids=428802", ""), &out)
-	if out.Data.Total != 1 || out.Data.TotalCostFen != 3521 {
-		t.Fatalf("upstream filter total=%d sum=%d", out.Data.Total, out.Data.TotalCostFen)
+	if out.Data.Total != 1 || out.Data.TotalUsdCents != 489 {
+		t.Fatalf("upstream filter total=%d cents=%d", out.Data.Total, out.Data.TotalUsdCents)
 	}
 
 	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?connection_id=conn&from=2026-13-01&to="+today, ""), http.StatusUnprocessableEntity, "BILL_RANGE_INVALID")
@@ -234,16 +234,16 @@ func TestChannelUsageRespectsOwnership(t *testing.T) {
 	var out struct {
 		Data struct {
 			List []struct {
-				UpstreamID string `json:"upstream_id"`
-				CostFen    int64  `json:"cost_fen"`
+				UpstreamID   string `json:"upstream_id"`
+				CostUsdCents int64  `json:"cost_usd_cents"`
 			} `json:"list"`
-			Total        int   `json:"total"`
-			TotalCostFen int64 `json:"total_cost_fen"`
+			Total         int   `json:"total"`
+			TotalUsdCents int64 `json:"total_usd_cents"`
 		} `json:"data"`
 	}
 	res := opsA.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?connection_id=cu-conn&from="+day+"&to="+day, "")
 	_ = jsonDecode(res, &out)
-	if res.StatusCode != 200 || out.Data.Total != 1 || out.Data.TotalCostFen != 720 || out.Data.List[0].UpstreamID != "1001" {
+	if res.StatusCode != 200 || out.Data.Total != 1 || out.Data.TotalUsdCents != 100 || out.Data.List[0].UpstreamID != "1001" {
 		t.Fatalf("opsA usage=%+v status=%d", out.Data, res.StatusCode)
 	}
 
@@ -261,11 +261,11 @@ func TestChannelUsageRespectsOwnership(t *testing.T) {
 	}
 
 	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?connection_id=cu-conn&from="+day+"&to="+day+"&owner_user_id="+meA.Data.User.ID, ""), &out)
-	if out.Data.Total != 1 || out.Data.TotalCostFen != 720 {
+	if out.Data.Total != 1 || out.Data.TotalUsdCents != 100 {
 		t.Fatalf("admin owner filter=%+v", out.Data)
 	}
 	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/platform-usage/channel-usage?connection_id=cu-conn&from="+day+"&to="+day, ""), &out)
-	if out.Data.Total != 2 || out.Data.TotalCostFen != 2160 {
+	if out.Data.Total != 2 || out.Data.TotalUsdCents != 300 {
 		t.Fatalf("admin all=%+v", out.Data)
 	}
 

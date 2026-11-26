@@ -27,6 +27,11 @@ const stubs = {
   'el-alert': { template: '<div><slot /></div>' },
 }
 
+const usdFromFen = (fen: number) => {
+  const cost_usd_cents = Math.round(fen / 7.2)
+  return { cost_usd_cents, cost_usd: (cost_usd_cents / 100).toFixed(2) }
+}
+
 function dashboard(overrides: Partial<Dashboard['platform']> = {}, accounts = 8): Dashboard {
   return {
     accounts: {
@@ -41,7 +46,7 @@ function dashboard(overrides: Partial<Dashboard['platform']> = {}, accounts = 8)
     proxies: { healthy: 2, enabled: 2, disabled: 0 },
     platform: {
       today_requests: 0,
-      today_cost_fen: 0,
+      today_cost_usd_cents: 0,
       last_sync_at: '2026-11-12T03:40:21Z',
       last_sync_state: 'partial',
       sync_status: 'failing',
@@ -49,30 +54,33 @@ function dashboard(overrides: Partial<Dashboard['platform']> = {}, accounts = 8)
       consecutive_failures: 16,
       web_sync_health: {
         today_requests: 0,
-        today_cost_fen: 0,
+        today_cost_usd_cents: 0,
         last_sync_at: '2026-11-12T04:07:27Z',
         last_sync_state: 'succeeded',
         sync_status: 'ok',
       },
       remote_counts_by_status: { using: 6, ban: 2 },
       near_limit_accounts: 2,
-      today_model_cost_fen: 1488278,
-      week_model_cost_fen: 4950682,
-      total_model_cost_fen: 720000,
+      today_model_cost_usd_cents: 206705,
+      today_model_cost_usd: '2067.05',
+      week_model_cost_usd_cents: 687595,
+      week_model_cost_usd: '6875.95',
+      total_model_cost_usd_cents: 100000,
+      total_model_cost_usd: '1000.00',
       cost_by_day: [
-        { date: '2026-11-06', cost_fen: 100000, final: true },
-        { date: '2026-11-07', cost_fen: 200000, final: true },
-        { date: '2026-11-08', cost_fen: 300000, final: true },
-        { date: '2026-11-09', cost_fen: 400000, final: true },
-        { date: '2026-11-10', cost_fen: 500000, final: true },
-        { date: '2026-11-11', cost_fen: 1962404, final: true },
-        { date: '2026-11-12', cost_fen: 1488278, final: false },
+        { date: '2026-11-06', ...usdFromFen(100000), final: true },
+        { date: '2026-11-07', ...usdFromFen(200000), final: true },
+        { date: '2026-11-08', ...usdFromFen(300000), final: true },
+        { date: '2026-11-09', ...usdFromFen(400000), final: true },
+        { date: '2026-11-10', ...usdFromFen(500000), final: true },
+        { date: '2026-11-11', ...usdFromFen(1962404), final: true },
+        { date: '2026-11-12', ...usdFromFen(1488278), final: false },
       ],
       cost_by_model: [
-        { model_name: 'claude-opus-5-5', cost_fen: 2825510 },
-        { model_name: 'claude-fable-5-2', cost_fen: 1278841 },
+        { model_name: 'claude-opus-5-5', ...usdFromFen(2825510) },
+        { model_name: 'claude-fable-5-2', ...usdFromFen(1278841) },
       ],
-      cost_by_account: [{ account_id: 'a1', account: 'cj@example.test', cost_fen: 1146404 }],
+      cost_by_account: [{ account_id: 'a1', account: 'cj@example.test', ...usdFromFen(1146404) }],
       ...overrides,
     },
   }
@@ -112,13 +120,14 @@ const attention: AttentionResponse = {
 
 const hours = Array.from({ length: 24 }, (_, i) => ({
   hour: new Date(Date.UTC(2026, 10, 12, 5 + i)).toISOString().replace('.000Z', 'Z'),
-  cost_fen: i === 20 ? 12000 : i === 23 ? 6000 : 0,
+  ...usdFromFen(i === 20 ? 12000 : i === 23 ? 6000 : 0),
 }))
 const insights: DashboardInsights = {
   usd_cny_rate: 7.2,
   fleet: {
     accounts: 8,
-    cost_fen_total: 720000,
+    cost_usd_cents_total: 100000,
+    cost_usd_total: '1000.00',
     input_tokens: 487159683,
     output_tokens: 124015127,
     avg_five_hour_percent: 24.1,
@@ -138,7 +147,7 @@ const insights: DashboardInsights = {
       five_hour_reset_at: '2026-11-13T06:50:00Z',
       week_percent: 35,
       week_reset_at: '2026-11-18T05:00:00Z',
-      cost_fen: 258624,
+      ...usdFromFen(258624),
     },
     {
       account_id: 'a1',
@@ -153,7 +162,7 @@ const insights: DashboardInsights = {
       five_hour_reset_at: '',
       week_percent: 71,
       week_reset_at: '',
-      cost_fen: 720997,
+      ...usdFromFen(720997),
     },
     {
       account_id: 'a3',
@@ -168,7 +177,8 @@ const insights: DashboardInsights = {
       five_hour_reset_at: '',
       week_percent: null,
       week_reset_at: '',
-      cost_fen: null,
+      cost_usd_cents: null,
+      cost_usd: undefined,
     },
   ],
   hourly: hours,
@@ -223,7 +233,7 @@ test('the top row shows fleet counts and spend', async () => {
   expect(text).toContain('$6,875.95')
   expect(text).not.toContain('¥14,882.78')
   expect(text).not.toContain('汇率')
-  expect(text).toContain('未出齐')
+  expect(text).toContain('今日数据约有 2 小时延迟')
 })
 
 test('the attention list renders items and navigates to the account', async () => {
@@ -261,9 +271,12 @@ test('without the web channel the top row falls back to local counts with a hint
     {
       remote_counts_by_status: {},
       near_limit_accounts: 0,
-      today_model_cost_fen: 0,
-      week_model_cost_fen: 0,
-      total_model_cost_fen: 0,
+      today_model_cost_usd_cents: 0,
+      today_model_cost_usd: '0.00',
+      week_model_cost_usd_cents: 0,
+      week_model_cost_usd: '0.00',
+      total_model_cost_usd_cents: 0,
+      total_model_cost_usd: '0.00',
       cost_by_day: [],
       cost_by_model: [],
       cost_by_account: [],
@@ -315,7 +328,7 @@ test('idle accounts are listed with days left and open the account', async () =>
       created_by_nickname: '小明',
       created_by_username: 'ming',
       week_percent: 2,
-      cost_fen: 100,
+      ...usdFromFen(100),
       plan_end: '2026-12-18',
       days_left: 27,
     },
@@ -328,7 +341,8 @@ test('idle accounts are listed with days left and open the account', async () =>
       created_by_nickname: '',
       created_by_username: '',
       week_percent: 0,
-      cost_fen: null,
+      cost_usd_cents: null,
+      cost_usd: undefined,
       plan_end: '',
       days_left: null,
     },
@@ -389,7 +403,9 @@ test('composition, hourly spend and recent onboarding are shown', async () => {
 
 test('a failing insights request leaves headline placeholders and says what is missing', async () => {
   const text = (await render(dashboard(), attention, new Error('boom'))).text()
-  expect(text).toContain('今日消费—')
+  // Spend comes from /dashboard (already USD); insights failure only blanks fleet averages / panels.
+  expect(text).toContain('今日消费$2,067.05')
+  expect(text).toContain('5h — · 7d —')
   expect(text).toContain('5 小时窗口 88%')
   expect(text).toContain('配额数据暂时读取失败')
   expect(text).not.toContain('¥')

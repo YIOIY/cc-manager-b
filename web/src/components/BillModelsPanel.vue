@@ -36,12 +36,11 @@
       <span v-if="syncMessage" class="bill-models-sync">{{ syncMessage }}</span>
     </div>
     <p class="bill-models-note">
-      来自供应商网页后台，每 2 小时同步最近 7 天，按天、按账号、按模型拆分，只有金额。当天数据约有 2
-      小时延迟，标为"未出齐"。
+      来自供应商网页后台，每 2 小时同步最近 7 天，按天、按账号、按模型拆分，只有金额。当天数据约有 2 小时延迟。
     </p>
     <div v-if="data" class="bill-models-summary">
       <div class="summary-card">
-        <small>合计</small><b class="purple-number">¥{{ data.total_cost_yuan }}</b>
+        <small>合计</small><b class="purple-number">${{ data.total_cost_usd }}</b>
         <span>{{ data.coverage.days_present }}/{{ data.coverage.days_requested }} 天有数据</span>
       </div>
       <div class="summary-card">
@@ -49,7 +48,7 @@
         <ul>
           <li v-for="a in data.by_account.slice(0, 6)" :key="a.account_id">
             <span :title="a.account">{{ a.account || a.account_id }}</span
-            ><b>¥{{ a.cost_yuan }}</b>
+            ><b>${{ a.cost_usd }}</b>
           </li>
           <li v-if="!data.by_account.length" class="muted">暂无数据</li>
         </ul>
@@ -59,7 +58,7 @@
         <ul>
           <li v-for="m in data.by_model.slice(0, 6)" :key="m.model_name">
             <span>{{ m.model_name }}</span
-            ><b>¥{{ m.cost_yuan }}</b>
+            ><b>${{ m.cost_usd }}</b>
           </li>
           <li v-if="!data.by_model.length" class="muted">暂无数据</li>
         </ul>
@@ -68,7 +67,7 @@
     <el-table :data="data?.list || []" v-loading="loading" size="small" row-key="rowKey">
       <el-table-column label="日期" width="120">
         <template #default="{ row }">
-          {{ row.bill_date }}<span v-if="!row.final" class="mini-badge yellow pending">未出齐</span>
+          {{ row.bill_date }}
         </template>
       </el-table-column>
       <el-table-column label="账号" min-width="220">
@@ -78,8 +77,8 @@
         </template>
       </el-table-column>
       <el-table-column label="模型" min-width="160" prop="model_name" />
-      <el-table-column label="金额（元）" width="130" align="right">
-        <template #default="{ row }">¥{{ row.cost_yuan }}</template>
+      <el-table-column label="金额（美元）" width="130" align="right">
+        <template #default="{ row }">${{ row.cost_usd }}</template>
       </el-table-column>
       <el-table-column label="同步时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.fetched_at) }}</template>

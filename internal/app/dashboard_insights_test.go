@@ -11,12 +11,13 @@ import (
 type insightsReply struct {
 	USDRate *float64 `json:"usd_cny_rate"`
 	Fleet   struct {
-		Accounts     int     `json:"accounts"`
-		CostFenTotal int64   `json:"cost_fen_total"`
-		InputTokens  int64   `json:"input_tokens"`
-		OutputTokens int64   `json:"output_tokens"`
-		AvgFiveHour  float64 `json:"avg_five_hour_percent"`
-		AvgWeek      float64 `json:"avg_week_percent"`
+		Accounts          int     `json:"accounts"`
+		CostUsdCentsTotal int64   `json:"cost_usd_cents_total"`
+		CostUsdTotal      string  `json:"cost_usd_total"`
+		InputTokens       int64   `json:"input_tokens"`
+		OutputTokens      int64   `json:"output_tokens"`
+		AvgFiveHour       float64 `json:"avg_five_hour_percent"`
+		AvgWeek           float64 `json:"avg_week_percent"`
 	} `json:"fleet"`
 	Quota []struct {
 		AccountID         string   `json:"account_id"`
@@ -31,11 +32,11 @@ type insightsReply struct {
 		FiveReset         string   `json:"five_hour_reset_at"`
 		Week              *float64 `json:"week_percent"`
 		WeekReset         string   `json:"week_reset_at"`
-		CostFen           *int64   `json:"cost_fen"`
+		CostUsdCents      *int64   `json:"cost_usd_cents"`
 	} `json:"quota"`
 	Hourly []struct {
-		Hour    string `json:"hour"`
-		CostFen int64  `json:"cost_fen"`
+		Hour         string `json:"hour"`
+		CostUsdCents int64  `json:"cost_usd_cents"`
 	} `json:"hourly"`
 	Composition struct {
 		ByDelivery map[string]int `json:"by_delivery"`
@@ -86,21 +87,21 @@ func TestDashboardInsightsFleetQuotaAndComposition(t *testing.T) {
 	}
 	f := out.Fleet
 	// one: ¥35.21, 5% / 1%; hot: ¥4132.69, 84% / 1%; banned has no usage.
-	if f.Accounts != 3 || f.CostFenTotal != 3521+413269 || f.InputTokens != 2*411638 || f.OutputTokens != 2*82648 || f.AvgFiveHour != 44.5 || f.AvgWeek != 1 {
+	if f.Accounts != 3 || f.CostUsdCentsTotal != 57887 || f.CostUsdTotal != "578.87" || f.InputTokens != 2*411638 || f.OutputTokens != 2*82648 || f.AvgFiveHour != 44.5 || f.AvgWeek != 1 {
 		t.Fatalf("fleet=%+v", f)
 	}
 	if len(out.Quota) != 3 || out.Quota[0].Account != "hot@example.test" || out.Quota[1].Account != "one@example.test" || out.Quota[2].Account != "banned@example.test" {
 		t.Fatalf("quota order=%+v", out.Quota)
 	}
 	hot, banned := out.Quota[0], out.Quota[2]
-	if hot.FiveHour == nil || *hot.FiveHour != 84 || hot.Week == nil || *hot.Week != 1 || hot.CostFen == nil || *hot.CostFen != 413269 || hot.Status != "using" || hot.FiveReset != "2026-11-11T16:50:00Z" || hot.AccountID == "" || hot.Alias == "" {
+	if hot.FiveHour == nil || *hot.FiveHour != 84 || hot.Week == nil || *hot.Week != 1 || hot.CostUsdCents == nil || *hot.CostUsdCents != 57398 || hot.Status != "using" || hot.FiveReset != "2026-11-11T16:50:00Z" || hot.AccountID == "" || hot.Alias == "" {
 		t.Fatalf("hot=%+v", hot)
 	}
 	// remoteAccount sets a1_id = upstream_id + 10000 (411605 → 421605).
 	if hot.PlatformAccountID != "421605" {
 		t.Fatalf("hot platform_account_id=%q", hot.PlatformAccountID)
 	}
-	if banned.FiveHour != nil || banned.Week != nil || banned.CostFen != nil || banned.Status != "ban" {
+	if banned.FiveHour != nil || banned.Week != nil || banned.CostUsdCents != nil || banned.Status != "ban" {
 		t.Fatalf("banned=%+v", banned)
 	}
 	if d := out.Composition.ByDelivery; d["linked"] != 3 || d["pending"] != 1 || d["failed"] != 0 || d["submitting"] != 0 || d["unknown"] != 0 {
@@ -175,12 +176,12 @@ func TestDashboardInsightsHourlyBurn(t *testing.T) {
 	got := map[string]int64{}
 	var total int64
 	for _, h := range out.Hourly {
-		if h.CostFen != 0 {
-			got[h.Hour[11:13]] = h.CostFen
+		if h.CostUsdCents != 0 {
+			got[h.Hour[11:13]] = h.CostUsdCents
 		}
-		total += h.CostFen
+		total += h.CostUsdCents
 	}
-	if got["01"] != 200 || got["03"] != 75 || got["04"] != 100 || total != 375 || len(got) != 3 {
+	if got["01"] != 28 || got["03"] != 10 || got["04"] != 14 || total != 52 || len(got) != 3 {
 		t.Fatalf("hourly=%v total=%d", got, total)
 	}
 	if out.RecentJobs != nil {
@@ -223,7 +224,7 @@ func TestDashboardInsightsWithoutWebChannel(t *testing.T) {
 	a, _, _, _ := deliveryFixture(t)
 	linkFixtureAccount(t, a)
 	out := insightsOf(t, a, insightsAt, true)
-	if out.Fleet.Accounts != 0 || out.Fleet.CostFenTotal != 0 || out.Quota == nil || len(out.Quota) != 0 || len(out.Hourly) != 24 {
+	if out.Fleet.Accounts != 0 || out.Fleet.CostUsdCentsTotal != 0 || out.Quota == nil || len(out.Quota) != 0 || len(out.Hourly) != 24 {
 		t.Fatalf("fleet=%+v quota=%v hourly=%d", out.Fleet, out.Quota, len(out.Hourly))
 	}
 	if d := out.Composition.ByDelivery; d["linked"] != 1 {

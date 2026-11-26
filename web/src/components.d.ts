@@ -53,6 +53,7 @@ declare module 'vue' {
     ElTabPane: typeof import('element-plus/es')['ElTabPane']
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
+    ElTimeSelect: typeof import('element-plus/es')['ElTimeSelect']
     ErrorNotice: typeof import('./components/ErrorNotice.vue')['default']
     FeedbackDialog: typeof import('./components/FeedbackDialog.vue')['default']
     FleetComposition: typeof import('./components/FleetComposition.vue')['default']

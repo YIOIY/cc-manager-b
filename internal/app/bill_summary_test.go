@@ -59,10 +59,10 @@ func TestBillSummaryForwardsOneWholeRangeWithDeliveryIDsAndPreservesMissing(t *t
 	if result["returned_count"] != 2 || result["no_data_count"] != 1 || result["invalid_count"] != 1 || result["complete"] != false {
 		t.Fatalf("counts=%+v", result)
 	}
-	if result["totals"].(map[string]any)["cost_fen"] != "1234" || result["totals"].(map[string]any)["request_count"] != "1234" {
+	if result["totals"].(map[string]any)["cost_usd_cents"] != "171" || result["totals"].(map[string]any)["cost_usd"] != "1.71" || result["totals"].(map[string]any)["request_count"] != "1234" {
 		t.Fatal(result["totals"])
 	}
-	if items[1].(map[string]any)["cost_fen"] != "0" || items[2].(map[string]any)["cost_fen"] != nil || items[2].(map[string]any)["state"] != "no_data" || items[3].(map[string]any)["state"] != "invalid" {
+	if items[1].(map[string]any)["cost_usd_cents"] != "0" || items[2].(map[string]any)["cost_usd"] != nil || items[2].(map[string]any)["state"] != "no_data" || items[3].(map[string]any)["state"] != "invalid" {
 		t.Fatal(items)
 	}
 	for _, table := range []string{"platform_bill_daily", "sync_runs"} {
@@ -115,7 +115,7 @@ func TestBillSummaryValidatesContractBeforeCallingPlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || result["no_data_count"] != 100 || result["totals"].(map[string]any)["cost_fen"] != nil {
+	if calls != 1 || result["no_data_count"] != 100 || result["totals"].(map[string]any)["cost_usd"] != nil {
 		t.Fatal("missing rows were converted to zeros", result)
 	}
 	if _, err = a.DB.Exec(`UPDATE platform_connections SET enabled=0`); err != nil {
@@ -136,7 +136,7 @@ func TestBillSummaryShowsEffectiveRangeAndSumsWithoutOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result["range_adjusted"] != true || result["complete"] != true || result["totals"].(map[string]any)["request_count"] != "18446744073709551614" || result["totals"].(map[string]any)["cost_fen"] != "3" {
+	if result["range_adjusted"] != true || result["complete"] != true || result["totals"].(map[string]any)["request_count"] != "18446744073709551614" || result["totals"].(map[string]any)["cost_usd_cents"] != "0" || result["totals"].(map[string]any)["cost_usd"] != "0.00" {
 		t.Fatal(result)
 	}
 }

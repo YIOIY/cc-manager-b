@@ -83,8 +83,8 @@ func (a *App) platformMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) platformBills(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT b.account_id,b.connection_id,b.upstream_id,b.bill_date,b.request_count,b.prompt_tokens,b.completion_tokens,b.cache_read_input_tokens,b.cache_write_input_tokens,b.cost_fen,b.fetched_at,b.revision,b.finalized,a.account FROM platform_bill_daily b JOIN accounts a ON a.id=b.account_id WHERE 1=1`
-	args := []any{}
+	query := `SELECT b.account_id,b.connection_id,b.upstream_id,b.bill_date,b.request_count,b.prompt_tokens,b.completion_tokens,b.cache_read_input_tokens,b.cache_write_input_tokens,b.cost_fen,b.fetched_at,b.revision,b.finalized,a.account,COALESCE(c.usd_cny_rate,?) FROM platform_bill_daily b JOIN accounts a ON a.id=b.account_id LEFT JOIN platform_connections c ON c.id=b.connection_id WHERE 1=1`
+	args := []any{defaultUSDCNYRate}
 	if v := strings.TrimSpace(r.URL.Query().Get("account_id")); v != "" {
 		query += " AND b.account_id=?"
 		args = append(args, v)
@@ -109,8 +109,10 @@ func (a *App) platformBills(w http.ResponseWriter, r *http.Request) {
 		var accountID, conn, upstream, date, fetched, account string
 		var req, prompt, completion, read, writeN, cost, rev int64
 		var final int
-		if rows.Scan(&accountID, &conn, &upstream, &date, &req, &prompt, &completion, &read, &writeN, &cost, &fetched, &rev, &final, &account) == nil {
-			out = append(out, map[string]any{"account_id": accountID, "account": account, "connection_id": conn, "platform_account_id": upstream, "bill_date": date, "request_count": req, "prompt_tokens": prompt, "completion_tokens": completion, "cache_read_input_tokens": read, "cache_write_input_tokens": writeN, "cost_fen": cost, "fetched_at": fetched, "revision": rev, "finalized": final == 1})
+		var rate float64
+		if rows.Scan(&accountID, &conn, &upstream, &date, &req, &prompt, &completion, &read, &writeN, &cost, &fetched, &rev, &final, &account, &rate) == nil {
+			cents, text := costUSDFields(cost, rate)
+			out = append(out, map[string]any{"account_id": accountID, "account": account, "connection_id": conn, "platform_account_id": upstream, "bill_date": date, "request_count": req, "prompt_tokens": prompt, "completion_tokens": completion, "cache_read_input_tokens": read, "cache_write_input_tokens": writeN, "cost_usd_cents": cents, "cost_usd": text, "fetched_at": fetched, "revision": rev, "finalized": final == 1})
 		}
 	}
 	write(w, 200, out)

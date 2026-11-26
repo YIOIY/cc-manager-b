@@ -1,16 +1,27 @@
 package app
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 // lookupProxies lists proxies as picker options: no check history, no
-// credentials. Disabled entries are included so existing bindings still
-// resolve to a name.
+// credentials. Proxies already bound to a non-archived account are omitted
+// so onboarding can only pick unused exits. Pass account_id to also include
+// that account's current binding (edit / reauth).
 func (a *App) lookupProxies(w http.ResponseWriter, r *http.Request) {
 	scope := ownershipFrom(r)
-	query := `SELECT id,name,scheme,host,port,enabled FROM proxies`
+	keepAccount := strings.TrimSpace(r.URL.Query().Get("account_id"))
+	query := `SELECT id,name,scheme,host,port,enabled FROM proxies WHERE NOT EXISTS (
+		SELECT 1 FROM accounts a WHERE a.archived=0 AND a.proxy_id<>'' AND a.proxy_id=proxies.id`
 	args := []any{}
+	if keepAccount != "" {
+		query += ` AND a.id<>?`
+		args = append(args, keepAccount)
+	}
+	query += `)`
 	if !scope.Admin {
-		query += ` WHERE created_by_user_id=?`
+		query += ` AND created_by_user_id=?`
 		args = append(args, scope.UserID)
 	}
 	query += ` ORDER BY enabled DESC,name,host,rowid`

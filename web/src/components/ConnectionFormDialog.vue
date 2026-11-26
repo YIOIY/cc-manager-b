@@ -42,10 +42,7 @@
       /></el-form-item>
       <el-form-item label="美元汇率" :error="fieldErrors.usd_cny_rate">
         <el-input-number v-model="form.usd_cny_rate" :min="1" :max="20" :step="0.1" controls-position="right" />
-        <div class="field-hint">
-          平台按固定汇率把美元原价折算成人民币（目前 1 美元 = 7.2
-          人民币）。账号卡片用它把花费换算回美元；平台调整汇率时在这里修改。
-        </div>
+        <div class="field-hint">按平台计费设置填写；金额展示会据此处理。平台调整时在这里同步修改。</div>
       </el-form-item>
       <div class="form-section-title">网页后台登录（只读通道）</div>
       <el-form-item label="登录账号" :error="fieldErrors.web_username">

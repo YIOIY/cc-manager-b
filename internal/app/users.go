@@ -11,15 +11,16 @@ import (
 )
 
 type userRecord struct {
-	ID         string
-	Username   string
-	Nickname   string
-	Enabled    bool
-	CanOnboard bool
-	Version    int
-	CreatedAt  string
-	UpdatedAt  string
-	LastLogin  string
+	ID                string
+	Username          string
+	Nickname          string
+	Enabled           bool
+	CanOnboard        bool
+	DailyOnboardLimit int
+	Version           int
+	CreatedAt         string
+	UpdatedAt         string
+	LastLogin         string
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9._@-]{2,64}$`)
@@ -39,11 +40,25 @@ func normalizeNickname(raw string) (string, string) {
 
 func (a *App) userPublic(u userRecord) map[string]any {
 	ac, _ := a.userAccess(u.ID)
-	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "enabled": u.Enabled, "can_onboard": u.CanOnboard, "version": u.Version, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt, "last_login_at": u.LastLogin, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
+	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "enabled": u.Enabled, "can_onboard": u.CanOnboard, "daily_onboard_limit": u.DailyOnboardLimit, "version": u.Version, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt, "last_login_at": u.LastLogin, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
 }
 
-func sessionUserPayload(u userRecord, ac access) map[string]any {
-	return map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "can_onboard": u.CanOnboard, "roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super}
+func (a *App) sessionUserPayload(u userRecord, ac access) map[string]any {
+	out := map[string]any{
+		"id": u.ID, "username": u.Username, "nickname": u.Nickname,
+		"can_onboard": u.CanOnboard, "daily_onboard_limit": u.DailyOnboardLimit,
+		"roles": ac.Roles, "permissions": ac.list(), "is_admin": ac.Super,
+		"onboard_allowed": true, "onboard_block_code": "",
+	}
+	info := sessionUserInfo{ID: u.ID, Username: u.Username, CanOnboard: u.CanOnboard, DailyOnboardLimit: u.DailyOnboardLimit, Access: ac}
+	if err := a.checkOnboardAllowed(info); err != nil {
+		out["onboard_allowed"] = false
+		var e *errs.Error
+		if errors.As(err, &e) {
+			out["onboard_block_code"] = e.Code()
+		}
+	}
+	return out
 }
 
 // ensureBootstrapAdmin creates the first administrator from the environment
@@ -79,13 +94,13 @@ func scanUser(row interface{ Scan(...any) error }) (userRecord, string, error) {
 	var u userRecord
 	var hash string
 	var enabled, canOnboard int
-	err := row.Scan(&u.ID, &u.Username, &u.Nickname, &hash, &enabled, &canOnboard, &u.Version, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
+	err := row.Scan(&u.ID, &u.Username, &u.Nickname, &hash, &enabled, &canOnboard, &u.DailyOnboardLimit, &u.Version, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
 	u.Enabled = enabled == 1
 	u.CanOnboard = canOnboard == 1
 	return u, hash, err
 }
 
-const userColumns = `id,username,COALESCE(nickname,''),password_hash,enabled,can_onboard,version,created_at,updated_at,COALESCE(last_login_at,'')`
+const userColumns = `id,username,COALESCE(nickname,''),password_hash,enabled,can_onboard,daily_onboard_limit,version,created_at,updated_at,COALESCE(last_login_at,'')`
 
 func (a *App) userByName(username string) (userRecord, string, error) {
 	return scanUser(a.DB.QueryRow(`SELECT `+userColumns+` FROM users WHERE username=?`, username))
@@ -244,12 +259,13 @@ func (a *App) createUser(w http.ResponseWriter, r *http.Request) {
 func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var in struct {
-		RoleIDs         []string `json:"role_ids"`
-		Enabled         *bool    `json:"enabled"`
-		CanOnboard      *bool    `json:"can_onboard"`
-		Password        string   `json:"password"`
-		Nickname        *string  `json:"nickname"`
-		ExpectedVersion int      `json:"expected_version"`
+		RoleIDs           []string `json:"role_ids"`
+		Enabled           *bool    `json:"enabled"`
+		CanOnboard        *bool    `json:"can_onboard"`
+		DailyOnboardLimit *int     `json:"daily_onboard_limit"`
+		Password          string   `json:"password"`
+		Nickname          *string  `json:"nickname"`
+		ExpectedVersion   int      `json:"expected_version"`
 	}
 	if !decodeJSON(w, r, &in, 16<<10) {
 		return
@@ -313,6 +329,14 @@ func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
 	if in.CanOnboard != nil {
 		sets, args = append(sets, "can_onboard=?"), append(args, boolInt(*in.CanOnboard))
 		detail = append(detail, map[bool]string{true: "can_onboard", false: "can_onboard_off"}[*in.CanOnboard])
+	}
+	if in.DailyOnboardLimit != nil {
+		if *in.DailyOnboardLimit < 0 || *in.DailyOnboardLimit > 100000 {
+			writeError(w, r, fieldErr("daily_onboard_limit", errs.FieldOutOfRange, "须为 0–100000（0 表示不限制）"))
+			return
+		}
+		sets, args = append(sets, "daily_onboard_limit=?"), append(args, *in.DailyOnboardLimit)
+		detail = append(detail, "daily_onboard_limit")
 	}
 	if in.Password != "" {
 		hash, err := HashPassword(in.Password)

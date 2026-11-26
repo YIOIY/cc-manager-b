@@ -99,6 +99,13 @@
           }}</span>
         </template>
       </el-table-column>
+      <el-table-column label="每日可上号数" width="120">
+        <template #default="{ row }">
+          <span class="access-count">{{
+            (row.daily_onboard_limit ?? 0) === 0 ? '不限制' : row.daily_onboard_limit
+          }}</span>
+        </template>
+      </el-table-column>
       <el-table-column v-if="can('users.update') || can('users.delete')" label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <div class="access-row-actions">

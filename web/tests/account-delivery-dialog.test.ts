@@ -267,7 +267,9 @@ const history = {
     list: [
       {
         observed_at: '2026-11-19T20:00:00Z',
-        cost_fen: 100,
+        // API already converted: 100 fen ÷ 7.2 → 14¢
+        cost_usd_cents: 14,
+        cost_usd: '0.14',
         five_hour_used_percent: 10,
         week_used_percent: 2,
         input_tokens: 1,
@@ -277,7 +279,9 @@ const history = {
       },
       {
         observed_at: '2026-11-20T20:00:00Z',
-        cost_fen: 900,
+        // 900 fen ÷ 7.2 → 125¢; day spend vs previous = 111¢ → $1.11
+        cost_usd_cents: 125,
+        cost_usd: '1.25',
         five_hour_used_percent: 40,
         week_used_percent: 5,
         input_tokens: 2,
@@ -363,7 +367,7 @@ test('a linked account detail shows the full reason, the whole profile and a usa
     true,
   )
   expect(w.find('.trend-lines').exists()).toBe(true)
-  // 11-20 spent 900-100 fen = $1.11 at 7.2.
+  // Day spend is last-of-day cents delta: 125 - 14 = $1.11.
   expect(w.get('.spend-bar').attributes('title')).toContain('$1.11')
   await w.get('[data-days="30"]').trigger('click')
   await flushPromises()

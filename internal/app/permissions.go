@@ -60,6 +60,8 @@ const (
 	PermRolesManage          Permission = "roles.manage"
 	PermFeedbackManage       Permission = "feedback.manage"
 	PermAnnouncementManage   Permission = "announcement.manage"
+	PermSettingsView         Permission = "settings.view"
+	PermSettingsManage       Permission = "settings.manage"
 )
 
 var permissionCatalogue = []permissionModule{
@@ -125,6 +127,10 @@ var permissionCatalogue = []permissionModule{
 	// permission (administrators hold it automatically).
 	{"announcement", "系统公告", "", []permissionDef{
 		{PermAnnouncementManage, "发布系统公告", "编辑顶部公告文案；清空即下线；所有登录用户可见"},
+	}},
+	{"settings", "系统设置", "系统设置", []permissionDef{
+		{PermSettingsView, "查看系统设置", "全局上号限额与可上号时段"},
+		{PermSettingsManage, "修改系统设置", "会影响全站上号节奏"},
 	}},
 }
 

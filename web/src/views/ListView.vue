@@ -313,6 +313,7 @@ import { deliveryState, outcomeText } from '../account-workflow'
 import { useListPage, type AccountStatusTab } from '../composables/useListPage'
 import { useSession } from '../composables/useSession'
 import { formatDateTime, formatMoneyFen, formatPercent, hasValue, planLabel } from '../utils/format'
+import { formatUsd } from '../model/money'
 import type {
   Account,
   ConnectionOption,
@@ -328,7 +329,7 @@ import type {
 
 const route = useRoute()
 const router = useRouter()
-const { can, canOnboard, onboardAllowed, owns, user, check } = useSession()
+const { can, canOnboard, onboardAllowed, onboardBlockedMessage, owns, user, check } = useSession()
 const isAdmin = computed(() => !!user.value?.is_admin)
 const listKey = computed(() => route.meta.list || 'accounts')
 const accountStatusTabs: { key: AccountStatusTab; label: string }[] = [
@@ -345,7 +346,6 @@ const canCreate = computed(
     (listKey.value === 'connections' && can('connections.create')),
 )
 const canImportAccounts = computed(() => can('accounts.import') && onboardAllowed())
-const onboardBlockedMessage = '当前账号已被禁止上号，请联系管理员'
 const ownerChoices = ref<Choice[]>([{ label: '未分配', value: 'unassigned' }])
 const config = computed(() => {
   const base = listConfigs[listKey.value] || listConfigs.accounts!
@@ -375,11 +375,15 @@ async function loadOwnerChoices() {
     // Keep the unassigned option; filter still works for that case.
   }
 }
-async function loadLookups() {
+async function loadLookups(keepAccountId?: string) {
   if (listKey.value !== 'accounts') return
   // Lookups only need accounts.view, so this page never depends on the proxies / connections modules.
+  // Bound proxies are omitted; pass keepAccountId so edit/reauth still sees the current binding.
+  const proxyPath = keepAccountId
+    ? '/lookups/proxies?account_id=' + encodeURIComponent(keepAccountId)
+    : '/lookups/proxies'
   const [p, c] = await Promise.all([
-    api<ProxyOption[]>('/lookups/proxies'),
+    api<ProxyOption[]>(proxyPath),
     api<ConnectionOption[]>('/lookups/platform-connections'),
   ])
   proxies.value = p.data
@@ -476,6 +480,7 @@ function cellText(row: ListRow, column: Column) {
   if (column.format === 'plan') return planLabel(value)
   if (column.format === 'date') return formatDateTime(value)
   if (column.format === 'money') return formatMoneyFen(value)
+  if (column.format === 'usd') return formatUsd(String(value))
   if (column.field === 'success_rate_percent') return formatPercent(value)
   return value === 'account.submit' ? '账号上传' : String(value)
 }
@@ -507,13 +512,15 @@ async function ensureOnboardAllowed(): Promise<boolean> {
     /* keep cached session; API still enforces */
   }
   if (onboardAllowed()) return true
-  feedback(onboardBlockedMessage, 'error')
+  feedback(onboardBlockedMessage(), 'error')
   return false
 }
-function reauthorizeAccount(row: Account) {
+async function reauthorizeAccount(row: Account) {
   // Paste-credential reauth stays available; Claude OAuth is blocked inside the panel / API.
   deliveryOpen.value = false
-  editingAccount.value = accountsAll.value.find((item) => item.id === row.id) || row
+  const account = accountsAll.value.find((item) => item.id === row.id) || row
+  await loadLookups(account.id)
+  editingAccount.value = account
   editingConnectionId.value =
     row.platform_links?.find((l) => l.ingestion_state === 'accepted')?.connection_id ||
     row.submission_job?.connection_id ||
@@ -571,6 +578,7 @@ async function onDeliveryChanged() {
 async function completeAccount(row: Account, connectionId?: string) {
   if (!(await ensureOnboardAllowed())) return
   deliveryOpen.value = false
+  await loadLookups(row.id)
   editingAccount.value = row
   editingConnectionId.value = connectionId || ''
   forceReauth.value = false
@@ -702,6 +710,7 @@ async function openImport() {
 async function openCreate() {
   if (listKey.value === 'accounts') {
     if (!(await ensureOnboardAllowed())) return
+    await loadLookups()
     editingAccount.value = null
     editingConnectionId.value = ''
     forceReauth.value = false

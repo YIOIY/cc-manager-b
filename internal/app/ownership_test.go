@@ -58,7 +58,9 @@ func TestOwnershipScopesAccountsProxiesJobsDashboard(t *testing.T) {
 	// Operator A sees only own account / proxy / job.
 	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/accounts?page=1&page_size=20", ""), []string{accA})
 	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/proxies", ""), []string{proxyA})
-	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/lookups/proxies", ""), []string{proxyA})
+	// Bound proxies are hidden from the picker unless keep=account_id.
+	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/lookups/proxies", ""), nil)
+	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/lookups/proxies?account_id="+accA, ""), []string{proxyA})
 	assertListIDs(t, opsA.do(http.MethodGet, "/api/v1/jobs?page=1&page_size=20", ""), []string{"job-a"})
 
 	// Operator B cannot see or mutate A's resources.
@@ -187,15 +189,15 @@ func TestSpendSummaryAndDeleteUserRespectOwnership(t *testing.T) {
 	if len(accounts) != 1 || accounts[0]["account_id"] != accA {
 		t.Fatalf("opsA spend=%v", accounts)
 	}
-	if spend["total_model_cost_fen"] != int64(100) {
-		t.Fatalf("opsA total=%v want 100", spend["total_model_cost_fen"])
+	if spend["total_model_cost_usd_cents"] != int64(14) {
+		t.Fatalf("opsA total=%v want 14", spend["total_model_cost_usd_cents"])
 	}
 	adminSpend, err := a.spendSummary(context.Background(), mustParseTime(day+"T12:00:00Z"), ownershipScope{Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adminSpend["total_model_cost_fen"] != int64(200) {
-		t.Fatalf("admin total=%v want 200", adminSpend["total_model_cost_fen"])
+	if adminSpend["total_model_cost_usd_cents"] != int64(28) {
+		t.Fatalf("admin total=%v want 28", adminSpend["total_model_cost_usd_cents"])
 	}
 
 	var created struct {

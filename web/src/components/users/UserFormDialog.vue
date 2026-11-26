@@ -31,6 +31,10 @@
           />
           <small class="access-field-hint" :class="{ 'is-ok': form.password.length >= 12 }">{{ passwordHint }}</small>
         </el-form-item>
+        <el-form-item v-if="user" label="每日可上号数">
+          <el-input-number v-model="form.daily_onboard_limit" :min="0" :max="100000" :step="1" />
+          <small class="access-field-hint">0 表示不限制；按北京时间自然日统计该用户上号次数。</small>
+        </el-form-item>
       </div>
       <el-form-item required>
         <template #label>角色<span class="access-label-hint">可多选，有效权限为并集</span></template>
@@ -84,11 +88,18 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>()
 const { user: me } = useSession()
 
-const form = reactive<{ username: string; nickname: string; password: string; role_ids: string[] }>({
+const form = reactive<{
+  username: string
+  nickname: string
+  password: string
+  role_ids: string[]
+  daily_onboard_limit: number
+}>({
   username: '',
   nickname: '',
   password: '',
   role_ids: [],
+  daily_onboard_limit: 0,
 })
 const saving = ref(false)
 const formError = ref('')
@@ -115,6 +126,7 @@ watch(
       nickname: props.user?.nickname || '',
       password: '',
       role_ids: props.user ? props.user.roles.map((r) => r.id) : [],
+      daily_onboard_limit: props.user?.daily_onboard_limit ?? 0,
     })
     formError.value = ''
   },
@@ -138,6 +150,7 @@ async function save() {
         body: JSON.stringify({
           role_ids: form.role_ids,
           nickname: form.nickname.trim(),
+          daily_onboard_limit: Math.max(0, Math.min(100000, Math.floor(Number(form.daily_onboard_limit) || 0))),
           expected_version: props.user.version,
         }),
       })

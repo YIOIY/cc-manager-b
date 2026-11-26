@@ -23,6 +23,8 @@ func init() {
 		Def{Code: "ORIGIN_FAILED", Category: CategoryAuth, Status: 403, Action: ActionNone, Message: "请求来源与当前站点不一致", Doc: "Origin 头与 Host 不匹配"},
 		Def{Code: "PERMISSION_DENIED", Category: CategoryPermission, Status: 403, Action: ActionContactAdmin, Message: "当前账号没有执行此操作的权限", Hint: "如需此权限请联系管理员", Doc: "details.permission 为所需权限；阶段 1 保留自定义文案", AllowCustomMessage: true},
 		Def{Code: "ONBOARD_DISABLED", Category: CategoryPermission, Status: 403, Action: ActionContactAdmin, Message: "当前账号已被禁止上号", Hint: "请联系管理员开启上号权限", Doc: "users.can_onboard=0 时拦截新建/上号/导入/Claude OAuth"},
+		Def{Code: "ONBOARD_OUTSIDE_WINDOW", Category: CategoryPermission, Status: 403, Action: ActionWait, Message: "当前不在可上号时间段内", Hint: "请在系统设置的允许时段内再试，或联系管理员", Doc: "system_settings 上号时间窗；空窗=全天"},
+		Def{Code: "ONBOARD_DAILY_LIMIT", Category: CategoryPermission, Status: 403, Action: ActionWait, Message: "今日上号次数已达上限", Hint: "请明日再试，或联系管理员调整限额", Doc: "全局 daily_onboard_max 或用户 daily_onboard_limit；0=不限制；按 Asia/Shanghai 自然日统计 account.submit"},
 		Def{Code: "PAYLOAD_TOO_LARGE", Category: CategoryValidation, Status: 413, Action: ActionFixInput, Message: "提交的内容超过大小限制", Hint: "请减少单次提交的数据量", Doc: "请求体超过上限"},
 		Def{Code: "METHOD_NOT_ALLOWED", Category: CategoryValidation, Status: 405, Action: ActionNone, Message: "不支持的请求方式", Doc: "路由存在但方法不匹配"},
 		Def{Code: "QUERY_SCOPE_TOO_LARGE", Category: CategoryValidation, Status: 422, Action: ActionFixInput, Message: "单次最多选择 10000 个账号", Hint: "请缩小选择范围", Doc: "账单查询范围"},
@@ -188,6 +190,8 @@ const (
 	CodeOriginFailed                = "ORIGIN_FAILED"
 	CodePermissionDenied            = "PERMISSION_DENIED"
 	CodeOnboardDisabled             = "ONBOARD_DISABLED"
+	CodeOnboardOutsideWindow        = "ONBOARD_OUTSIDE_WINDOW"
+	CodeOnboardDailyLimit           = "ONBOARD_DAILY_LIMIT"
 	CodePayloadTooLarge             = "PAYLOAD_TOO_LARGE"
 	CodeMethodNotAllowed            = "METHOD_NOT_ALLOWED"
 	CodeQueryScopeTooLarge          = "QUERY_SCOPE_TOO_LARGE"

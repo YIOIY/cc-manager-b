@@ -17,7 +17,7 @@ export interface Column {
   label: string
   width?: number
   minWidth?: number
-  format?: 'date' | 'boolean' | 'status' | 'plan' | 'money'
+  format?: 'date' | 'boolean' | 'status' | 'plan' | 'money' | 'usd'
 }
 export interface ListConfig {
   name: string
@@ -173,7 +173,7 @@ export const listConfigs: Record<string, ListConfig> = {
       { field: 'platform_prompt_tokens', label: '输入 Token', minWidth: 115 },
       { field: 'platform_completion_tokens', label: '输出 Token', minWidth: 115 },
       { field: 'platform_success_rate_percent', label: '成功率', width: 95 },
-      { field: 'platform_cost_fen', label: '平台消费（元）', minWidth: 130, format: 'money' },
+      { field: 'platform_cost_usd', label: '平台消费（美元）', minWidth: 130, format: 'usd' },
       { field: 'platform_observed_at', label: '最后观测', minWidth: 170, format: 'date' },
       { field: 'plan_end_time', label: '套餐到期', width: 120 },
       { field: 'proxy_id', label: '代理绑定', minWidth: 130 },

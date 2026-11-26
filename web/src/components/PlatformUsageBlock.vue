@@ -29,20 +29,18 @@
 import { computed } from 'vue'
 import type { PlatformUsage } from '../types/api'
 import { formatResetAt, formatTokens, usageStale, usageTone } from '../model/platform-card'
-import { fenToUsdCents, formatUsdCents } from '../model/money'
+import { formatUsd } from '../model/money'
 
 const props = defineProps<{
   usage: PlatformUsage | null
   observedAt?: string
-  /** Connection fixed RMB-per-dollar rate; used only to convert cost to USD for display. */
-  usdRate?: number
 }>()
 const stale = computed(() => usageStale(props.usage?.observed_at || props.observedAt))
 
-// Platform cost is RMB at its fixed rate; divide by the same rate to show dollars.
 const usd = computed(() => {
-  const cents = props.usage ? fenToUsdCents(props.usage.cost_fen, props.usdRate) : null
-  return cents === null ? '' : formatUsdCents(cents)
+  const amount = props.usage?.cost_usd
+  if (amount === null || amount === undefined || amount === '') return ''
+  return formatUsd(amount)
 })
 
 function percentText(value: number | null | undefined): string {

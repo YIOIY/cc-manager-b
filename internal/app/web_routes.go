@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -50,11 +49,9 @@ func percent(v float64) float64 { return math.Round(v*10000) / 100 }
 
 func microToFen(micro int64) int64 { return int64(math.Round(float64(micro) / 10000)) }
 
-func yuanText(fen int64) string { return fmt.Sprintf("%d.%02d", fen/100, fen%100) }
-
 // webChannelState is what an account response says about its connection:
 // whether profile edits can reach the platform at all, and the platform's
-// fixed USD→RMB rate for showing the RMB cost in dollars.
+// fixed USD→RMB rate used server-side when emitting cost_usd.
 type webChannelState struct {
 	Configured, Suspended bool
 	USDRate               float64
@@ -90,9 +87,9 @@ func platformBlock(x remoteRow, channel string, web webChannelState) map[string]
 		"usage":   nil,
 	}
 	if x.CostMicro.Valid || x.InputTokens.Valid || x.FiveHour.Valid {
-		fen := microToFen(x.CostMicro.Int64)
+		cents, text := costUSDFields(microToFen(x.CostMicro.Int64), web.USDRate)
 		block["usage"] = map[string]any{
-			"cost_fen": fen, "cost_yuan": yuanText(fen), "input_tokens": x.InputTokens.Int64, "output_tokens": x.OutputTokens.Int64,
+			"cost_usd_cents": cents, "cost_usd": text, "input_tokens": x.InputTokens.Int64, "output_tokens": x.OutputTokens.Int64,
 			"five_hour_used_percent": percent(x.FiveHour.Float64), "five_hour_reset_at": x.FiveHourResetAt,
 			"week_used_percent": percent(x.Week.Float64), "week_reset_at": x.WeekResetAt, "observed_at": x.UsageObservedAt,
 		}
@@ -384,22 +381,27 @@ const spendWindowDays = 7
 
 // spendSummary aggregates the per-model bills of every enabled connection
 // over its own local "today" and the 6 days before, merging connections by
-// local date string. total_model_cost_fen is the all-time scoped sum (admin =
-// every row; others = accounts they created).
+// local date string. Amounts are converted to USD cents with each
+// connection's own rate before summing. total_model_cost_usd_cents is the
+// all-time scoped sum (admin = every row; others = accounts they created).
 func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipScope) (map[string]any, error) {
-	rows, err := a.DB.QueryContext(ctx, `SELECT id,timezone FROM platform_connections WHERE enabled=1`)
+	rows, err := a.DB.QueryContext(ctx, `SELECT id,timezone,COALESCE(usd_cny_rate,?) FROM platform_connections WHERE enabled=1`, defaultUSDCNYRate)
 	if err != nil {
 		return nil, err
 	}
-	type conn struct{ id, today, start string }
+	type conn struct {
+		id, today, start string
+		rate             float64
+	}
 	var conns []conn
 	for rows.Next() {
 		var id, zone string
-		if err = rows.Scan(&id, &zone); err != nil {
+		var rate float64
+		if err = rows.Scan(&id, &zone, &rate); err != nil {
 			break
 		}
 		local := at.In(connectionLocation(zone))
-		conns = append(conns, conn{id, local.Format("2006-01-02"), local.AddDate(0, 0, -(spendWindowDays - 1)).Format("2006-01-02")})
+		conns = append(conns, conn{id, local.Format("2006-01-02"), local.AddDate(0, 0, -(spendWindowDays - 1)).Format("2006-01-02"), rate})
 	}
 	if err == nil {
 		err = rows.Err()
@@ -412,13 +414,29 @@ func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipSco
 	byModel := map[string]int64{}
 	byAccount := map[string]*struct {
 		email string
-		fen   int64
+		cents int64
 	}{}
 	var today, week int64
 	latestToday, latestStart := "", ""
 	ownerSQL, ownerArgs := scope.sqlAnd("acc.created_by_user_id")
 	var total int64
-	if err = a.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(b.cost_fen),0) FROM platform_bill_models b LEFT JOIN accounts acc ON acc.id=b.account_id WHERE 1=1`+ownerSQL, ownerArgs...).Scan(&total); err != nil {
+	totalRows, err := a.DB.QueryContext(ctx, `SELECT b.cost_fen,COALESCE(c.usd_cny_rate,?) FROM platform_bill_models b LEFT JOIN accounts acc ON acc.id=b.account_id LEFT JOIN platform_connections c ON c.id=b.connection_id WHERE 1=1`+ownerSQL, append([]any{defaultUSDCNYRate}, ownerArgs...)...)
+	if err != nil {
+		return nil, err
+	}
+	for totalRows.Next() {
+		var fen int64
+		var rate float64
+		if err = totalRows.Scan(&fen, &rate); err != nil {
+			break
+		}
+		total += fenToUsdCents(fen, rate)
+	}
+	if err == nil {
+		err = totalRows.Err()
+	}
+	totalRows.Close()
+	if err != nil {
 		return nil, err
 	}
 	for _, c := range conns {
@@ -436,19 +454,20 @@ func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipSco
 			if err = billRows.Scan(&day, &model, &accountID, &email, &fen); err != nil {
 				break
 			}
-			byDay[day] += fen
-			byModel[model] += fen
-			week += fen
+			cents := fenToUsdCents(fen, c.rate)
+			byDay[day] += cents
+			byModel[model] += cents
+			week += cents
 			if day == c.today {
-				today += fen
+				today += cents
 			}
 			if byAccount[accountID] == nil {
 				byAccount[accountID] = &struct {
 					email string
-					fen   int64
+					cents int64
 				}{email, 0}
 			}
-			byAccount[accountID].fen += fen
+			byAccount[accountID].cents += cents
 		}
 		if err == nil {
 			err = billRows.Err()
@@ -463,7 +482,8 @@ func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipSco
 		start, _ := time.Parse("2006-01-02", latestStart)
 		for i := 0; i < spendWindowDays; i++ {
 			day := start.AddDate(0, 0, i).Format("2006-01-02")
-			days = append(days, map[string]any{"date": day, "cost_fen": byDay[day], "final": day < latestToday})
+			cents := byDay[day]
+			days = append(days, map[string]any{"date": day, "cost_usd_cents": cents, "cost_usd": usdText(cents), "final": day < latestToday})
 		}
 	}
 	topN := func(m map[string]int64, key string) []map[string]any {
@@ -486,21 +506,26 @@ func (a *App) spendSummary(ctx context.Context, at time.Time, scope ownershipSco
 			if len(out) == 5 {
 				break
 			}
-			out = append(out, map[string]any{key: e.k, "cost_fen": e.v})
+			out = append(out, map[string]any{key: e.k, "cost_usd_cents": e.v, "cost_usd": usdText(e.v)})
 		}
 		return out
 	}
 	accountTotals := map[string]int64{}
 	emails := map[string]string{}
 	for id, v := range byAccount {
-		accountTotals[id] = v.fen
+		accountTotals[id] = v.cents
 		emails[id] = v.email
 	}
 	accounts := topN(accountTotals, "account_id")
 	for _, m := range accounts {
 		m["account"] = emails[m["account_id"].(string)]
 	}
-	return map[string]any{"today_model_cost_fen": today, "week_model_cost_fen": week, "total_model_cost_fen": total, "cost_by_day": days, "cost_by_model": topN(byModel, "model_name"), "cost_by_account": accounts}, nil
+	return map[string]any{
+		"today_model_cost_usd_cents": today, "today_model_cost_usd": usdText(today),
+		"week_model_cost_usd_cents": week, "week_model_cost_usd": usdText(week),
+		"total_model_cost_usd_cents": total, "total_model_cost_usd": usdText(total),
+		"cost_by_day": days, "cost_by_model": topN(byModel, "model_name"), "cost_by_account": accounts,
+	}, nil
 }
 
 func intOf(v any) int {
@@ -525,7 +550,8 @@ func (a *App) billModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var zone string
-	if err := a.DB.QueryRowContext(ctx, `SELECT timezone FROM platform_connections WHERE id=?`, connectionID).Scan(&zone); err != nil {
+	rate := defaultUSDCNYRate
+	if err := a.DB.QueryRowContext(ctx, `SELECT timezone,COALESCE(usd_cny_rate,?) FROM platform_connections WHERE id=?`, defaultUSDCNYRate, connectionID).Scan(&zone, &rate); err != nil {
 		writeError(w, r, errs.New(errs.CodeNotFound).WithMessage("平台连接不存在").WithDetail("resource", "platform_connection"))
 		return
 	}
@@ -575,15 +601,16 @@ func (a *App) billModels(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, storageError(err, "账单读取失败"))
 			return
 		}
-		list = append(list, map[string]any{"bill_date": day, "account_id": account, "account": email, "upstream_id": upstream, "model_name": model, "bill_model_name": billModel, "cost_fen": fen, "cost_yuan": yuanText(fen), "final": final == 1, "fetched_at": fetched, "generation": generation})
+		cents, text := costUSDFields(fen, rate)
+		list = append(list, map[string]any{"bill_date": day, "account_id": account, "account": email, "upstream_id": upstream, "model_name": model, "bill_model_name": billModel, "cost_usd_cents": cents, "cost_usd": text, "final": final == 1, "fetched_at": fetched, "generation": generation})
 	}
 	rows.Close()
 	type agg struct {
 		key, label string
-		fen        int64
+		cents      int64
 	}
 	byAccount, byModel := map[string]*agg{}, map[string]*agg{}
-	var totalFen int64
+	var totalCents int64
 	days := map[string]bool{}
 	aggRows, err := a.DB.QueryContext(ctx, `SELECT b.bill_date,b.account_id,COALESCE(a.account,''),b.model_name,b.cost_fen`+base, args...)
 	if err != nil {
@@ -597,15 +624,16 @@ func (a *App) billModels(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		days[day] = true
-		totalFen += fen
+		cents := fenToUsdCents(fen, rate)
+		totalCents += cents
 		if byAccount[account] == nil {
 			byAccount[account] = &agg{key: account, label: email}
 		}
-		byAccount[account].fen += fen
+		byAccount[account].cents += cents
 		if byModel[model] == nil {
 			byModel[model] = &agg{key: model, label: model}
 		}
-		byModel[model].fen += fen
+		byModel[model].cents += cents
 	}
 	if err == nil {
 		err = aggRows.Err()
@@ -621,14 +649,14 @@ func (a *App) billModels(w http.ResponseWriter, r *http.Request) {
 			items = append(items, v)
 		}
 		sort.Slice(items, func(i, j int) bool {
-			if items[i].fen != items[j].fen {
-				return items[i].fen > items[j].fen
+			if items[i].cents != items[j].cents {
+				return items[i].cents > items[j].cents
 			}
 			return items[i].key < items[j].key
 		})
 		out := make([]any, 0, len(items))
 		for _, v := range items {
-			out = append(out, map[string]any{"key": v.key, "label": v.label, "cost_fen": v.fen, "cost_yuan": yuanText(v.fen)})
+			out = append(out, map[string]any{"key": v.key, "label": v.label, "cost_usd_cents": v.cents, "cost_usd": usdText(v.cents)})
 		}
 		return out
 	}
@@ -649,7 +677,7 @@ func (a *App) billModels(w http.ResponseWriter, r *http.Request) {
 		today = time.Now().In(loc).Format("2006-01-02")
 	}
 	write(w, http.StatusOK, map[string]any{
-		"list": list, "by_account": accounts, "by_model": models, "total_cost_fen": totalFen, "total_cost_yuan": yuanText(totalFen),
+		"list": list, "by_account": accounts, "by_model": models, "total_cost_usd_cents": totalCents, "total_cost_usd": usdText(totalCents),
 		"coverage": map[string]any{"days_requested": requested, "days_present": len(days), "today": today, "today_final": false, "today_included": today != "" && today >= dates.StartDate && today <= dates.EndDate},
 		"page":     page, "page_size": size, "total": total,
 	})
@@ -722,6 +750,8 @@ func (a *App) accountUsageHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		days = n
 	}
+	rate := defaultUSDCNYRate
+	_ = a.DB.QueryRowContext(r.Context(), `SELECT COALESCE(c.usd_cny_rate,?) FROM platform_links l JOIN platform_connections c ON c.id=l.connection_id WHERE l.account_id=? ORDER BY l.updated_at DESC,l.rowid DESC LIMIT 1`, defaultUSDCNYRate, id).Scan(&rate)
 	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UTC().Format(time.RFC3339)
 	rows, err := a.DB.QueryContext(r.Context(), `SELECT observed_at,usage_cost_micro,usage_input_tokens,usage_output_tokens,five_hour_used,five_hour_reset_at,week_used,week_reset_at FROM platform_usage_snapshots WHERE account_id=? AND observed_at>=? ORDER BY observed_at,rowid`, id, since)
 	if err != nil {
@@ -738,8 +768,8 @@ func (a *App) accountUsageHistory(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, storageError(err, "用量历史读取失败"))
 			return
 		}
-		fen := microToFen(cost.Int64)
-		list = append(list, map[string]any{"observed_at": observed, "cost_fen": fen, "cost_yuan": yuanText(fen), "input_tokens": in.Int64, "output_tokens": out.Int64, "five_hour_used_percent": percent(five.Float64), "five_hour_reset_at": fiveReset, "week_used_percent": percent(week.Float64), "week_reset_at": weekReset})
+		cents, text := costUSDFields(microToFen(cost.Int64), rate)
+		list = append(list, map[string]any{"observed_at": observed, "cost_usd_cents": cents, "cost_usd": text, "input_tokens": in.Int64, "output_tokens": out.Int64, "five_hour_used_percent": percent(five.Float64), "five_hour_reset_at": fiveReset, "week_used_percent": percent(week.Float64), "week_reset_at": weekReset})
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, r, storageError(err, "用量历史读取失败"))

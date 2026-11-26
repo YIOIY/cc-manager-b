@@ -35,10 +35,11 @@ type sessionState struct {
 
 // sessionUserInfo is what handlers see about the caller.
 type sessionUserInfo struct {
-	ID         string
-	Username   string
-	CanOnboard bool
-	Access     access
+	ID                string
+	Username          string
+	CanOnboard        bool
+	DailyOnboardLimit int
+	Access            access
 }
 
 const sessionUserKey ctxKey = 2
@@ -297,7 +298,7 @@ func (a *App) authSession(w http.ResponseWriter, r *http.Request) {
 		if u, err := a.userByID(s.userID); err == nil && u.Enabled {
 			ac, _ := a.userAccess(u.ID)
 			body["authenticated"] = true
-			body["user"] = sessionUserPayload(u, ac)
+			body["user"] = a.sessionUserPayload(u, ac)
 		}
 	}
 	write(w, http.StatusOK, body)
@@ -354,7 +355,7 @@ func (a *App) authLogin(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.DB.Exec(`UPDATE users SET last_login_at=? WHERE id=?`, now.UTC().Format(time.RFC3339), user.ID)
 	a.auditAs(user.Username, "auth.login", "user", user.ID, ip)
 	ac, _ := a.userAccess(user.ID)
-	write(w, http.StatusOK, map[string]any{"authenticated": true, "csrf_token": s.csrf, "user": sessionUserPayload(user, ac)})
+	write(w, http.StatusOK, map[string]any{"authenticated": true, "csrf_token": s.csrf, "user": a.sessionUserPayload(user, ac)})
 }
 
 // unknownUserHash is a valid argon2id hash of a random secret; verifying
@@ -404,7 +405,7 @@ func (a *App) protect(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, r, storageError(err, "读取权限失败"))
 			return
 		}
-		ctx := context.WithValue(r.Context(), sessionUserKey, sessionUserInfo{ID: u.ID, Username: u.Username, CanOnboard: u.CanOnboard, Access: ac})
+		ctx := context.WithValue(r.Context(), sessionUserKey, sessionUserInfo{ID: u.ID, Username: u.Username, CanOnboard: u.CanOnboard, DailyOnboardLimit: u.DailyOnboardLimit, Access: ac})
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -420,12 +421,13 @@ func (a *App) require(p Permission, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// requireCanOnboard rejects onboarding-related writes when the user flag is off.
+// requireCanOnboard rejects onboarding-related writes when the user flag is
+// off, outside the global time window, or past daily caps.
 // Compose after require(...) so RBAC denial stays PERMISSION_DENIED.
 func (a *App) requireCanOnboard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sessionUser(r).CanOnboard {
-			writeError(w, r, errs.New(errs.CodeOnboardDisabled))
+		if err := a.checkOnboardAllowed(sessionUser(r)); err != nil {
+			writeError(w, r, err)
 			return
 		}
 		next(w, r)

@@ -42,6 +42,7 @@ var migrations = []migration{
 	{21, "oauth-dispatch-defaults", migrateOAuthDispatchDefaultsV21},
 	{22, "channel-usage-permission", migrateChannelUsagePermissionV22},
 	{23, "remote-status-changed-at", migrateRemoteStatusChangedAtV23},
+	{24, "onboard-limits", migrateOnboardLimitsV24},
 }
 
 // migrateRemoteStatusChangedAtV23 records when a remote delivery's console
@@ -49,6 +50,19 @@ var migrations = []migration{
 // banned or offline without inventing that from reason_fetched_at.
 func migrateRemoteStatusChangedAtV23(tx *sql.Tx) error {
 	return addColumns(tx, "platform_remote_accounts", []string{"status_changed_at TEXT NOT NULL DEFAULT ''"})
+}
+
+// migrateOnboardLimitsV24 adds global onboard caps (system_settings) and a
+// per-user daily_onboard_limit. Defaults keep previous behaviour: 0 = no
+// count limit, empty window = all day.
+func migrateOnboardLimitsV24(tx *sql.Tx) error {
+	if err := addColumns(tx, "users", []string{"daily_onboard_limit INTEGER NOT NULL DEFAULT 0"}); err != nil {
+		return err
+	}
+	return execAll(tx,
+		`CREATE TABLE IF NOT EXISTS system_settings(id INTEGER PRIMARY KEY CHECK(id=1),daily_onboard_max INTEGER NOT NULL DEFAULT 0,onboard_window_start TEXT NOT NULL DEFAULT '',onboard_window_end TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1)`,
+		`INSERT OR IGNORE INTO system_settings(id,daily_onboard_max,onboard_window_start,onboard_window_end,version) VALUES(1,0,'','',1)`,
+	)
 }
 
 // migrateChannelUsagePermissionV22 splits 渠道用量 out of bills.view so the

@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { api, ApiError, errorMessage, onUnauthorized, session } from '../api'
+import { ErrorMessages, type ErrorCode } from '../generated/error-codes'
 import type { Permission, Session, SessionUser } from '../types/api'
 
 const authenticated = ref(false)
@@ -23,12 +24,23 @@ export function can(permission: Permission): boolean {
   return !!user.value?.permissions.includes(permission)
 }
 
-/** True when the user-level上号 switch is on (defaults true for older payloads). */
+/** True when onboarding writes are allowed right now (user switch + window + caps). */
 export function onboardAllowed(): boolean {
-  return user.value?.can_onboard !== false
+  const u = user.value
+  if (!u) return false
+  if (typeof u.onboard_allowed === 'boolean') return u.onboard_allowed
+  return u.can_onboard !== false
 }
 
-/** True when the user may start Claude onboarding (RBAC + user switch). */
+/** Human message when onboardAllowed() is false. */
+export function onboardBlockedMessage(): string {
+  const code = user.value?.onboard_block_code
+  if (code && code in ErrorMessages) return ErrorMessages[code as ErrorCode]
+  if (user.value?.can_onboard === false) return ErrorMessages.ONBOARD_DISABLED
+  return '当前无法上号，请稍后再试或联系管理员'
+}
+
+/** True when the user may start Claude onboarding (RBAC + effective gate). */
 export function canOnboard(): boolean {
   return can('accounts.onboard') && onboardAllowed()
 }
@@ -126,6 +138,7 @@ export function useSession() {
     user: computed(() => user.value),
     can,
     onboardAllowed,
+    onboardBlockedMessage,
     canOnboard,
     owns,
     check,

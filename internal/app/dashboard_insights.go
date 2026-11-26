@@ -37,7 +37,8 @@ type quotaRow struct {
 	FiveHourResetAt   string   `json:"five_hour_reset_at"`
 	WeekPercent       *float64 `json:"week_percent"`
 	WeekResetAt       string   `json:"week_reset_at"`
-	CostFen           *int64   `json:"cost_fen"`
+	CostUsdCents      *int64   `json:"cost_usd_cents"`
+	CostUsd           string   `json:"cost_usd,omitempty"`
 }
 
 // idleRow is an in-use account that has barely used its 7-day window.
@@ -50,7 +51,8 @@ type idleRow struct {
 	CreatedByNickname string   `json:"created_by_nickname"`
 	CreatedByUsername string   `json:"created_by_username"`
 	WeekPercent       *float64 `json:"week_percent"`
-	CostFen           *int64   `json:"cost_fen"`
+	CostUsdCents      *int64   `json:"cost_usd_cents"`
+	CostUsd           string   `json:"cost_usd,omitempty"`
 	PlanEnd           string   `json:"plan_end"`
 	// DaysLeft is nil when the plan end date is unknown.
 	DaysLeft *int `json:"days_left"`
@@ -110,7 +112,7 @@ func (a *App) dashboardInsightsData(ctx context.Context, at time.Time, includeJo
 // that has not passed yet ("" when none is known).
 func (a *App) fleetQuota(ctx context.Context, at time.Time, scope ownershipScope) (map[string]any, []quotaRow, map[string]int, []idleRow, string, error) {
 	ownerSQL, ownerArgs := scope.sqlAnd("a.created_by_user_id")
-	rows, err := a.DB.QueryContext(ctx, `SELECT a.id,a.account,COALESCE(a.plan_end_time,''),COALESCE(c.timezone,''),
+	rows, err := a.DB.QueryContext(ctx, `SELECT a.id,a.account,COALESCE(a.plan_end_time,''),COALESCE(c.timezone,''),COALESCE(c.usd_cny_rate,?),
 r.upstream_id IS NOT NULL,COALESCE(l.upstream_id,''),COALESCE(r.upstream_aid,''),COALESCE(r.missing_since,''),COALESCE(r.superseded_by,''),COALESCE(r.alias,''),COALESCE(NULLIF(r.ext_status,''),r.a1_status,''),COALESCE(r.plan_end_time,''),
 COALESCE(a.created_by_user_id,''),COALESCE(u.nickname,''),COALESCE(u.username,''),
 r.five_hour_used,COALESCE(r.five_hour_reset_at,''),r.week_used,COALESCE(r.week_reset_at,''),r.usage_cost_micro,r.usage_input_tokens,r.usage_output_tokens
@@ -118,7 +120,7 @@ FROM platform_links l JOIN accounts a ON a.id=l.account_id LEFT JOIN platform_co
 LEFT JOIN platform_remote_accounts r ON r.connection_id=l.connection_id AND r.upstream_id=l.upstream_id
 LEFT JOIN users u ON u.id=a.created_by_user_id
 WHERE l.ingestion_state='accepted' AND a.archived=0`+ownerSQL+`
-ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',l.updated_at DESC`, ownerArgs...)
+ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',l.updated_at DESC`, append([]any{defaultUSDCNYRate}, ownerArgs...)...)
 	if err != nil {
 		return nil, nil, nil, nil, "", err
 	}
@@ -128,15 +130,16 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 	expiry := map[string]int{"expired": 0, "within_7": 0, "within_30": 0, "later": 0, "unknown": 0}
 	quota := []quotaRow{}
 	seen := map[string]bool{}
-	var costFen, inTokens, outTokens int64
+	var costCents, inTokens, outTokens int64
 	var fiveSum, weekSum float64
 	var fiveN, weekN int
 	for rows.Next() {
 		var id, email, localEnd, zone, upstream, aid, missing, superseded, alias, status, remoteEnd, ownerID, nick, username, fiveReset, weekReset string
 		var hasRemote bool
+		var rate float64
 		var five, week sql.NullFloat64
 		var cost, in, out sql.NullInt64
-		if err = rows.Scan(&id, &email, &localEnd, &zone, &hasRemote, &upstream, &aid, &missing, &superseded, &alias, &status, &remoteEnd, &ownerID, &nick, &username, &five, &fiveReset, &week, &weekReset, &cost, &in, &out); err != nil {
+		if err = rows.Scan(&id, &email, &localEnd, &zone, &rate, &hasRemote, &upstream, &aid, &missing, &superseded, &alias, &status, &remoteEnd, &ownerID, &nick, &username, &five, &fiveReset, &week, &weekReset, &cost, &in, &out); err != nil {
 			return nil, nil, nil, nil, "", err
 		}
 		if seen[id] { // an older delivery of the same account
@@ -176,9 +179,10 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 			weekN++
 		}
 		if cost.Valid {
-			fen := microToFen(cost.Int64)
-			q.CostFen = &fen
-			costFen += fen
+			cents, text := costUSDFields(microToFen(cost.Int64), rate)
+			q.CostUsdCents = &cents
+			q.CostUsd = text
+			costCents += cents
 		}
 		inTokens += in.Int64
 		outTokens += out.Int64
@@ -187,7 +191,7 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 			row := idleRow{
 				AccountID: id, Account: email, Alias: alias, PlatformAccountID: platformID,
 				CreatedByUserID: ownerID, CreatedByNickname: nick, CreatedByUsername: username,
-				WeekPercent: q.WeekPercent, CostFen: q.CostFen, PlanEnd: end,
+				WeekPercent: q.WeekPercent, CostUsdCents: q.CostUsdCents, CostUsd: q.CostUsd, PlanEnd: end,
 			}
 			if days, ok := daysUntil(end, at, zone); ok {
 				row.DaysLeft = &days
@@ -223,7 +227,8 @@ ORDER BY a.id,COALESCE(r.superseded_by,'')<>'',COALESCE(r.missing_since,'')<>'',
 		return quota[i].Account < quota[j].Account
 	})
 	fleet := map[string]any{
-		"accounts": len(quota), "cost_fen_total": costFen, "input_tokens": inTokens, "output_tokens": outTokens,
+		"accounts": len(quota), "cost_usd_cents_total": costCents, "cost_usd_total": usdText(costCents),
+		"input_tokens": inTokens, "output_tokens": outTokens,
 		"avg_five_hour_percent": average(fiveSum, fiveN), "avg_week_percent": average(weekSum, weekN),
 	}
 	if len(quota) > insightsQuotaLimit {
@@ -272,40 +277,43 @@ func (a *App) hourlyBurn(ctx context.Context, at time.Time, scope ownershipScope
 		ownerSQL = ` AND EXISTS(SELECT 1 FROM platform_links l JOIN accounts a ON a.id=l.account_id WHERE l.connection_id=s.connection_id AND l.upstream_id=s.upstream_id AND l.ingestion_state='accepted' AND a.created_by_user_id=?)`
 		args = append(args, scope.UserID)
 	}
-	rows, err := a.DB.QueryContext(ctx, `SELECT s.connection_id,s.upstream_id,s.observed_at,s.usage_cost_micro FROM platform_usage_snapshots s
+	rows, err := a.DB.QueryContext(ctx, `SELECT s.connection_id,s.upstream_id,s.observed_at,s.usage_cost_micro,COALESCE(c.usd_cny_rate,?) FROM platform_usage_snapshots s
+LEFT JOIN platform_connections c ON c.id=s.connection_id
 WHERE s.usage_cost_micro IS NOT NULL AND s.observed_at<=? AND (s.observed_at>=? OR s.observed_at=(
 	SELECT MAX(x.observed_at) FROM platform_usage_snapshots x
 	WHERE x.connection_id=s.connection_id AND x.upstream_id=s.upstream_id AND x.observed_at<? AND x.usage_cost_micro IS NOT NULL))`+ownerSQL+`
-ORDER BY s.connection_id,s.upstream_id,s.observed_at,s.rowid`, args...)
+ORDER BY s.connection_id,s.upstream_id,s.observed_at,s.rowid`, append([]any{defaultUSDCNYRate}, args...)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	buckets := make([]int64, insightsHours)
+	buckets := make([]int64, insightsHours) // USD cents
 	var prevKey string
 	var prevCost int64
+	var prevRate float64
 	for rows.Next() {
 		var conn, upstream, observed string
 		var cost int64
-		if err = rows.Scan(&conn, &upstream, &observed, &cost); err != nil {
+		var rate float64
+		if err = rows.Scan(&conn, &upstream, &observed, &cost, &rate); err != nil {
 			return nil, err
 		}
 		key := conn + "\x00" + upstream
 		if key == prevKey && cost > prevCost {
 			if t, e := time.Parse(time.RFC3339, observed); e == nil {
 				if i := int(t.UTC().Truncate(time.Hour).Sub(first) / time.Hour); i >= 0 && i < insightsHours {
-					buckets[i] += cost - prevCost
+					buckets[i] += fenToUsdCents(microToFen(cost-prevCost), prevRate)
 				}
 			}
 		}
-		prevKey, prevCost = key, cost
+		prevKey, prevCost, prevRate = key, cost, rate
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
 	out := make([]map[string]any, insightsHours)
-	for i, micro := range buckets {
-		out[i] = map[string]any{"hour": first.Add(time.Duration(i) * time.Hour).Format(time.RFC3339), "cost_fen": microToFen(micro)}
+	for i, cents := range buckets {
+		out[i] = map[string]any{"hour": first.Add(time.Duration(i) * time.Hour).Format(time.RFC3339), "cost_usd_cents": cents, "cost_usd": usdText(cents)}
 	}
 	return out, nil
 }

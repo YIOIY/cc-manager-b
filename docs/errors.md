@@ -80,7 +80,9 @@
 | `OAUTH_SESSION_EXPIRED` | not_found | 404 | 否 | reauthorize | 授权链接已失效 | 链接过期、被替换、已取消、已完成提交或不属于当前会话；缓存令牌在会话等待期间过期时同样返回此码并带 details.oauth_session_expired=true |
 | `OAUTH_START_FAILED` | internal | 500 | 是 | retry | 无法生成授权链接 | 随机数生成失败 |
 | `OAUTH_SUPPLIER_REJECTED` | upstream | 502 | 是 | retry | Claude 授权服务暂时故障 | 兑换时上游 5xx；已有链接与授权码保留，可直接重试；允许调用方自定义文案 |
+| `ONBOARD_DAILY_LIMIT` | permission | 403 | 否 | wait | 今日上号次数已达上限 | 全局 daily_onboard_max 或用户 daily_onboard_limit；0=不限制；按 Asia/Shanghai 自然日统计 account.submit |
 | `ONBOARD_DISABLED` | permission | 403 | 否 | contact_admin | 当前账号已被禁止上号 | users.can_onboard=0 时拦截新建/上号/导入/Claude OAuth |
+| `ONBOARD_OUTSIDE_WINDOW` | permission | 403 | 否 | wait | 当前不在可上号时间段内 | system_settings 上号时间窗；空窗=全天 |
 | `OPTIONAL_METADATA_INVALID` | validation | 422 | 否 | fix_input | 补充信息格式不正确 | 余额、标签、支付方式等选填项 |
 | `ORIGIN_FAILED` | auth | 403 | 否 | none | 请求来源与当前站点不一致 | Origin 头与 Host 不匹配 |
 | `PASSWORD_INVALID` | auth | 403 | 否 | fix_input | 当前密码不正确 | 修改密码时旧密码校验 |

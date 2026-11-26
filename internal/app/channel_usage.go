@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -23,22 +22,6 @@ func platformAccountID(aid, upstream string) string {
 		return a
 	}
 	return strings.TrimSpace(upstream)
-}
-
-// fenToUsdCents converts RMB fen to US cents at the platform's fixed rate
-// (RMB per dollar), matching web/src/model/money.ts.
-func fenToUsdCents(fen int64, rate float64) int64 {
-	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
-		return 0
-	}
-	return int64(math.Round(float64(fen) / rate))
-}
-
-func usdText(cents int64) string {
-	if cents < 0 {
-		return "-" + yuanText(-cents)
-	}
-	return yuanText(cents)
 }
 
 // channelUsageAccounts answers GET /platform-usage/channel-usage/accounts:
@@ -236,7 +219,6 @@ type channelUsageRow struct {
 	ownerUserID       string
 	ownerNickname     string
 	ownerUsername     string
-	costFen           int64
 	costUsdCents      int64
 	costUsd           string
 	final             bool
@@ -261,7 +243,7 @@ func (a *App) scanChannelUsageRows(w http.ResponseWriter, r *http.Request, f *ch
 			writeError(w, r, storageError(err, "渠道用量读取失败"))
 			return nil, false
 		}
-		cents := fenToUsdCents(fen, f.rate)
+		cents, text := costUSDFields(fen, f.rate)
 		list = append(list, channelUsageRow{
 			billDate:          day,
 			upstreamID:        upstream,
@@ -270,9 +252,8 @@ func (a *App) scanChannelUsageRows(w http.ResponseWriter, r *http.Request, f *ch
 			ownerUserID:       ownerID,
 			ownerNickname:     nick,
 			ownerUsername:     username,
-			costFen:           fen,
 			costUsdCents:      cents,
-			costUsd:           usdText(cents),
+			costUsd:           text,
 			final:             final == 1,
 		})
 	}
@@ -337,7 +318,6 @@ func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
 			"owner_user_id":       row.ownerUserID,
 			"owner_nickname":      row.ownerNickname,
 			"owner_username":      row.ownerUsername,
-			"cost_fen":            row.costFen,
 			"cost_usd_cents":      row.costUsdCents,
 			"cost_usd":            row.costUsd,
 			"final":               row.final,
@@ -352,12 +332,11 @@ func (a *App) channelUsage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	totalCents := fenToUsdCents(totalFen, f.rate)
+	totalCents, totalText := costUSDFields(totalFen, f.rate)
 	write(w, http.StatusOK, map[string]any{
 		"list":            list,
 		"by_day":          byDay,
-		"total_cost_fen":  totalFen,
-		"total_cost_usd":  usdText(totalCents),
+		"total_cost_usd":  totalText,
 		"total_usd_cents": totalCents,
 		"usd_cny_rate":    f.rate,
 		"page":            page,
@@ -388,12 +367,11 @@ GROUP BY b.bill_date ORDER BY b.bill_date DESC`, f.args...)
 			writeError(w, r, storageError(err, "渠道用量读取失败"))
 			return nil, false
 		}
-		cents := fenToUsdCents(fen, f.rate)
+		cents, text := costUSDFields(fen, f.rate)
 		out = append(out, map[string]any{
 			"bill_date":      day,
-			"cost_fen":       fen,
 			"cost_usd_cents": cents,
-			"cost_usd":       usdText(cents),
+			"cost_usd":       text,
 		})
 	}
 	if err = rows.Err(); err != nil {

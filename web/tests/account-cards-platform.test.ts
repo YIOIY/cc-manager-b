@@ -52,8 +52,8 @@ function platform(overrides: Partial<PlatformInfo> = {}): PlatformInfo {
       tags: [],
     },
     usage: {
-      cost_fen: 3521,
-      cost_yuan: '35.21',
+      cost_usd: '4.89',
+      cost_usd_cents: 489,
       input_tokens: 411638,
       output_tokens: 82648,
       five_hour_used_percent: 7,

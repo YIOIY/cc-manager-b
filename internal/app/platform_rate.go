@@ -9,8 +9,7 @@ import (
 // The supplier platform prices overseas vendors in US dollars and reports
 // every amount in RMB at a fixed rate it publishes on its own pages (7.2
 // since September 2026, 7.3 before). Its API carries no rate, so the rate
-// is kept per connection and the account card divides the RMB cost by it,
-// exactly as the platform's console does.
+// is kept per connection; API responses convert fen → cost_usd with it.
 
 const (
 	defaultUSDCNYRate = 7.2

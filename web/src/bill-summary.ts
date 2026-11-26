@@ -22,7 +22,8 @@ export interface SummaryRow {
   completion_tokens: string | null
   cache_read_input_tokens: string | null
   cache_write_input_tokens: string | null
-  cost_fen: string | null
+  cost_usd: string | null
+  cost_usd_cents: string | null
 }
 export interface SummaryResult {
   connection_id: string

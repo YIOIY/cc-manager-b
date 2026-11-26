@@ -71,7 +71,7 @@ func TestAccountListExposesPlatformBlock(t *testing.T) {
 		t.Fatalf("one platform=%v", one)
 	}
 	usage, _ := one["usage"].(map[string]any)
-	if usage == nil || usage["cost_fen"] != float64(3521) || usage["cost_yuan"] != "35.21" || usage["input_tokens"] != float64(411638) || usage["five_hour_used_percent"] != float64(5) || usage["week_used_percent"] != float64(1) || usage["five_hour_reset_at"] != "2026-11-11T16:50:00Z" {
+	if usage == nil || usage["cost_usd_cents"] != float64(489) || usage["cost_usd"] != "4.89" || usage["input_tokens"] != float64(411638) || usage["five_hour_used_percent"] != float64(5) || usage["week_used_percent"] != float64(1) || usage["five_hour_reset_at"] != "2026-11-11T16:50:00Z" {
 		t.Fatalf("one usage=%v", usage)
 	}
 	profile, _ := one["profile"].(map[string]any)
@@ -224,22 +224,22 @@ func TestBillModelsEndpoints(t *testing.T) {
 	var out struct {
 		Data struct {
 			List []struct {
-				BillDate  string `json:"bill_date"`
-				Account   string `json:"account"`
-				ModelName string `json:"model_name"`
-				CostFen   int64  `json:"cost_fen"`
-				Final     bool   `json:"final"`
+				BillDate     string `json:"bill_date"`
+				Account      string `json:"account"`
+				ModelName    string `json:"model_name"`
+				CostUsdCents int64  `json:"cost_usd_cents"`
+				Final        bool   `json:"final"`
 			} `json:"list"`
 			ByAccount []struct {
-				Account string `json:"account"`
-				CostFen int64  `json:"cost_fen"`
+				Account      string `json:"account"`
+				CostUsdCents int64  `json:"cost_usd_cents"`
 			} `json:"by_account"`
 			ByModel []struct {
-				ModelName string `json:"model_name"`
-				CostFen   int64  `json:"cost_fen"`
+				ModelName    string `json:"model_name"`
+				CostUsdCents int64  `json:"cost_usd_cents"`
 			} `json:"by_model"`
-			TotalCostFen int64 `json:"total_cost_fen"`
-			Coverage     struct {
+			TotalCostUsdCents int64 `json:"total_cost_usd_cents"`
+			Coverage          struct {
 				DaysRequested int  `json:"days_requested"`
 				DaysPresent   int  `json:"days_present"`
 				TodayFinal    bool `json:"today_final"`
@@ -250,13 +250,13 @@ func TestBillModelsEndpoints(t *testing.T) {
 	from := time.Now().In(loc).AddDate(0, 0, -6).Format("2006-01-02")
 	res := admin.do(http.MethodGet, "/api/v1/platform-usage/bills/models?connection_id=conn&from="+from+"&to="+today+"&page=1&page_size=20", "")
 	_ = jsonDecode(res, &out)
-	if res.StatusCode != 200 || out.Data.Total != 3 || len(out.Data.List) != 3 || out.Data.TotalCostFen != 13521 {
-		t.Fatalf("status=%d total=%d rows=%d sum=%d", res.StatusCode, out.Data.Total, len(out.Data.List), out.Data.TotalCostFen)
+	if res.StatusCode != 200 || out.Data.Total != 3 || len(out.Data.List) != 3 || out.Data.TotalCostUsdCents != 1878 {
+		t.Fatalf("status=%d total=%d rows=%d sum=%d", res.StatusCode, out.Data.Total, len(out.Data.List), out.Data.TotalCostUsdCents)
 	}
 	if out.Data.List[0].BillDate != today || !strings.Contains(out.Data.List[0].Account, "@example.test") || out.Data.List[0].Final {
 		t.Fatalf("first row=%+v", out.Data.List[0])
 	}
-	if len(out.Data.ByAccount) != 2 || len(out.Data.ByModel) != 2 || out.Data.ByModel[0].ModelName != "claude-opus-5-5" || out.Data.ByModel[0].CostFen != 10760 {
+	if len(out.Data.ByAccount) != 2 || len(out.Data.ByModel) != 2 || out.Data.ByModel[0].ModelName != "claude-opus-5-5" || out.Data.ByModel[0].CostUsdCents != 1495 {
 		t.Fatalf("by_account=%+v by_model=%+v", out.Data.ByAccount, out.Data.ByModel)
 	}
 	if out.Data.Coverage.DaysRequested != 7 || out.Data.Coverage.DaysPresent != 2 || out.Data.Coverage.TodayFinal {
@@ -264,8 +264,8 @@ func TestBillModelsEndpoints(t *testing.T) {
 	}
 	oneID := queryString(t, a, `SELECT id FROM accounts WHERE account='one@example.test'`)
 	_ = jsonDecode(admin.do(http.MethodGet, "/api/v1/platform-usage/bills/models?connection_id=conn&from="+from+"&to="+today+"&account_ids="+oneID, ""), &out)
-	if out.Data.Total != 2 || out.Data.TotalCostFen != 3521 {
-		t.Fatalf("account filter total=%d sum=%d", out.Data.Total, out.Data.TotalCostFen)
+	if out.Data.Total != 2 || out.Data.TotalCostUsdCents != 489 {
+		t.Fatalf("account filter total=%d cents=%d", out.Data.Total, out.Data.TotalCostUsdCents)
 	}
 	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/platform-usage/bills/models?connection_id=conn&from=2026-13-01&to="+today, ""), http.StatusUnprocessableEntity, "BILL_RANGE_INVALID")
 	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/platform-usage/bills/models?from="+from+"&to="+today, ""), http.StatusUnprocessableEntity, "VALIDATION_FAILED")
@@ -317,14 +317,14 @@ func TestUsageHistoryEndpoint(t *testing.T) {
 		Data struct {
 			List []struct {
 				ObservedAt   string  `json:"observed_at"`
-				CostFen      int64   `json:"cost_fen"`
+				CostUsdCents int64   `json:"cost_usd_cents"`
 				FiveHourUsed float64 `json:"five_hour_used_percent"`
 			} `json:"list"`
 		} `json:"data"`
 	}
 	res := admin.do(http.MethodGet, "/api/v1/accounts/"+id+"/platform-usage-history?days=7", "")
 	_ = jsonDecode(res, &out)
-	if res.StatusCode != 200 || len(out.Data.List) != 2 || out.Data.List[0].CostFen != 3521 || out.Data.List[1].CostFen != 3600 || out.Data.List[1].FiveHourUsed != 9 {
+	if res.StatusCode != 200 || len(out.Data.List) != 2 || out.Data.List[0].CostUsdCents != 489 || out.Data.List[1].CostUsdCents != 500 || out.Data.List[1].FiveHourUsed != 9 {
 		t.Fatalf("status=%d list=%+v", res.StatusCode, out.Data.List)
 	}
 	assertEnvelope(t, admin.do(http.MethodGet, "/api/v1/accounts/"+id+"/platform-usage-history?days=400", ""), http.StatusUnprocessableEntity, "QUERY_INVALID")
@@ -336,11 +336,11 @@ func TestDashboardWebFields(t *testing.T) {
 	var d struct {
 		Data struct {
 			Platform struct {
-				SyncStatus    string         `json:"sync_status"`
-				NearLimit     int            `json:"near_limit_accounts"`
-				RemoteCounts  map[string]int `json:"remote_counts_by_status"`
-				TodayModelFen int64          `json:"today_model_cost_fen"`
-				Web           struct {
+				SyncStatus      string         `json:"sync_status"`
+				NearLimit       int            `json:"near_limit_accounts"`
+				RemoteCounts    map[string]int `json:"remote_counts_by_status"`
+				TodayModelCents int64          `json:"today_model_cost_usd_cents"`
+				Web             struct {
 					SyncStatus string `json:"sync_status"`
 					ErrorCode  string `json:"error_code"`
 				} `json:"web_sync_health"`
@@ -386,19 +386,19 @@ func TestDashboardSpendFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spend["today_model_cost_fen"] != int64(3521) || spend["week_model_cost_fen"] != int64(13613) || spend["total_model_cost_fen"] != int64(113612) {
-		t.Fatalf("today=%v week=%v total=%v", spend["today_model_cost_fen"], spend["week_model_cost_fen"], spend["total_model_cost_fen"])
+	if spend["today_model_cost_usd_cents"] != int64(489) || spend["week_model_cost_usd_cents"] != int64(1891) || spend["total_model_cost_usd_cents"] != int64(15780) {
+		t.Fatalf("today=%v week=%v total=%v", spend["today_model_cost_usd_cents"], spend["week_model_cost_usd_cents"], spend["total_model_cost_usd_cents"])
 	}
 	days, _ := spend["cost_by_day"].([]map[string]any)
-	if len(days) != 7 || days[6]["date"] != today || days[6]["final"] != false || days[6]["cost_fen"] != int64(3521) || days[5]["date"] != yesterday || days[5]["final"] != true || days[5]["cost_fen"] != int64(10092) || days[0]["cost_fen"] != int64(0) {
+	if len(days) != 7 || days[6]["date"] != today || days[6]["final"] != false || days[6]["cost_usd_cents"] != int64(489) || days[5]["date"] != yesterday || days[5]["final"] != true || days[5]["cost_usd_cents"] != int64(1402) || days[0]["cost_usd_cents"] != int64(0) {
 		t.Fatalf("cost_by_day=%v", days)
 	}
 	models, _ := spend["cost_by_model"].([]map[string]any)
-	if len(models) != 2 || models[0]["model_name"] != "claude-opus-5-5" || models[0]["cost_fen"] != int64(10760) {
+	if len(models) != 2 || models[0]["model_name"] != "claude-opus-5-5" || models[0]["cost_usd_cents"] != int64(1495) {
 		t.Fatalf("cost_by_model=%v", models)
 	}
 	accounts, _ := spend["cost_by_account"].([]map[string]any)
-	if len(accounts) != 2 || accounts[0]["account"] != "two@example.test" || accounts[0]["cost_fen"] != int64(10092) {
+	if len(accounts) != 2 || accounts[0]["account"] != "two@example.test" || accounts[0]["cost_usd_cents"] != int64(1402) {
 		t.Fatalf("cost_by_account=%v", accounts)
 	}
 }

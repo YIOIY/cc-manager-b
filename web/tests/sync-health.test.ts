@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { describeMetricsHealth, describeSyncHealth } from '../src/model/sync-health'
 
-const base = { today_requests: 0, today_cost_fen: 0, last_sync_at: '', last_sync_state: '' }
+const base = { today_requests: 0, today_cost_usd_cents: 0, last_sync_at: '', last_sync_state: '' }
 
 test('never synced reads as not started', () => {
   expect(describeSyncHealth({ ...base, sync_status: 'never' })).toEqual({ tone: 'info', label: '尚未同步' })

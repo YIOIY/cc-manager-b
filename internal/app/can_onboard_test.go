@@ -34,14 +34,16 @@ func TestUserCanOnboardToggleAndGate(t *testing.T) {
 	var session struct {
 		Data struct {
 			User struct {
-				CanOnboard  bool     `json:"can_onboard"`
-				Permissions []string `json:"permissions"`
+				CanOnboard       bool     `json:"can_onboard"`
+				OnboardAllowed   bool     `json:"onboard_allowed"`
+				OnboardBlockCode string   `json:"onboard_block_code"`
+				Permissions      []string `json:"permissions"`
 			} `json:"user"`
 		} `json:"data"`
 	}
 	_ = jsonDecode(ops.do(http.MethodGet, "/api/v1/auth/session", ""), &session)
-	if !session.Data.User.CanOnboard {
-		t.Fatalf("session can_onboard=%v", session.Data.User.CanOnboard)
+	if !session.Data.User.CanOnboard || !session.Data.User.OnboardAllowed {
+		t.Fatalf("session can_onboard=%v onboard_allowed=%v", session.Data.User.CanOnboard, session.Data.User.OnboardAllowed)
 	}
 	hasOnboard := false
 	for _, p := range session.Data.User.Permissions {
@@ -64,8 +66,8 @@ func TestUserCanOnboardToggleAndGate(t *testing.T) {
 	}
 
 	_ = jsonDecode(ops.do(http.MethodGet, "/api/v1/auth/session", ""), &session)
-	if session.Data.User.CanOnboard {
-		t.Fatalf("session should refresh can_onboard=false")
+	if session.Data.User.CanOnboard || session.Data.User.OnboardAllowed || session.Data.User.OnboardBlockCode != "ONBOARD_DISABLED" {
+		t.Fatalf("session should refresh can_onboard=false allowed=%v code=%q", session.Data.User.OnboardAllowed, session.Data.User.OnboardBlockCode)
 	}
 
 	for _, call := range []struct {

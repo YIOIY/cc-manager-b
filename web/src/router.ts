@@ -9,6 +9,7 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   UserCog,
+  Settings,
   BookOpen,
   MessagesSquare,
 } from 'lucide-vue-next'
@@ -130,6 +131,12 @@ export const routes: RouteRecordRaw[] = [
     name: 'users',
     component: () => import('./views/UsersView.vue'),
     meta: { title: '用户与权限', icon: UserCog, eyebrow: 'ACCESS CONTROL', nav: true, permission: 'users.view' },
+  },
+  {
+    path: '/system-settings',
+    name: 'systemSettings',
+    component: () => import('./views/SystemSettingsView.vue'),
+    meta: { title: '系统设置', icon: Settings, eyebrow: 'SYSTEM', nav: true, permission: 'settings.view' },
   },
   {
     // No permission: everyone can send feedback and follow their own.

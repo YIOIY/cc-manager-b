@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 import {
   accountQuery,
   attentionLabel,
-  dailyAverageFen,
+  dailyAverageCents,
   dayChange,
   hourlyBars,
   hourlySummary,
@@ -10,7 +10,15 @@ import {
   shareSegments,
   spendBars,
 } from '../src/model/dashboard'
-import type { AttentionItem, RecentJob } from '../src/types/api'
+import type { AttentionItem, HourlyCost, RecentJob, SpendDay } from '../src/types/api'
+
+function day(date: string, cost_usd_cents: number, final: boolean): SpendDay {
+  return { date, cost_usd_cents, cost_usd: (cost_usd_cents / 100).toFixed(2), final }
+}
+
+function hour(hour: string, cost_usd_cents: number): HourlyCost {
+  return { hour, cost_usd_cents, cost_usd: (cost_usd_cents / 100).toFixed(2) }
+}
 
 const base: AttentionItem = {
   kind: 'near_limit',
@@ -44,47 +52,22 @@ test('clicking an item searches the accounts page by email', () => {
 })
 
 test('spend bars scale to the largest day and never divide by zero', () => {
-  expect(
-    spendBars([
-      { date: 'a', cost_fen: 0, final: true },
-      { date: 'b', cost_fen: 100, final: true },
-      { date: 'c', cost_fen: 50, final: false },
-    ]),
-  ).toEqual([0, 100, 50])
-  expect(
-    spendBars([
-      { date: 'a', cost_fen: 0, final: true },
-      { date: 'b', cost_fen: 0, final: false },
-    ]),
-  ).toEqual([0, 0])
+  expect(spendBars([day('a', 0, true), day('b', 100, true), day('c', 50, false)])).toEqual([0, 100, 50])
+  expect(spendBars([day('a', 0, true), day('b', 0, false)])).toEqual([0, 0])
   expect(spendBars([])).toEqual([])
 })
 
 test('the day-over-day change compares the last two complete days', () => {
-  const days = [
-    { date: '11-10', cost_fen: 100, final: true },
-    { date: '11-11', cost_fen: 150, final: true },
-    { date: '11-12', cost_fen: 30, final: false },
-  ]
+  const days = [day('11-10', 100, true), day('11-11', 150, true), day('11-12', 30, false)]
   expect(dayChange(days)).toEqual({ percent: 50, up: true })
-  expect(
-    dayChange([
-      { date: 'a', cost_fen: 200, final: true },
-      { date: 'b', cost_fen: 150, final: true },
-    ]),
-  ).toEqual({
+  expect(dayChange([day('a', 200, true), day('b', 150, true)])).toEqual({
     percent: 25,
     up: false,
   })
-  expect(
-    dayChange([
-      { date: 'a', cost_fen: 0, final: true },
-      { date: 'b', cost_fen: 150, final: true },
-    ]),
-  ).toBeNull()
+  expect(dayChange([day('a', 0, true), day('b', 150, true)])).toBeNull()
   expect(dayChange(days.slice(1))).toBeNull()
-  expect(dailyAverageFen(days)).toBe(125)
-  expect(dailyAverageFen([{ date: 'x', cost_fen: 30, final: false }])).toBe(0)
+  expect(dailyAverageCents(days)).toBe(125)
+  expect(dailyAverageCents([day('x', 30, false)])).toBe(0)
 })
 
 test('share segments keep the given order, drop empty groups and add up to the whole', () => {
@@ -101,14 +84,14 @@ test('share segments keep the given order, drop empty groups and add up to the w
 
 test('hourly bars scale to the busiest hour and the summary names it', () => {
   const hours = [
-    { hour: '2026-11-13T01:00:00Z', cost_fen: 200 },
-    { hour: '2026-11-13T02:00:00Z', cost_fen: 0 },
-    { hour: '2026-11-13T03:00:00Z', cost_fen: 2 },
-    { hour: '2026-11-13T04:00:00Z', cost_fen: 100 },
+    hour('2026-11-13T01:00:00Z', 200),
+    hour('2026-11-13T02:00:00Z', 0),
+    hour('2026-11-13T03:00:00Z', 2),
+    hour('2026-11-13T04:00:00Z', 100),
   ]
   expect(hourlyBars(hours).map((b) => b.height)).toEqual([100, 0, 3, 50])
   expect(hourlySummary(hours)).toEqual({ total: 302, peak: 200, peakHour: '2026-11-13T01:00:00Z' })
-  expect(hourlyBars([{ hour: 'x', cost_fen: 0 }]).map((b) => b.height)).toEqual([0])
+  expect(hourlyBars([hour('x', 0)]).map((b) => b.height)).toEqual([0])
   expect(hourlySummary([])).toEqual({ total: 0, peak: 0, peakHour: null })
 })
 

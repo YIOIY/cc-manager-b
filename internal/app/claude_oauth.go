@@ -268,3 +268,4 @@ func (a *App) claudeOAuthHTTPClient(proxyID, fallbackProxyURL string) (*http.Cli
 	}
 	return &http.Client{Transport: transport, Timeout: 18 * time.Second}, transport.CloseIdleConnections, nil
 }
+

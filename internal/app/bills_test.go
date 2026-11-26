@@ -235,7 +235,7 @@ func TestBillQueryBeyond1000AndExactTotals(t *testing.T) {
 	}
 	page := result["pagination"].(map[string]int)
 	totals := result["totals"].(map[string]any)
-	if page["total"] != 1200 || len(result["items"].([]any)) != 100 || totals["cost_fen"] != "1200" || totals["prompt_tokens"] != "5040000000000" {
+	if page["total"] != 1200 || len(result["items"].([]any)) != 100 || totals["cost_usd_cents"] != "167" || totals["cost_usd"] != "1.67" || totals["prompt_tokens"] != "5040000000000" {
 		t.Fatalf("page=%v totals=%v", page, totals)
 	}
 	if result["coverage"].(map[string]any)["complete"] != true {
@@ -247,7 +247,7 @@ func TestBillQueryBeyond1000AndExactTotals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result["pagination"].(map[string]int)["total"] != 1 || result["totals"].(map[string]any)["cost_fen"] != "1" {
+	if result["pagination"].(map[string]int)["total"] != 1 || result["totals"].(map[string]any)["cost_usd_cents"] != "0" {
 		t.Fatalf("filtered=%v", result)
 	}
 }

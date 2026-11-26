@@ -46,7 +46,8 @@ func (a *App) readBills(ctx context.Context, in billQueryRequest, scope ownershi
 		return nil, billField("connection_id", errs.FieldRequired, "请选择平台连接")
 	}
 	var zone string
-	err := a.DB.QueryRowContext(ctx, `SELECT timezone FROM platform_connections WHERE id=?`, in.ConnectionID).Scan(&zone)
+	rate := defaultUSDCNYRate
+	err := a.DB.QueryRowContext(ctx, `SELECT timezone,COALESCE(usd_cny_rate,?) FROM platform_connections WHERE id=?`, defaultUSDCNYRate, in.ConnectionID).Scan(&zone, &rate)
 	if err != nil {
 		return nil, errs.New(errs.CodeNotFound).WithMessage("平台连接不存在").WithDetail("resource", "platform_connection")
 	}
@@ -144,9 +145,12 @@ func (a *App) readBills(ctx context.Context, in billQueryRequest, scope ownershi
 		if aid.Valid {
 			item["platform_account_id"] = aid.String
 		}
-		for i, key := range []string{"request_count", "prompt_tokens", "completion_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cost_fen"} {
+		for i, key := range []string{"request_count", "prompt_tokens", "completion_tokens", "cache_read_input_tokens", "cache_write_input_tokens"} {
 			item[key] = strconv.FormatInt(values[i], 10)
 		}
+		cents, text := costUSDFields(values[5], rate)
+		item["cost_usd_cents"] = strconv.FormatInt(cents, 10)
+		item["cost_usd"] = text
 		items = append(items, item)
 	}
 	if err == nil {
@@ -160,10 +164,13 @@ func (a *App) readBills(ctx context.Context, in billQueryRequest, scope ownershi
 	if err != nil {
 		return nil, err
 	}
-	totals := map[string]any{"is_partial": !coverage["complete"].(bool), "currency": "CNY", "scope": "all_matching_saved_rows"}
-	for i, key := range []string{"request_count", "prompt_tokens", "completion_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cost_fen"} {
+	totals := map[string]any{"is_partial": !coverage["complete"].(bool), "currency": "USD", "scope": "all_matching_saved_rows"}
+	for i, key := range []string{"request_count", "prompt_tokens", "completion_tokens", "cache_read_input_tokens", "cache_write_input_tokens"} {
 		totals[key] = strconv.FormatInt(sums[i], 10)
 	}
+	totalCents := fenToUsdCents(sums[5], rate)
+	totals["cost_usd_cents"] = strconv.FormatInt(totalCents, 10)
+	totals["cost_usd"] = usdText(totalCents)
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}

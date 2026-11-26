@@ -80,11 +80,7 @@
               : 'Claude 登录失败，可重新授权后同步到平台。'
           }}
         </div>
-        <PlatformUsageBlock
-          :usage="card.platform.usage"
-          :observed-at="card.platform.observed_at"
-          :usd-rate="card.platform.usd_cny_rate"
-        />
+        <PlatformUsageBlock :usage="card.platform.usage" :observed-at="card.platform.observed_at" />
         <div v-if="card.profileSummary" class="platform-profile" :title="card.profileTitle">
           <span>{{ card.profileSummary }}</span>
           <em v-if="card.profileDiff" class="profile-diff">≠本地</em>
@@ -100,8 +96,7 @@
             <small>输出 Token</small><b class="date-number">{{ formatCount(card.platform_completion_tokens) }}</b>
           </div>
           <div>
-            <small>最近账单</small
-            ><b class="purple-number">{{ billUsd(card.platform_cost_fen, card.platform?.usd_cny_rate) }}</b>
+            <small>最近账单</small><b class="purple-number">{{ billUsd(card.platform_cost_usd) }}</b>
           </div>
         </div>
       </template>
@@ -204,17 +199,16 @@ import {
   type DeliveryState,
 } from '../account-workflow'
 import { formatCount, formatDateTime, hasValue, planLabel } from '../utils/format'
-import { fenToUsdCents, formatUsdCents } from '../model/money'
+import { formatUsd } from '../model/money'
 import { useSession } from '../composables/useSession'
 import { canEditPlatformProfile } from '../model/account-detail'
 import PlatformUsageBlock from './PlatformUsageBlock.vue'
 import { formatTags, locationLabel, paymentLabel, shortPlatformAlias } from '../model/platform-card'
 import { copyText } from '../utils/clipboard'
 
-function billUsd(fen: number | undefined, rate: number | undefined) {
-  if (!hasValue(fen)) return '未同步'
-  const cents = fenToUsdCents(Number(fen), rate)
-  return cents === null ? '—' : formatUsdCents(cents)
+function billUsd(usd: string | undefined) {
+  if (!hasValue(usd)) return '未同步'
+  return formatUsd(usd)
 }
 
 const props = defineProps<{ accounts: Account[]; loading: boolean }>()

@@ -74,11 +74,7 @@
         >
           状态变更 {{ formatDateTime(account.platform.status_changed_at) }}
         </div>
-        <AccountUsageTrend
-          v-if="can('accounts.usage')"
-          :account-id="account.id"
-          :usd-rate="account.platform?.usd_cny_rate"
-        />
+        <AccountUsageTrend v-if="can('accounts.usage')" :account-id="account.id" />
         <section class="delivery-profile" aria-label="资料">
           <div class="delivery-section-title"><strong>资料</strong></div>
           <dl class="delivery-grid" data-profile>
@@ -282,7 +278,7 @@ const emit = defineEmits<{
   deleted: [accountId: string]
   assigned: [result: { userId: string; message?: string; proxy_action?: string }]
 }>()
-const { can, canOnboard, check: refreshSession, onboardAllowed, owns, user } = useSession()
+const { can, canOnboard, check: refreshSession, onboardAllowed, onboardBlockedMessage, owns, user } = useSession()
 const isAdmin = computed(() => !!user.value?.is_admin)
 const canMutateAccount = computed(() => owns(props.account?.created_by_user_id))
 const ownerLabel = computed(() =>
@@ -435,7 +431,7 @@ async function submit() {
       /* API still enforces */
     }
     if (!onboardAllowed()) {
-      error.value = '当前账号已被禁止上号，请联系管理员'
+      error.value = onboardBlockedMessage()
       return
     }
     await api('/accounts/' + props.account!.id + '/submit', {

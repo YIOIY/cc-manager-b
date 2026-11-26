@@ -19,7 +19,7 @@ type billSummaryRequest struct {
 	EndDate      string  `json:"end_ds"`
 }
 
-var billSummaryFields = []string{"request_count", "prompt_tokens", "completion_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cost_fen"}
+var billSummaryCountFields = []string{"request_count", "prompt_tokens", "completion_tokens", "cache_read_input_tokens", "cache_write_input_tokens"}
 
 func (a *App) queryBillSummary(w http.ResponseWriter, r *http.Request) {
 	var in billSummaryRequest
@@ -52,7 +52,8 @@ func (a *App) readBillSummary(ctx context.Context, in billSummaryRequest, scope 
 	}
 	var base, secret, zone string
 	var enabled int
-	if a.DB.QueryRowContext(ctx, `SELECT base_url,token_secret,timezone,enabled FROM platform_connections WHERE id=?`, in.ConnectionID).Scan(&base, &secret, &zone, &enabled) != nil || enabled != 1 {
+	rate := defaultUSDCNYRate
+	if a.DB.QueryRowContext(ctx, `SELECT base_url,token_secret,timezone,enabled,COALESCE(usd_cny_rate,?) FROM platform_connections WHERE id=?`, defaultUSDCNYRate, in.ConnectionID).Scan(&base, &secret, &zone, &enabled, &rate) != nil || enabled != 1 {
 		return nil, billBad("CONNECTION_DISABLED", "平台连接不存在或未启用")
 	}
 	loc, err := loadBillLocation(zone)
@@ -114,20 +115,27 @@ func (a *App) readBillSummary(ctx context.Context, in billSummaryRequest, scope 
 	if err != nil {
 		return nil, summaryUpstreamError(err)
 	}
-	sums := make([]big.Int, len(billSummaryFields))
+	sums := make([]big.Int, len(billSummaryCountFields))
+	var totalUsdCents int64
 	for _, row := range accounts {
-		for _, field := range billSummaryFields {
+		for _, field := range billSummaryCountFields {
 			row[field] = nil
 		}
+		row["cost_usd"] = nil
+		row["cost_usd_cents"] = nil
 	}
 	for _, bill := range response.Bills {
 		row := accounts[strconv.FormatInt(bill.ID, 10)]
 		row["state"] = "returned"
-		values := []int64{bill.RequestCount, bill.PromptTokens, bill.CompletionTokens, bill.CacheReadInputTokens, bill.CacheWriteInputTokens, bill.CostFen}
+		values := []int64{bill.RequestCount, bill.PromptTokens, bill.CompletionTokens, bill.CacheReadInputTokens, bill.CacheWriteInputTokens}
 		for i, value := range values {
-			row[billSummaryFields[i]] = strconv.FormatInt(value, 10)
+			row[billSummaryCountFields[i]] = strconv.FormatInt(value, 10)
 			sums[i].Add(&sums[i], big.NewInt(value))
 		}
+		cents, text := costUSDFields(bill.CostFen, rate)
+		row["cost_usd_cents"] = strconv.FormatInt(cents, 10)
+		row["cost_usd"] = text
+		totalUsdCents += cents
 	}
 	for id, code := range response.RowErrors {
 		accounts[id]["state"] = "invalid"
@@ -139,15 +147,21 @@ func (a *App) readBillSummary(ctx context.Context, in billSummaryRequest, scope 
 	}
 	returned, invalid := len(response.Bills), len(response.RowErrors)
 	missing := len(ids) - returned - invalid
-	// Preserve exact counters and cents beyond JavaScript's safe integer range.
-	totals := map[string]any{"is_partial": returned != len(ids)}
-	for i, field := range billSummaryFields {
+	// Preserve exact counters beyond JavaScript's safe integer range.
+	totals := map[string]any{"is_partial": returned != len(ids), "currency": "USD"}
+	for i, field := range billSummaryCountFields {
 		totals[field] = nil
 		if returned > 0 {
 			totals[field] = sums[i].String()
 		}
 	}
-	return map[string]any{"connection_id": in.ConnectionID, "timezone": zone, "requested_range": dates, "range": response.ActualRange, "range_adjusted": dates != response.ActualRange, "queried_at": now(), "account_count": len(ids), "returned_count": returned, "no_data_count": missing, "invalid_count": invalid, "complete": returned == len(ids), "items": items, "totals": totals}, nil
+	totals["cost_usd"] = nil
+	totals["cost_usd_cents"] = nil
+	if returned > 0 {
+		totals["cost_usd"] = usdText(totalUsdCents)
+		totals["cost_usd_cents"] = strconv.FormatInt(totalUsdCents, 10)
+	}
+	return map[string]any{"connection_id": in.ConnectionID, "timezone": zone, "usd_cny_rate": rate, "requested_range": dates, "range": response.ActualRange, "range_adjusted": dates != response.ActualRange, "queried_at": now(), "account_count": len(ids), "returned_count": returned, "no_data_count": missing, "invalid_count": invalid, "complete": returned == len(ids), "items": items, "totals": totals}, nil
 }
 
 func summaryUpstreamError(err error) error {

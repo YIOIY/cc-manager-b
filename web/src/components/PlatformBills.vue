@@ -157,7 +157,7 @@
           <span class="bill-stat-icon"><Wallet :size="18" /></span
           ><small>{{ result?.totals.is_partial ? '已返回账号消费合计' : '平台消费合计' }}</small>
         </div>
-        <strong>{{ formatBillMoney(result?.totals.cost_fen) }}</strong
+        <strong>{{ formatBillUsd(result?.totals.cost_usd) }}</strong>
         ><span>{{
           result
             ? `已返回 ${result.returned_count} / ${result.account_count} 个账号`
@@ -211,7 +211,7 @@
           <h2>账号账单汇总</h2>
           <span v-if="result" class="bill-result-count">{{ result.account_count }} 个账号</span>
         </div>
-        <span>金额单位：人民币元</span>
+        <span>金额单位：美元</span>
       </div>
       <el-table :data="pagedRows" v-loading="loading" row-key="account_id" class="bill-summary-table">
         <el-table-column label="账号" min-width="245"
@@ -234,9 +234,9 @@
           class-name="bill-number-column"
           ><template #default="{ row }">{{ formatBillCount(row[column.key]) }}</template></el-table-column
         >
-        <el-table-column label="消费（元）" min-width="135" align="right"
+        <el-table-column label="消费（美元）" min-width="135" align="right"
           ><template #default="{ row }"
-            ><span class="bill-cost-cell">{{ formatBillMoney(row.cost_fen) }}</span></template
+            ><span class="bill-cost-cell">{{ formatBillUsd(row.cost_usd) }}</span></template
           ></el-table-column
         >
         <el-table-column label="返回状态" width="108" fixed="right"
@@ -279,15 +279,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, errorMessage } from '../api'
-import {
-  billGet,
-  billPost,
-  businessDay,
-  shiftBillDay,
-  formatBillCount,
-  formatBillMoney,
-  type BillConnection,
-} from '../bills-api'
+import { billGet, billPost, businessDay, shiftBillDay, formatBillCount, type BillConnection } from '../bills-api'
+import { formatUsd } from '../model/money'
+
+function formatBillUsd(value: string | null | undefined) {
+  if (value == null || value === '') return '—'
+  return formatUsd(value)
+}
 import {
   eligibleBillAccount,
   summaryValidation,

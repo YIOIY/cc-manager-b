@@ -72,6 +72,7 @@ func (a *App) Handler() http.Handler {
 
 	needFn("/api/v1/proxy-settings", byMethod(PermProxiesView, map[string]Permission{"PUT": PermProxiesSettings}), a.proxyNetworkSettings)
 	needFn("/api/v1/oauth-settings", byMethod(PermOAuthSettingsView, map[string]Permission{"PUT": PermOAuthSettings}), a.oauthDispatchSettingsHandler)
+	needFn("/api/v1/system-settings", byMethod(PermSettingsView, map[string]Permission{"PUT": PermSettingsManage}), a.systemSettingsHandler)
 	needFn("/api/v1/proxies", byMethod(PermProxiesView, map[string]Permission{"POST": PermProxiesCreate}), a.proxies)
 	need("PATCH /api/v1/proxies/{id}", PermProxiesUpdate, a.proxyUpdate)
 	need("POST /api/v1/proxies/{id}/assign", PermProxiesUpdate, a.proxyAssign)

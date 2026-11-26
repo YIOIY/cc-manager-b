@@ -42,7 +42,7 @@
             </template>
             <span v-else class="quota-none">无用量</span>
           </div>
-          <div class="quota-cost">{{ costUsd(row.cost_fen) }}</div>
+          <div class="quota-cost">{{ costUsd(row) }}</div>
         </li>
       </ul>
       <button v-if="rows.length > limit" type="button" class="quota-more" @click="expanded = !expanded">
@@ -57,21 +57,17 @@ import { computed, ref } from 'vue'
 import type { QuotaRow } from '../types/api'
 import { runtimeLabel } from '../account-workflow'
 import { formatResetAt, shortPlatformAlias, usageTone } from '../model/platform-card'
-import { fenToUsdCents, formatUsdCents } from '../model/money'
+import { formatUsd } from '../model/money'
 
-const props = withDefaults(
-  defineProps<{ rows: QuotaRow[]; loading: boolean; failed?: boolean; limit?: number; usdRate?: number }>(),
-  {
-    failed: false,
-    limit: 8,
-  },
-)
+const props = withDefaults(defineProps<{ rows: QuotaRow[]; loading: boolean; failed?: boolean; limit?: number }>(), {
+  failed: false,
+  limit: 8,
+})
 const emit = defineEmits<{ open: [row: QuotaRow]; all: [] }>()
 
-function costUsd(fen: number | null) {
-  if (fen === null) return '—'
-  const cents = fenToUsdCents(fen, props.usdRate)
-  return cents === null ? '—' : formatUsdCents(cents)
+function costUsd(row: QuotaRow) {
+  if (row.cost_usd_cents === null && !row.cost_usd) return '—'
+  return formatUsd(row.cost_usd)
 }
 
 function ownerLabel(row: QuotaRow) {
