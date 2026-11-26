@@ -8,25 +8,26 @@ import { ElMessageBox } from 'element-plus'
 
 vi.mock('element-plus', () => ({ ElMessageBox: { prompt: vi.fn() } }))
 
+const sessionUser = {
+  id: 'u',
+  username: 'admin',
+  role: 'admin',
+  permissions: ['accounts.onboard', 'connections.create', 'accounts.delete'],
+}
+const sessionPayload = {
+  data: {
+    authenticated: true,
+    csrf_token: 'csrf',
+    user: sessionUser,
+  },
+}
+
 const fetchMock = vi.fn()
 beforeEach(async () => {
   vi.stubGlobal('fetch', fetchMock)
   session.value = { authenticated: true, csrf_token: 'csrf' }
   // establish the user who owns the account so permission-gated buttons render
-  fetchMock.mockImplementationOnce(() =>
-    json(200, {
-      data: {
-        authenticated: true,
-        csrf_token: 'csrf',
-        user: {
-          id: 'u',
-          username: 'admin',
-          role: 'admin',
-          permissions: ['accounts.onboard', 'connections.create', 'accounts.delete'],
-        },
-      },
-    }),
-  )
+  fetchMock.mockImplementationOnce(() => json(200, sessionPayload))
   await useSession().check()
   fetchMock.mockReset()
 })
@@ -94,6 +95,7 @@ test('opening a pending account runs preflight for the only enabled connection a
 
 test('a passing preflight enables submit, which posts the expected version with an idempotency key', async () => {
   fetchMock.mockImplementation((url: string) => {
+    if (String(url).endsWith('/auth/session')) return json(200, sessionPayload)
     if (url.endsWith('/preflight')) return json(200, { data: { can_submit: true, checks: [] } })
     if (url.endsWith('/submit')) return json(202, { data: { job_id: 'job', state: 'queued' } })
     return json(200, { data: {} })
@@ -209,7 +211,7 @@ async function asUser(permissions: string[]) {
       data: {
         authenticated: true,
         csrf_token: 'csrf',
-        user: { id: 'u', username: 'admin', role: 'admin', permissions },
+        user: { ...sessionUser, permissions },
       },
     }),
   )
